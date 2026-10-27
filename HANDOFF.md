@@ -133,14 +133,20 @@ baselines is honest in both directions.
 there is `Ulban Adhikary <46319463+UpsilonAlpha@users.noreply.github.com>`, git 2.56.0.windows.1.
 
 Two things to know about that laptop:
-- **There is no working Python on it.** `python` hits the Microsoft Store stub; neither `py` nor
-  `python3` exists. It is a git client and an editor, not a run environment.
+- ~~**There is no working Python on it.**~~ **Corrected 2026-10-28: it is a working run environment.**
+  `python` does hit the Microsoft Store stub and `py` does not exist, but **`uv` is installed** at
+  `C:\Users\uquadhik\.local\bin\uv.exe` and already had CPython 3.11.16 and 3.12.14 toolchains.
+  `uv venv --python 3.11 .venv` then `uv pip install numpy biotite pytest` takes under a minute, and
+  the whole Milestone 1 geometry layer was written and verified locally on it. Do not plan around
+  the laptop being git-only.
 - The clone sits **inside the `Library` git repo**, so `Library` will list `Structures/AANCA/` as
   untracked. Gitignore it there or make it a submodule.
 
-**Work in progress, not yet committed anywhere:** a skeleton at `/mnt/project-files/aanca/` in this
-project's shared folder (`src/aanca/`, `tests/`, `scripts/`). Only directories and this file exist.
-Nothing has been pushed. Treat the repo as greenfield.
+**Superseded 2026-10-28.** The repo is no longer greenfield: commit `3c156eb` on `main` carries the
+Milestone 1 geometry and data layer, passing its exactness bar (round trip accurate to 3.6e-14 A
+against a 0.01 A target, on 193L / 3NIR / 1UBQ). See `README.md` for the result table, the float32
+measurement trap, and what is still a stub. The earlier skeleton at `/mnt/project-files/aanca/` is
+obsolete.
 
 **Why nothing is pushed:** this Claude account has no GitHub account linked, so a cloud session
 cannot clone or push. Either Ulban links it at https://claude.ai/connect-github (and installs the
