@@ -1,0 +1,156 @@
+"""Loading structures into per-residue views, and writing them back out.
+
+Parsing is biotite's job. This module's job is to produce the one representation
+the rest of the project uses -- a list of :class:`~aanca.torsions.Residue` plus
+the index mapping back into the source ``AtomArray`` -- and to keep that mapping
+intact so a modified side chain can be written to a file and compared against
+the original.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from pathlib import Path
+
+import numpy as np
+from biotite.structure import AtomArray, filter_amino_acids
+from biotite.structure.io import load_structure, save_structure
+
+from . import residue_constants as rc
+from .torsions import Residue, apply_chi_deltas, chi_mask, measure_chis
+
+
+@dataclass
+class Protein:
+    """A parsed structure, residue-indexed.
+
+    ``atoms`` is the filtered source array; ``atom_indices[i]`` gives the rows of
+    ``atoms`` belonging to residue ``i``, in the same order as
+    ``residues[i].atom_names``.
+
+    ``residues`` holds float64 coordinates and is the authoritative state;
+    ``atoms`` is a float32 mirror kept in sync for file output. Rollouts
+    therefore accumulate no float32 rounding, but any comparison made on
+    ``atoms.coord`` is only accurate to ~1e-6 A -- measure on ``residues``.
+    """
+
+    atoms: AtomArray
+    residues: list[Residue]
+    atom_indices: list[np.ndarray]
+    chain_ids: list[str]
+    res_ids: list[int]
+
+    def __len__(self) -> int:
+        return len(self.residues)
+
+    # -- torsions -----------------------------------------------------------
+
+    def chis(self) -> tuple[np.ndarray, np.ndarray]:
+        """``(n_res, MAX_CHI)`` torsions in radians and the matching bool mask."""
+        chis = np.full((len(self), rc.MAX_CHI), np.nan)
+        mask = np.zeros((len(self), rc.MAX_CHI), dtype=bool)
+        for i, res in enumerate(self.residues):
+            chis[i], mask[i] = measure_chis(res)
+        return chis, mask
+
+    def chi_mask(self) -> np.ndarray:
+        return np.stack([chi_mask(r) for r in self.residues])
+
+    def apply_chi_deltas(self, deltas: np.ndarray) -> "Protein":
+        """Return a new Protein with ``(n_res, MAX_CHI)`` deltas applied."""
+        deltas = np.asarray(deltas, dtype=np.float64)
+        if deltas.shape != (len(self), rc.MAX_CHI):
+            raise ValueError(
+                f"expected deltas of shape {(len(self), rc.MAX_CHI)}, "
+                f"got {deltas.shape}"
+            )
+        new_residues = [
+            apply_chi_deltas(res, deltas[i]) for i, res in enumerate(self.residues)
+        ]
+        atoms = self.atoms.copy()
+        for idx, res in zip(self.atom_indices, new_residues):
+            atoms.coord[idx] = res.coords
+        return Protein(
+            atoms=atoms,
+            residues=new_residues,
+            atom_indices=self.atom_indices,
+            chain_ids=self.chain_ids,
+            res_ids=self.res_ids,
+        )
+
+    # -- io -----------------------------------------------------------------
+
+    def save(self, path: str | Path) -> None:
+        save_structure(str(path), self.atoms)
+
+
+def load_protein(path: str | Path, model: int = 1) -> Protein:
+    """Load a PDB/mmCIF file as a :class:`Protein`.
+
+    Keeps standard amino acids and heavy atoms only, and keeps a single altloc
+    per atom. Non-standard residue names are dropped rather than guessed at;
+    silently mis-typing a residue would corrupt every chi downstream of it.
+    """
+    atoms = load_structure(str(path), model=model, altloc="first")
+    atoms = atoms[filter_amino_acids(atoms)]
+    atoms = atoms[atoms.element != "H"]
+    atoms = atoms[np.isin(atoms.res_name, rc.AA3)]
+
+    residues: list[Residue] = []
+    atom_indices: list[np.ndarray] = []
+    chain_ids: list[str] = []
+    res_ids: list[int] = []
+
+    keys = list(zip(atoms.chain_id, atoms.res_id, atoms.ins_code, atoms.res_name))
+    start = 0
+    for stop in range(1, len(keys) + 1):
+        if stop < len(keys) and keys[stop] == keys[start]:
+            continue
+        idx = np.arange(start, stop)
+        chain, res_id, _ins, res_name = keys[start]
+        names = tuple(str(n) for n in atoms.atom_name[idx])
+        if len(set(names)) != len(names):
+            # Duplicate atom names within one residue means the altloc filter
+            # did not collapse it. Skip rather than pick arbitrarily.
+            start = stop
+            continue
+        residues.append(
+            Residue(
+                resname=str(res_name),
+                atom_names=names,
+                coords=np.asarray(atoms.coord[idx], dtype=np.float64),
+            )
+        )
+        atom_indices.append(idx)
+        chain_ids.append(str(chain))
+        res_ids.append(int(res_id))
+        start = stop
+
+    return Protein(
+        atoms=atoms,
+        residues=residues,
+        atom_indices=atom_indices,
+        chain_ids=chain_ids,
+        res_ids=res_ids,
+    )
+
+
+def sidechain_rmsd(a: Protein, b: Protein) -> np.ndarray:
+    """Per-residue heavy-atom side-chain RMSD in Angstrom, NaN where undefined.
+
+    No superposition: the backbone is fixed, so the structures are already in a
+    common frame and superposing would hide exactly the error being measured.
+    """
+    if len(a) != len(b):
+        raise ValueError(f"residue count differs: {len(a)} vs {len(b)}")
+    out = np.full(len(a), np.nan)
+    for i, (ra, rb) in enumerate(zip(a.residues, b.residues)):
+        if ra.resname != rb.resname or ra.atom_names != rb.atom_names:
+            raise ValueError(f"residue {i} differs between structures")
+        wanted = rc.sidechain_atoms(ra.resname) - {"CB"}
+        sel = [j for j, n in enumerate(ra.atom_names) if n in wanted]
+        if not sel:
+            continue
+        d = ra.coords[sel] - rb.coords[sel]
+        out[i] = float(np.sqrt(np.mean(np.sum(d * d, axis=-1))))
+    return out

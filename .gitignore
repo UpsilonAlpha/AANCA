@@ -1,0 +1,16 @@
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.egg-info/
+build/
+dist/
+
+# Structures and datasets are fetched, never committed. data/* rather than
+# data/, so the negation below can still re-include the placeholder -- git
+# cannot re-include a file whose parent directory is itself excluded.
+data/*
+!data/.gitkeep
+
+# Local diagnostics, mirroring the Bunya convention.
+.cc/
