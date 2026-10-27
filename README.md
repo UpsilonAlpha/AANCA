@@ -28,8 +28,8 @@ the open questions.
 | Structure loading, whole-protein chis, side-chain RMSD | `src/aanca/structure.py` | done |
 | Geometric damage operators | `src/aanca/damage.py` | done |
 | Chemical damage (mutation) | `src/aanca/damage.py` | **stub** — pending the tier-3 readout decision |
-| Local graph builder | — | next |
-| The rule itself | — | not started |
+| Local perception graph, rebuilt per step | `src/aanca/graph.py` | done |
+| The rule itself | — | not started (needs PyTorch, not yet installed) |
 
 ### The Milestone 1 result
 
@@ -68,6 +68,59 @@ Two things worth knowing about that table:
   instead costs up to 180° of error on those chis, and the resulting numbers look plausible.
   ASN/GLN/HIS are deliberately *not* folded: their terminal substituents differ.
 
+## The perception graph
+
+Decided: **the contact graph is rebuilt every step, not frozen.** Freezing it from the native
+structure would let the rule read the answer through the topology, and that topology does not exist
+at inference time on a novel structure — so a frozen graph measures something the method cannot
+actually do.
+
+That decision has a consequence that is easy to miss. **The backbone is fixed in this milestone, so
+a graph built from backbone and CB atoms alone would be identical at every step.** Per-step rebuild
+only means anything because neighbour selection runs over *all* heavy atoms, side chains included.
+Measured edge churn, as a fraction of the neighbour list that changes:
+
+| entry | mild noise (κ=20) | fully randomised |
+|---|---|---|
+| 193L | 2.7% | 14.3% |
+| 3NIR | 1.6% | 6.7% |
+| 1UBQ | 2.1% | 13.7% |
+
+Real, then, but modest — which is useful to know before paying for a rebuild in the inner loop.
+
+Two things handle the gradient discontinuity the rebuild introduces:
+
+- **A cosine envelope** on every edge, C1-continuous at the cutoff, so a neighbour crossing it fades
+  out instead of popping. Messages must be multiplied by `graph.envelope` or this is lost.
+- **`k` large enough that the cutoff, not `k`, excludes neighbours.** The envelope only smooths an
+  edge leaving through the *cutoff*; one dropped because `k` was full still jumps. ProteinMPNN's
+  customary `k=32` is **not** enough here — an all-heavy-atom cutoff admits more neighbours than a
+  CB-based one. Measured `k_binding_fraction`:
+
+  | k | 16 | 24 | 32 | 48 | 64 |
+  |---|---|---|---|---|---|
+  | 193L | 98% | 81% | 48% | 8% | **0%** |
+  | 1UBQ | 89% | 62% | 25% | 1% | **0%** |
+  | 3NIR | 85% | 48% | 11% | 0% | **0%** |
+
+  So the default is `k=64`, and `graph.stats.k_binding_fraction` is checked by a test so a future
+  change to the cutoff cannot silently break the smoothness guarantee.
+
+**Equivariance is chosen, not inherited.** Every edge feature is a distance, a relative orientation
+`Rᵢᵀ Rⱼ`, or a vector in a residue's own backbone frame — invariant features plus rotation
+augmentation (`Protein.transformed`), which is ProteinEBM's choice rather than E(n)-GNCA's. The
+tests assert invariance per feature block, and that assertion is not vacuous: the naive
+global-coordinate version of the same feature shifts by 1.13 under a random rotation, against a 1e-8
+tolerance.
+
+575 edge dimensions, 32 node dimensions. 400 of the 575 are the backbone block, which is constant
+across a rollout — a Torch port should cache it and recompute only the side-chain block.
+
+`graph.py` is a NumPy reference implementation, part of the verified data layer; the model's Torch
+version will be a port and should be checked against it. Neighbour selection is a hard argsort and
+is not differentiable in either version — gradients flow through the envelope weight, not through
+the choice of neighbour, which is why the envelope is there.
+
 ## Setup
 
 There is no system Python on the development laptop, but `uv` is installed, which is enough:
@@ -85,7 +138,7 @@ python -m pytest
 python scripts/validate_geometry.py
 ```
 
-160 tests, ~1.5 s. The real-structure tests skip cleanly if `data/raw/` is empty, so the suite runs
+183 tests, ~4 s. The real-structure tests skip cleanly if `data/raw/` is empty, so the suite runs
 without network access — the synthetic residues in `tests/synthetic.py` cover the maths, and the
 downloaded entries cover PDB atom naming, altlocs and disordered side chains.
 
@@ -99,9 +152,11 @@ src/aanca/
   torsions.py            Residue, measure_chis, set_chis, apply_chi_deltas
   structure.py           Protein, load_protein, sidechain_rmsd
   damage.py              geometric damage operators; mutation stub
+  graph.py               per-step k-NN graph, invariant edge features, envelope
 scripts/
   fetch_test_structures.py
-  validate_geometry.py   reports the table above plus the rotamer check
+  validate_geometry.py   reports the round-trip table plus the rotamer check
+  graph_report.py        reports graph shape, the k choice, and edge churn
 tests/
   synthetic.py           deterministic residues built by forward kinematics
 ```

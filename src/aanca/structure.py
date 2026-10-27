@@ -78,6 +78,39 @@ class Protein:
             res_ids=self.res_ids,
         )
 
+    # -- rigid motion -------------------------------------------------------
+
+    def transformed(
+        self, rotation: np.ndarray | None = None, translation: np.ndarray | None = None
+    ) -> "Protein":
+        """Rigidly move the whole structure: ``x -> rotation @ x + translation``.
+
+        This is the rotation augmentation the training recipe calls for. It is
+        also the test instrument for invariance: every chi and every graph
+        feature must be unchanged by it, since the alternative to an equivariant
+        architecture is invariant features plus this augmentation. Translation
+        augmentation is meaningless in torsion space but is included because it
+        is the cheaper half of the same assertion.
+        """
+        r = np.eye(3) if rotation is None else np.asarray(rotation, dtype=np.float64)
+        t = np.zeros(3) if translation is None else np.asarray(
+            translation, dtype=np.float64
+        )
+        if r.shape != (3, 3):
+            raise ValueError(f"rotation must be (3, 3), got {r.shape}")
+
+        new_residues = [res.with_coords(res.coords @ r.T + t) for res in self.residues]
+        atoms = self.atoms.copy()
+        for idx, res in zip(self.atom_indices, new_residues):
+            atoms.coord[idx] = res.coords
+        return Protein(
+            atoms=atoms,
+            residues=new_residues,
+            atom_indices=self.atom_indices,
+            chain_ids=self.chain_ids,
+            res_ids=self.res_ids,
+        )
+
     # -- io -----------------------------------------------------------------
 
     def save(self, path: str | Path) -> None:
