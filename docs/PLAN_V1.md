@@ -613,7 +613,7 @@ geometric damage operators, the per-step perception graph with invariant feature
 `k=64` default, a differentiable Torch path pinned against that NumPy reference, the rule itself at
 200,268 parameters, the von Mises loss with symmetry mixtures, the rollout with truncated BPTT and a
 sample pool, the dataset pipeline with spatial cropping, and the published-metric conventions
-reverse-engineered and reproduced against four packers. 443 tests.
+reverse-engineered and reproduced against four packers. 464 tests.
 
 The whole path from a downloaded coordinate file to a parameter update has been run end to end on
 real structures (`scripts/smoke_train.py`). On all 949 validation entries, 926 parse (97.6%); the 23

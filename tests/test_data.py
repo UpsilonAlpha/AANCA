@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
 
 import pytest
@@ -445,3 +446,74 @@ def test_cropping_can_be_disabled(big_dataset):
     topo, _coords, indices = big_dataset.load_crop(0)
     assert indices is None
     assert topo.n_residues > 512
+
+
+# -- von Mises sampling ----------------------------------------------------
+
+
+def test_von_mises_damage_honours_the_generator():
+    """A regression test for a silent bug, not a hypothetical.
+
+    ``torch.distributions.VonMises.sample()`` takes no generator -- its
+    signature is ``(self, sample_shape)`` and it draws from the global RNG. The
+    original implementation passed one anyway; Python accepted the call, the
+    argument went nowhere, and every von Mises damage draw in the project was
+    unseeded. The uniform path beside it *was* correctly seeded, which made the
+    whole thing look reproducible. No test caught it.
+    """
+    mask = torch.ones(5, 4, dtype=torch.bool)
+    a = von_mises_deltas(mask, 20.0, generator=torch.Generator().manual_seed(0))
+    b = von_mises_deltas(mask, 20.0, generator=torch.Generator().manual_seed(0))
+    c = von_mises_deltas(mask, 20.0, generator=torch.Generator().manual_seed(1))
+    assert torch.equal(a, b)
+    assert not torch.equal(a, c)
+
+
+@pytest.mark.parametrize("kappa", [0.5, 1.0, 5.0, 20.0, 100.0])
+def test_von_mises_sample_matches_the_exact_moment(kappa):
+    """E[cos theta] = I1(kappa) / I0(kappa), computed independently.
+
+    A rejection sampler can be seeded, terminate and still draw from the wrong
+    distribution, which reproducibility tests would never notice.
+    """
+    from aanca.data import von_mises_sample
+
+    draws = von_mises_sample((200_000,), kappa, torch.Generator().manual_seed(7))
+    exact = float(
+        torch.special.i1e(torch.tensor(kappa)) / torch.special.i0e(torch.tensor(kappa))
+    )
+    assert float(draws.cos().mean()) == pytest.approx(exact, abs=0.005)
+    # Symmetric about zero, so the sine mean vanishes.
+    assert float(draws.sin().mean()) == pytest.approx(0.0, abs=0.01)
+    assert float(draws.abs().max()) <= math.pi + 1e-9
+
+
+def test_von_mises_sample_agrees_with_torchs_own_sampler():
+    """Same distribution, different implementation. Guards against a subtly
+    wrong rejection criterion that still produces plausible-looking angles."""
+    from aanca.data import von_mises_sample
+
+    mine = von_mises_sample((200_000,), 5.0, torch.Generator().manual_seed(11))
+    theirs = torch.distributions.VonMises(
+        torch.tensor(0.0), torch.tensor(5.0)
+    ).sample((200_000,))
+    assert float(mine.cos().mean()) == pytest.approx(
+        float(theirs.cos().mean()), abs=0.005
+    )
+    assert float(mine.std()) == pytest.approx(float(theirs.std()), abs=0.01)
+
+
+def test_von_mises_sample_refuses_a_nonpositive_concentration():
+    """The uniform case is a different function; conflating them would make
+    kappa=0 silently mean 'barely damaged' instead of 'no information left'."""
+    from aanca.data import von_mises_sample
+
+    with pytest.raises(ValueError, match="concentration must be positive"):
+        von_mises_sample((4,), 0.0, torch.Generator().manual_seed(0))
+
+
+def test_zero_concentration_still_routes_to_uniform():
+    mask = torch.ones(200, 4, dtype=torch.bool)
+    draws = von_mises_deltas(mask, 0.0, generator=torch.Generator().manual_seed(0))
+    # Uniform on the circle: mean resultant length near zero.
+    assert abs(float(draws.cos().mean())) < 0.1

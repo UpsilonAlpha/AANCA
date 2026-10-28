@@ -50,6 +50,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import random
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -262,6 +263,85 @@ def read_manifest(path: str | Path) -> dict[str, list[StructureSpec]]:
 # -- damage, sampled in torch ----------------------------------------------
 
 
+#: Below this, Best-Fisher's constants degenerate (``b -> 0``, ``r -> inf``) and
+#: the distribution is indistinguishable from uniform anyway.
+_MIN_CONCENTRATION = 1e-6
+
+#: Rejection sampling needs a bound. Best-Fisher accepts with probability above
+#: 0.65 for every concentration, so reaching this many rounds means something is
+#: wrong rather than merely unlucky.
+_MAX_REJECTION_ROUNDS = 128
+
+
+def von_mises_sample(
+    shape: tuple[int, ...],
+    concentration: float,
+    generator: torch.Generator | None = None,
+    dtype: torch.dtype = torch.float64,
+) -> Tensor:
+    """Von Mises draws about zero, honouring ``generator``.
+
+    Best-Fisher (1979) rejection sampling, written out rather than delegated,
+    because ``torch.distributions.VonMises.sample()`` **takes no generator** --
+    its signature is ``(self, sample_shape)`` and it draws from the global RNG.
+
+    The original version here passed a generator to it anyway. Python accepted
+    the call, the argument went nowhere, and every von Mises damage draw in the
+    project was unseeded: identical seeds gave different structures, while the
+    uniform path beside it was correctly seeded and looked like proof that the
+    whole thing was reproducible. Nothing failed, no test caught it, and it
+    surfaced only when the held-out evaluation protocol demanded that damage be
+    byte-identical across runs.
+    """
+    kappa = float(concentration)
+    if kappa <= _MIN_CONCENTRATION:
+        raise ValueError(f"concentration must be positive, got {concentration}")
+
+    a = 1.0 + math.sqrt(1.0 + 4.0 * kappa * kappa)
+    b = (a - math.sqrt(2.0 * a)) / (2.0 * kappa)
+    r = (1.0 + b * b) / (2.0 * b)
+
+    count = 1
+    for dim in shape:
+        count *= dim
+    out = torch.zeros(count, dtype=dtype)
+    todo = torch.arange(count)
+
+    for _ in range(_MAX_REJECTION_ROUNDS):
+        if todo.numel() == 0:
+            break
+        n = todo.numel()
+        u1 = torch.rand(n, dtype=dtype, generator=generator)
+        u2 = torch.rand(n, dtype=dtype, generator=generator)
+        u3 = torch.rand(n, dtype=dtype, generator=generator)
+
+        z = torch.cos(math.pi * u1)
+        f = (1.0 + r * z) / (r + z)
+        c = kappa * (r - f)
+
+        # The second criterion involves log(c / u2), which is undefined for
+        # c <= 0. Guard it rather than letting a NaN decide the comparison:
+        # NaN >= 0 is False, so it would reject by accident rather than by
+        # reasoning, and would hide a sign error if one ever appeared.
+        positive = c > 0
+        guarded = torch.where(positive, c, torch.ones_like(c))
+        accept = (c * (2.0 - c) - u2 > 0) | (
+            positive & (torch.log(guarded / u2) + 1.0 - c >= 0)
+        )
+
+        theta = torch.sign(u3 - 0.5) * torch.acos(f.clamp(-1.0, 1.0))
+        out[todo[accept]] = theta[accept]
+        todo = todo[~accept]
+    else:
+        raise RuntimeError(
+            f"von Mises rejection sampling did not converge for kappa={kappa} "
+            f"after {_MAX_REJECTION_ROUNDS} rounds, with {todo.numel()} draws "
+            "outstanding -- the acceptance rate should never be this low"
+        )
+
+    return out.reshape(shape)
+
+
 def von_mises_deltas(
     chi_mask: Tensor, concentration: float, generator: torch.Generator | None = None
 ) -> Tensor:
@@ -271,13 +351,9 @@ def von_mises_deltas(
     :func:`torch_geometry.apply_chi_deltas`, which keeps the perturbation an
     exactly invertible rigid rotation.
     """
-    if concentration <= 0:
+    if concentration <= _MIN_CONCENTRATION:
         return uniform_deltas(chi_mask, generator)
-    distribution = torch.distributions.VonMises(
-        loc=torch.zeros(chi_mask.shape, dtype=torch.float64),
-        concentration=torch.full(chi_mask.shape, float(concentration), dtype=torch.float64),
-    )
-    noise = distribution.sample()
+    noise = von_mises_sample(tuple(chi_mask.shape), concentration, generator)
     return torch.where(chi_mask, noise, torch.zeros_like(noise))
 
 

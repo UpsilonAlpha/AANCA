@@ -14,3 +14,6 @@ data/*
 
 # Local diagnostics, mirroring the Bunya convention.
 .cc/
+
+# training run outputs: checkpoints and curves, not source
+runs/
