@@ -5,6 +5,21 @@ disagree. `HANDOFF.md` remains the reference for prior art and for the Bunya clu
 
 ---
 
+## 0. What success means
+
+**Theoretically sound and experimentally accurate. Not necessarily unique.** Decided 2026-10-28,
+and it is a deliberate correction to an earlier framing in this document that treated the
+unpublished-ness of the fixed-point objective as the goal.
+
+The consequence that matters: **if the learned rule turns out to behave like a machine-learned
+interatomic potential, that is an interesting finding and gets reported as one.** It is not a
+failure mode to be designed around. See §6a, which turns that question into two measurements rather
+than a rhetorical position.
+
+This also lowers the bar the work has to clear. It does not need to beat RDE or ProteinEBM. A local
+update rule for side-chain packing, characterised honestly — accuracy, basin size, stability, and
+whether its update field is conservative — is a result whichever way those numbers fall.
+
 ## 1. Scope: one model, one loss, one dataset, one split, four plots
 
 v1 answers one question: **does a strictly local, step-unconditioned rule converge to the native
@@ -81,12 +96,12 @@ getting the mean right. Cap `log κ` and watch whether it saturates.
 **Bond lengths and angles are built but frozen.** See §2a — an earlier version of this plan argued
 they would cost the exactness guarantee, which was wrong.
 
-**Delta head, not energy head.** Variant (B) — a per-residue von Mises *energy* over its own chis,
-with the joint defined as the sum — is the more defensible object: consistent conditionals,
-principled Gibbs, and Langevin for free. It is deferred because the unclaimed contribution is the
-fixed-point objective, and (A) tests it with the fewest confounds. (B) also moves the work toward
-"energy plus a sampler", which is what the prior-art write-up identifies as the field's existing
-version of the idea.
+**Delta head first, energy head as a planned second arm.** Variant (B) — a per-residue von Mises
+*energy* over its own chis, with the joint defined as the sum — is the more defensible object:
+consistent conditionals, principled Gibbs, and Langevin for free. (A) ships first because it tests
+the fixed-point objective with the fewest confounds, but (B) is **not** merely an alternative to
+fall back on: per §6a it is the ablation that makes the comparison against a learned potential a
+measurement rather than an argument. Build (A), then (B) on the same trunk.
 
 **Gibbs, never Langevin.** Langevin needs ∇log p of a joint density; we never form a joint, only
 local conditionals. Note that **an asynchronous update mask plus a stochastic head already *is*
@@ -237,15 +252,40 @@ and a checkpoint or rollout sweep is exactly that pattern. See `BUNYA_BROWSER_SH
 
 ## 5. Data and split
 
-**One split.** The four-pool scheme belongs to the ddG work and is deferred with it.
+**One split, and it is theirs, not ours.** Looked up 2026-10-28; this replaces an earlier
+placeholder that said "follow DiffPack's protocol" without knowing what it was.
 
-- PDB subset, **following DiffPack's published filtering protocol**. Tier 1's job is "not worse than
-  existing packers", and that claim is only auditable if the pipeline matches; any deviation is a
-  free objection. Read the exact filters out of the paper rather than reconstructing them.
-- Split **by 40% sequence-identity cluster, not by chain**.
-- **CASP13 and CASP14 held out, together with their homologs.** Dropping only the targets leaks.
-- Include multi-chain entries, so interfaces are in distribution (§1).
-- A validation set of held-out clusters for early stopping and κ calibration.
+The protocol AttnPacker, DiffPack and FlowPacker all share:
+
+| | |
+|---|---|
+| Training | **BC40** — PDB clustered at 40% sequence identity — on **AttnPacker's split**: 37,266 chains train, 1,500 validation. DiffPack follows it verbatim. |
+| Test | **CASP13 (82 regular targets)** and **CASP14 (64 regular targets)**, native backbones. FlowPacker adds CASP15. |
+| Leakage filter | No training structure within **≥40% sequence identity of any test target**. FlowPacker and the Invariant Point Message Passing paper use MMseqs2 `easy-search` for this; the tool differs between papers. |
+| Resolution filter | **Not documented** in any paper or repo I could find. Unresolved — do not invent one, since an undocumented filter is a divergence we would be unable to defend. |
+
+What is actually obtainable, which is the awkward part:
+
+- **The test sets are.** AttnPacker's Zenodo record 7713779 holds the PDB files used to generate
+  their published results. That is the way to match the benchmark exactly rather than re-deriving
+  the CASP target lists.
+- **BC40 and the split are not.** AttnPacker's repository publishes pre-trained models and result
+  PDBs but neither the training set nor the split list. So the training pool has to be
+  reconstructed, and that reconstruction is a known source of divergence to state in the write-up.
+- Reconstruction route: **RCSB's own `clusters-by-entity-40.txt`**. BC40 derives from RCSB's 40%
+  sequence clustering in the first place, so this is the same resource rather than a substitute —
+  but RCSB has changed clustering tool over the years, so the clusters will not be bit-identical to
+  the BC40 those papers used. `data.ClusterIndex` consumes that file.
+- **Holdout exclusion is by cluster, not by entry.** Dropping only the CASP targets leaves their
+  homologs in training. `data.split_by_cluster` removes whole groups and *refuses to run* on an
+  empty holdout list, because silently training on everything is how an indefensible number gets
+  produced.
+
+Include multi-chain entries so interfaces are in distribution (§1).
+
+One caveat on local smoke-testing: by the burial definition in §6, ubiquitin is only 15.8% core and
+65.8% surface, where 193L and 4HHB are 36–39% core. The small convenient structures are mostly the
+*easy* population, so they are fine for correctness checks and useless as an accuracy signal.
 
 ---
 
@@ -256,6 +296,18 @@ and a checkpoint or rollout sweep is exactly that pattern. See `BUNYA_BROWSER_SH
    rule landing *close* to a globally attentive diffusion model is already the interesting result.
    Being far off is the kill signal.
 
+   **Three numbers, theirs, in `metrics.py`:** χ MAE per chi index, **χ accuracy — the fraction
+   within 20°**, and side-chain atom RMSD. The accuracy figure is their headline alongside MAE and
+   was missing from an earlier version of this plan.
+
+   **Stratified by burial, which was the most valuable thing to copy.** AttnPacker's convention, as
+   cited by the later papers: **core** is ≥20 CB atoms within 10 Å, **surface** is ≤15. Note that is
+   deliberately *not* a partition — 16–19 neighbours is neither, and is reported separately rather
+   than silently reassigned. Core residues are the hard ones; a pooled number hides whether a method
+   packs well or is merely good at solvent-exposed side chains that barely matter. GLY has no CB so
+   the virtual one is used; the papers do not say what they do, and `include_glycine_cb` exists so
+   the alternative can be checked.
+
    **Both metrics must respect chemical symmetry**, and this is not a detail. A carboxylate's two
    oxygens and an aromatic ring's two halves are indistinguishable, so a 180-degree flip is the same
    structure. Scoring it by atom name costs ~1.8 Å on the affected residues and inflates the
@@ -263,6 +315,10 @@ and a checkpoint or rollout sweep is exactly that pattern. See `BUNYA_BROWSER_SH
    competing methods, in the one comparison that has to be auditable. `sidechain_rmsd` minimises
    over `rc.symmetric_relabellings`; `chi_error` and `chi_mae_degrees` fold the periodic chis.
    LEU/VAL methyls are excluded, matching AlphaFold's table and therefore the baselines.
+
+   Later escalation, already defined by their protocol: the **non-native backbone** variants (47
+   CASP13 and 27 CASP14 targets, ≤600 residues, Cα RMSD < 2.5 Å from native). Worth knowing it
+   exists so we do not invent a different robustness test.
 2. **Does it converge?** Mean |Δχ| against step count. Does it decay, or oscillate as some of
    Grattarola's morphogenesis rules did?
 3. **Does it hold?** 500 steps on a rule trained to 30. Measure drift from the step-30 structure.
@@ -277,6 +333,60 @@ high-κ χ1 inflates the prediction for its whole downstream set.
 
 B-factors absorb refinement error, occupancy problems and resolution effects, so this is a
 validation correlation and **never a loss** — training on them fits the refinement protocol.
+
+## 6a. Characterisation: what kind of object did we learn?
+
+Architecturally this is close to a machine-learned interatomic potential. NequIP, MACE and Allegro
+are also strictly local, weight-shared across sites, invariant by feature design, and applied
+iteratively to move atoms downhill; Allegro's selling point is literally strict locality, and
+ProteinEBM is the protein-scale version. Adding nonbonded fields (§2b) and bond/angle control (§2a)
+makes the *architecture* more forcefield-like, not less.
+
+So the distinction cannot rest on architecture. It rests on two things: the update is learned
+directly rather than derived as ∇E, and the supervision is the global basin structure rather than a
+local derivative. Per §0, these are things to **measure and report**, not to defend.
+
+### The curl test
+
+An MLIP's update field is conservative by construction — it is the gradient of a scalar. A directly
+learned update field need not be. Walk closed loops in torsion space and sum the update's component
+along the loop tangent; nonzero circulation means the rule is not the gradient of *any* energy
+function.
+
+Report whichever way it falls:
+
+- **Non-conservative.** The rule is doing something no potential can, and the Graph NCA oscillation
+  failure mode becomes the expected risk rather than a surprise — limit cycles are what
+  non-conservative fields do.
+- **Approximately conservative.** We learned a local potential's gradient without ever forming the
+  potential, and without needing force labels. That is a legitimate and useful result: MLIP training
+  on proteins is bottlenecked on reference forces, and every PDB structure being its own label
+  sidesteps that bottleneck entirely.
+
+Cheap — a few hours on a trained model — but it needs a trained model, so it cannot run until after
+§5 and a first training run.
+
+### The energy-head ablation
+
+Train the **same trunk** with a scalar energy head and descend its gradient. Same data, same
+locality, same parameter count; only the objective differs. This is variant (B) from §2, promoted
+from "deferred alternative" to a planned arm of the study.
+
+Without it, "how does this differ from a learned potential?" gets answered by the reader. With it,
+the answer is a number, and the comparison is clean because nothing but the objective changes.
+
+### What AANCA gives that a potential does not
+
+Worth stating plainly, since two of these are already built:
+
+- κ is a per-site conformational uncertainty read off directly. A potential needs an ensemble.
+- Rigid bond lengths and angles are exact by construction in torsion space. An MLIP must learn that
+  bonds are stiff from data and spends capacity on it.
+- No force labels are needed at all.
+
+And what it does not give: free energies, thermodynamic ensembles, or kinetics. This is a
+native-basin attractor finder, not a thermodynamic model, and the write-up should say so rather than
+let a reader assume otherwise.
 
 ---
 
