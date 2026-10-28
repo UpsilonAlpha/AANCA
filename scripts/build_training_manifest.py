@@ -217,6 +217,14 @@ def main() -> int:
     out = ROOT / "data" / "manifest.json"
     out.parent.mkdir(parents=True, exist_ok=True)
     write_manifest(out, splits)
+    # Persist the actual entry and cluster lists, not just counts. The
+    # test-leakage guarantee is the one claim in this pipeline that cannot be
+    # re-derived cheaply -- it costs 210 MMseqs2 queries -- so it has to be
+    # auditable from the artifact rather than taken on trust.
+    banned_clusters: set[str] = set()
+    for pdb_id in holdout:
+        banned_clusters |= clusters.clusters_of(pdb_id) or {pdb_id.upper()}
+
     meta = {
         "resolution_max": args.resolution,
         "validation_fraction": args.validation_fraction,
@@ -226,6 +234,8 @@ def main() -> int:
         "leakage_excluded_entries": len(holdout),
         "leakage_filter_applied": not args.skip_leakage,
         "counts": {name: len(specs) for name, specs in splits.items()},
+        "leaking_entries": sorted(holdout),
+        "banned_clusters": sorted(banned_clusters),
     }
     (ROOT / "data" / "manifest_meta.json").write_text(
         json.dumps(meta, indent=2), encoding="utf-8"

@@ -128,6 +128,39 @@ def test_holdout_removes_the_whole_group(clusters):
     assert {s.pdb_id for s in splits["train"]} == {"3GHI", "9XYZ"}
 
 
+def test_sharing_a_cluster_with_an_excluded_entry_is_not_itself_leakage():
+    """The distinction that produced a false leak report, encoded.
+
+    An excluded entry can touch two clusters: one banned, because it holds a
+    chain homologous to a test target, and one innocent. An entry sharing only
+    the innocent cluster is 40%-similar to *a chain of the excluded entry*,
+    which says nothing about its similarity to any test target -- so it must
+    survive.
+
+    Checking "shares any cluster with something excluded" instead of "touches a
+    banned cluster" reported 60 false positives on the real manifest.
+    """
+    index = ClusterIndex(
+        [
+            # TGT and BRIDGE share cluster C1 -- BRIDGE is a genuine homolog.
+            "C1 TGT_1 BRIDGE_1\n",
+            # BRIDGE's second entity sits in C2 with INNOCENT. C2 is not banned.
+            "C2 BRIDGE_2 INNOCENT_1\n",
+        ]
+    )
+    specs = [
+        StructureSpec(pdb_id=i, path=DATA / f"{i}.pdb", group=index.group_of(i))
+        for i in ("BRIDGE", "INNOCENT")
+    ]
+    splits = split_by_cluster(specs, {"TGT"}, index, validation_fraction=0.0)
+
+    assert {s.pdb_id for s in splits["excluded"]} == {"BRIDGE"}
+    assert {s.pdb_id for s in splits["train"]} == {"INNOCENT"}
+    # INNOCENT shares C2 with the excluded BRIDGE, but touches no banned cluster.
+    assert index.clusters_of("INNOCENT") & index.clusters_of("BRIDGE")
+    assert not index.clusters_of("INNOCENT") & index.clusters_of("TGT")
+
+
 def test_an_empty_holdout_is_refused(clusters):
     """Silently training on the test set is how an indefensible number happens."""
     specs = _specs(clusters, ["1ABC", "3GHI"])

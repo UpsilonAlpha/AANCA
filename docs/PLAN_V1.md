@@ -319,6 +319,46 @@ cheapest possible signal that grouping has gone wrong — it is what caught this
 
 Include multi-chain entries so interfaces are in distribution (§1).
 
+### The built manifest
+
+`scripts/build_training_manifest.py`, then `scripts/audit_manifest.py` to verify:
+
+| | |
+|---|---|
+| X-ray protein entries ≤2.5 Å | 161,997 |
+| deduplicated to one per 40% cluster | 25,303 |
+| largest cluster group | 2,143 |
+| CASP target sequences queried | 210, 0 failures |
+| entries within 40% of a target | 2,227, spanning 646 clusters |
+| representatives removed | 592 |
+| **train / validation** | **23,723 / 988** |
+
+The published split is 37,266 training *chains*; ours is 23,723 *entries*, and entries hold several
+chains, so the volume is comparable or larger — but not comparably composed, which is a divergence to
+state rather than gloss.
+
+Most CASP targets returned very few identity hits, which is the right signal: CASP targets are chosen
+partly because they lack close PDB homologs, so thousands of hits per target would have meant the
+filter was broken rather than working.
+
+**The audit is part of the artifact.** The leakage guarantee costs 210 MMseqs2 queries to re-derive,
+so the build persists the matched entries and banned clusters and `audit_manifest.py` checks them,
+exiting non-zero on violation. Current state: 24,711 survivors, **0 touching a banned cluster**.
+
+Getting that check right took two attempts, and the wrong version is the tempting one. An excluded
+entry may touch *two* clusters — one banned, because it holds a chain homologous to a test target,
+and one innocent. A survivor sharing only the innocent cluster is 40%-similar to *a chain of the
+excluded entry*, which says nothing about its similarity to any test target. Testing "shares any
+cluster with something excluded" reported **60 false leaks**; the correct condition is "touches a
+banned cluster". `tests/test_data.py::test_sharing_a_cluster_with_an_excluded_entry_is_not_itself_leakage`
+encodes the distinction.
+
+Two standing divergences from BC40, neither about quality:
+
+1. **The 2.5 Å resolution cutoff is ours.** No packing paper documents one, so it is a recorded
+   parameter rather than a reproduction.
+2. **We group by entry where BC40 counts chains**, so the pool is composed differently.
+
 One caveat on local smoke-testing: by the burial definition in §6, ubiquitin is only 15.8% core and
 65.8% surface, where 193L and 4HHB are 36–39% core. The small convenient structures are mostly the
 *easy* population, so they are fine for correctness checks and useless as an accuracy signal.
