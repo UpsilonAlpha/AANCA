@@ -1,8 +1,13 @@
 """AANCA -- an amino-acid neural cellular automaton for side-chain repacking.
 
-Milestone 1 is the geometry and data layer: extract chi1-chi4 for all 20 residue
-types, modify them exactly, and prove the round trip. Nothing here trains a
-model yet.
+The geometry and data layer: extract chi1-chi4 for all 20 residue types, modify
+them exactly, build the per-step perception graph. See ``docs/PLAN_V1.md`` for
+the model and training plan.
+
+**Importing this package does not import Torch.** ``model``, ``losses`` and
+``torch_geometry`` are deliberately left out of these re-exports so the data
+layer stays usable without a Torch install -- import them by module path when
+you want them.
 """
 
 from . import damage, geometry, graph, residue_constants, structure, torsions

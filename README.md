@@ -27,9 +27,19 @@ the open questions.
 | Chi extraction and modification per residue | `src/aanca/torsions.py` | done |
 | Structure loading, whole-protein chis, side-chain RMSD | `src/aanca/structure.py` | done |
 | Geometric damage operators | `src/aanca/damage.py` | done |
-| Chemical damage (mutation) | `src/aanca/damage.py` | **stub** — pending the tier-3 readout decision |
 | Local perception graph, rebuilt per step | `src/aanca/graph.py` | done |
-| The rule itself | — | not started (needs PyTorch, not yet installed) |
+| Differentiable torsion path (Torch) | `src/aanca/torch_geometry.py` | done |
+| The rule — one hop, two heads | `src/aanca/model.py` | done, untrained |
+| Von Mises likelihood + no-op term | `src/aanca/losses.py` | done |
+| Torch port of the featuriser | — | **next** |
+| Rollout with sample pool + async mask | — | next |
+| Dataset pipeline | — | next |
+| Chemical damage (mutation) | `src/aanca/damage.py` | deferred — not in v1 |
+
+**v1 scope is in [`docs/PLAN_V1.md`](docs/PLAN_V1.md)** — read that before adding anything. The short
+version: v1 answers *does a strictly local, step-unconditioned rule converge to the native packing
+and stay there?*, which needs only geometric damage on PDB structures. SKEMPI, ΔΔG, mutations,
+ProteinEBM, free bond geometry and the energy-head variant are all deferred.
 
 ### The Milestone 1 result
 
@@ -121,6 +131,34 @@ version will be a port and should be checked against it. Neighbour selection is 
 is not differentiable in either version — gradients flow through the envelope weight, not through
 the choice of neighbour, which is why the envelope is there.
 
+## The rule
+
+200,268 parameters — about 0.3% of ProteinEBM. Parameter count is not the constraint here; BPTT
+memory is, and `graph.py`'s backbone/side-chain block split is what keeps a 50-step rollout under
+~500 MB instead of ~2.2 GB.
+
+Three things in `model.py` are load-bearing and each has a test asserting it:
+
+- **One message-passing hop per step.** Depth comes from time. `test_one_step_is_exactly_one_hop`
+  perturbs a non-neighbour's features and asserts the target residue's update is bit-identical —
+  that is the locality claim, checked rather than asserted in prose. A companion test perturbs an
+  actual neighbour and requires the output to *change*, so the first can't pass vacuously.
+- **Identity initialisation.** The delta head's final layer is zeroed with a bias giving
+  `(cos, sin) = (1, 0)`, so an untrained rule outputs exactly zero and is the identity map. Zeroing
+  the bias too would give `atan2(0, 0)`, whose gradient is undefined. A consequence worth knowing:
+  on the first step no gradient reaches the trunk, only the head's own weights — that looks like a
+  bug and has a test documenting it.
+- **κ is capped** at `log κ ≤ 6` through a `tanh`, because a likelihood loss can be reduced by
+  claiming confidence instead of being accurate.
+
+The loss is a von Mises NLL. The two-fold symmetric chis are scored as a proper two-component
+mixture `½p(x) + ½p(x+π)` rather than by folding the residual, which would compute `−log max(…)`
+instead of `−log mean(…)` and bias κ upward on exactly those chis.
+
+`torch_geometry.py` is checked against the NumPy reference, and the Milestone 1 round-trip
+exactness survives the port. Importing `aanca` does **not** import Torch — the data layer stays
+usable without it.
+
 ## Setup
 
 There is no system Python on the development laptop, but `uv` is installed, which is enough:
@@ -128,7 +166,11 @@ There is no system Python on the development laptop, but `uv` is installed, whic
 ```bash
 uv venv --python 3.11 .venv
 uv pip install numpy biotite pytest
+uv pip install torch --index-url https://download.pytorch.org/whl/cpu
 ```
+
+CPU-only Torch deliberately: locally it is for correctness checks, and Bunya needs a ROCm build,
+which is a different wheel entirely.
 
 Then fetch the validation structures (small, ~1 MB total, gitignored) and run the checks:
 
@@ -138,7 +180,7 @@ python -m pytest
 python scripts/validate_geometry.py
 ```
 
-183 tests, ~4 s. The real-structure tests skip cleanly if `data/raw/` is empty, so the suite runs
+261 tests, ~8 s. The real-structure tests skip cleanly if `data/raw/` is empty, so the suite runs
 without network access — the synthetic residues in `tests/synthetic.py` cover the maths, and the
 downloaded entries cover PDB atom naming, altlocs and disordered side chains.
 
@@ -153,6 +195,9 @@ src/aanca/
   structure.py           Protein, load_protein, sidechain_rmsd
   damage.py              geometric damage operators; mutation stub
   graph.py               per-step k-NN graph, invariant edge features, envelope
+  torch_geometry.py      differentiable torsion path; static index topology
+  model.py               the rule: one hop, delta + kappa heads
+  losses.py              von Mises NLL, symmetry mixture, no-op term
 scripts/
   fetch_test_structures.py
   validate_geometry.py   reports the round-trip table plus the rotamer check
