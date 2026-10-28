@@ -302,6 +302,30 @@ def test_pool_round_trips_a_state(setup):
     assert not got.coords.requires_grad, "pooled states must be detached"
 
 
+def test_pool_refuses_a_non_finite_state(setup):
+    """Otherwise one bad update seeds every later one that draws it.
+
+    The point of refusing here rather than at the call site is that the run
+    then fails where the NaN was produced, instead of at a neighbour search
+    an unknown number of updates later.
+    """
+    _protein, _topo, _coords, damaged = setup
+    rule = _trained_ish()
+    pool = SamplePool(capacity=4, seed=0)
+
+    assert pool.insert(1, initial_state(damaged, rule)) is True
+
+    spoiled = damaged.clone()
+    spoiled[0, 0, 0] = float("nan")
+    assert pool.insert(2, initial_state(spoiled, rule)) is False
+    assert pool.sample(2) is None
+    assert len(pool) == 1, "the refused state must not displace a good one"
+
+    state = initial_state(damaged, rule)
+    state.hidden[0, 0] = float("inf")
+    assert pool.insert(3, state) is False, "the hidden state poisons just as well"
+
+
 def test_pool_is_keyed_by_structure(setup):
     """A pooled state is only a valid seed for the structure it came from --
     the topology and the native target differ."""

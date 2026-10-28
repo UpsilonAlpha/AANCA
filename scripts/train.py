@@ -131,6 +131,12 @@ def main() -> int:
     parser.add_argument("--k", type=int, default=64)
     parser.add_argument("--lr", type=float, default=3e-4)
     parser.add_argument("--clip", type=float, default=10.0)
+    parser.add_argument(
+        "--max-skipped",
+        type=int,
+        default=200,
+        help="give up after this many non-finite updates (0 to never give up)",
+    )
     parser.add_argument("--pool-probability", type=float, default=0.5)
     parser.add_argument(
         "--noop-weight",
@@ -233,6 +239,7 @@ def main() -> int:
     best = float("inf")
     start_update = 0
     elapsed_before = 0.0
+    resumed_skipped: dict = {}
 
     state = None
     if args.resume == "auto" and last_path.exists():
@@ -283,6 +290,9 @@ def main() -> int:
         start_update = int(state["update"])
         elapsed_before = float(state["elapsed"])
         baseline_input_mae = dict(state["input_mae"])
+        # ``.get`` because checkpoints written before the counters existed are
+        # still resumable; a missing tally is zero, not an error.
+        resumed_skipped = dict(state.get("skipped") or {})
         print(
             f"resumed {last_path} at update {start_update} "
             f"({elapsed_before / 60:.1f} min spent, best chi1 {best:.2f} deg)"
@@ -319,11 +329,21 @@ def main() -> int:
             encoding="utf-8",
         )
 
+    #: Non-finite events, counted rather than fatal. ``update`` is an update
+    #: whose loss or gradient was not finite and was therefore not applied;
+    #: ``state`` is a rollout whose result the pool refused. They are
+    #: different failures and worth separating: the first leaves the weights
+    #: untouched, the second means the forward pass produced NaN from weights
+    #: that were finite going in. Carried in the checkpoint so the tally is a
+    #: property of the run rather than of the segment.
+    skipped = {"update": 0, "state": 0, **resumed_skipped}
+
     def write_checkpoint(update: int) -> None:
         ckpt.save(
             last_path,
             {
                 "update": update,
+                "skipped": dict(skipped),
                 "elapsed": elapsed(),
                 "best": best,
                 "fingerprint": ckpt.fingerprint(args),
@@ -381,12 +401,16 @@ def main() -> int:
         seed_state = None
         if rng.random() < args.pool_probability:
             seed_state = pool.sample(index)
-        start = (
-            seed_state.coords
-            if seed_state is not None
+        # The finiteness test is belt to the pool's own braces: the pool
+        # refuses to store a non-finite state, but a checkpoint written
+        # before it did so can still carry one, and a resume must not
+        # reinstate a poisoned seed.
+        usable = (
+            seed_state is not None
             and seed_state.coords.shape == sample.damaged.shape
-            else sample.damaged
+            and bool(torch.isfinite(seed_state.coords).all())
         )
+        start = seed_state.coords if usable else sample.damaged
 
         terms, result = training_objective(
             rule,
@@ -401,16 +425,57 @@ def main() -> int:
         optimiser.zero_grad()
         terms.total.backward()
         grad_norm = torch.nn.utils.clip_grad_norm_(rule.parameters(), args.clip)
-        optimiser.step()
-        pool.insert(index, result.state)
-        recent.append(float(terms.total.detach()))
+
+        # **A non-finite update is skipped, not clipped.** Clipping does not
+        # contain this: ``clip_grad_norm_`` divides by a total norm that is
+        # itself NaN, so every gradient becomes NaN and one bad update writes
+        # NaN into every weight permanently. After that the rule emits NaN
+        # coordinates for ever, the pool fills with them, and the run dies
+        # much later at a neighbour search with a traceback pointing at
+        # scipy. The guard is two reductions and it turns an unrecoverable
+        # run into a counted, reported event.
+        healthy = bool(torch.isfinite(terms.total) and torch.isfinite(grad_norm))
+        if healthy:
+            optimiser.step()
+            if not pool.insert(index, result.state):
+                skipped["state"] += 1
+        else:
+            optimiser.zero_grad(set_to_none=True)
+            skipped["update"] += 1
+            if skipped["update"] in (1, 10, 100) or skipped["update"] % 1000 == 0:
+                print(
+                    f"  update {update}: non-finite loss/gradient "
+                    f"(loss {float(terms.total):.4g}, grad {float(grad_norm):.4g}); "
+                    f"skipped, {skipped['update']} so far",
+                    flush=True,
+                )
+            # Persistent, not transient: something is wrong with the setup or
+            # the data, and a run that skips every update is not training.
+            if args.max_skipped > 0 and skipped["update"] >= args.max_skipped:
+                print(
+                    f"\n{skipped['update']} non-finite updates (limit "
+                    f"--max-skipped {args.max_skipped}); stopping rather than "
+                    "spending a walltime on a run that is not learning."
+                )
+                write_checkpoint(update)
+                write_history()
+                return 1
+        if healthy:
+            recent.append(float(terms.total.detach()))
 
         if update % max(args.eval_every // 4, 1) == 0:
             done = update - start_update
             print(
-                f"  {update:>6}  loss {sum(recent) / len(recent):>7.3f}  "
+                f"  {update:>6}  loss "
+                f"{sum(recent) / len(recent) if recent else float('nan'):>7.3f}  "
                 f"grad {float(grad_norm):>7.3f}  "
-                f"{(time.perf_counter() - started) / done:>5.2f} s/update",
+                f"{(time.perf_counter() - started) / done:>5.2f} s/update"
+                + (
+                    f"  [skipped {skipped['update']} updates, "
+                    f"{skipped['state']} states]"
+                    if skipped["update"] or skipped["state"]
+                    else ""
+                ),
                 flush=True,
             )
             recent.clear()

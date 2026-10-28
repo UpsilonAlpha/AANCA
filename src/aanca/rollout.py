@@ -345,13 +345,30 @@ class SamplePool:
     def __len__(self) -> int:
         return len(self._entries)
 
-    def insert(self, structure_id: int, state: RolloutState) -> None:
-        """Store a detached copy, evicting at random once full."""
+    def insert(self, structure_id: int, state: RolloutState) -> bool:
+        """Store a detached copy, evicting at random once full.
+
+        **A non-finite state is refused**, and that is the whole reason this
+        returns a bool. The pool is the one place in a run where a single bad
+        update stops being transient: a NaN stored here is drawn as a *seed*
+        by some later update, every rollout from it is NaN, and the run dies
+        at a neighbour search ("data must be finite") an unknown number of
+        updates after the thing that actually went wrong. Keeping the
+        invariant in the container rather than at the call site means it holds
+        for every caller, and it costs one reduction over the coordinates.
+
+        Refusing is not the same as repairing. The caller is told so it can
+        count and report; a pool that refuses often is a run in trouble, and
+        that should be visible rather than quietly papered over.
+        """
+        if not (torch.isfinite(state.coords).all() and torch.isfinite(state.hidden).all()):
+            return False
         entry = (structure_id, state.detached())
         if len(self._entries) < self.capacity:
             self._entries.append(entry)
         else:
             self._entries[self._rng.randrange(self.capacity)] = entry
+        return True
 
     def sample(self, structure_id: int) -> RolloutState | None:
         """A stored state for this structure, or ``None`` to start from damage.

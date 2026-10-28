@@ -36,7 +36,7 @@ ROCM="${AANCA_ROCM:-}"
 
 echo "root  : ${ROOT}"
 echo "venv  : ${VENV}"
-echo "wheels: ${ROCM:+ROCm ${ROCM}}${ROCM:-CPU-only}"
+echo "wheels: ${ROCM:+ROCm }${ROCM:-CPU-only}"
 
 module purge 2>/dev/null || true
 PYTHON=""
