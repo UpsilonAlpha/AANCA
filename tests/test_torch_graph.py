@@ -193,6 +193,52 @@ def test_backbone_block_is_reusable_across_a_step(loaded):
     assert torch.allclose(a, b, atol=1e-10)
 
 
+def test_fixed_backbone_changes_gradients_not_values(loaded):
+    """The memory saving must be exact, not an approximation.
+
+    Building the backbone block under no_grad is legitimate only because the
+    backbone never moves, so its gradient is identically zero. The *values* must
+    be bit-identical either way -- if they are not, the flag is changing the
+    model rather than its memory profile.
+    """
+    _protein, topo, coords = loaded
+    neighbours, edge_mask = select_neighbours(coords, topo, cutoff=CUTOFF)
+
+    with_grad, _e1, _s1 = edge_features(
+        coords, topo, neighbours, edge_mask, CUTOFF, fixed_backbone=False
+    )
+    without, _e2, _s2 = edge_features(
+        coords, topo, neighbours, edge_mask, CUTOFF, fixed_backbone=True
+    )
+    assert torch.equal(with_grad, without)
+
+
+def test_fixed_backbone_keeps_the_block_out_of_the_graph(loaded):
+    """Measured 47% of retained activations on 4HHB. Detaching afterwards does
+    not work -- by then the tensor is already built and saved for backward."""
+    from aanca.torch_graph import backbone_edge_block
+
+    _protein, topo, coords = loaded
+    start = coords.clone().requires_grad_(True)
+    neighbours, _mask = select_neighbours(start, topo, cutoff=CUTOFF)
+
+    fixed = backbone_edge_block(start, topo, neighbours, fixed_backbone=True)
+    assert not fixed.requires_grad
+
+    moving = backbone_edge_block(start, topo, neighbours, fixed_backbone=False)
+    assert moving.requires_grad, "the escalation path must still differentiate"
+
+
+def test_sidechain_gradients_survive_a_fixed_backbone(loaded):
+    """The saving must not cost the gradients that actually matter."""
+    _protein, topo, coords = loaded
+    start = coords.clone().requires_grad_(True)
+    graph = build_graph(start, topo, cutoff=CUTOFF, fixed_backbone=True)
+    sl = graph.feature_slices["sidechain_rbf"]
+    graph.edge_features[..., sl].sum().backward()
+    assert float(start.grad.abs().sum()) > 0.0
+
+
 def test_passing_a_cached_backbone_block_changes_nothing(loaded):
     _protein, topo, coords = loaded
     from aanca.torch_graph import backbone_edge_block

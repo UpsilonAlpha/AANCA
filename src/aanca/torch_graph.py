@@ -313,20 +313,37 @@ def node_features(coords: Tensor, topo: FeatureTopology) -> Tensor:
 
 
 def backbone_edge_block(
-    coords: Tensor, topo: FeatureTopology, neighbours: Tensor
+    coords: Tensor, topo: FeatureTopology, neighbours: Tensor, fixed_backbone: bool = True
 ) -> Tensor:
     """``(n_res, k, 400)``: the 5x5 backbone/CB distance matrix, RBF-encoded.
 
-    Constant across a rollout for a fixed neighbour list. Compute once per
-    selection, not per step -- it is 70% of the edge dimensions.
+    With ``fixed_backbone`` this is built under ``no_grad``, which is the single
+    biggest memory saving available: 400 of the 575 edge dimensions never enter
+    the autograd graph. It is exact, not an approximation -- only side chains
+    rotate, and the backbone is excluded from every chi's downstream atom set,
+    so the gradient of this block with respect to the moving coordinates is
+    identically zero.
+
+    **Detaching it afterwards does not work and was measured not to.** By then
+    the full tensor has already been built inside the graph and saved for
+    backward; a later ``.detach()`` changes the output's grad flag but frees
+    nothing. The block has to not be *computed* under grad in the first place.
+
+    ``fixed_backbone=False`` must be passed once the backbone-remodelling
+    escalation lands, or those gradients will be silently zero.
     """
-    frame = frame_atom_coords(coords, topo)
-    diff = frame[:, None, :, None, :] - frame[neighbours][:, :, None, :, :]
-    dist = diff.norm(dim=-1)
-    valid = topo.frame_valid[:, None, :, None] & topo.frame_valid[neighbours][:, :, None, :]
-    dist = torch.where(valid, dist, torch.full_like(dist, RBF_MAX))
-    n_res, k = neighbours.shape
-    return rbf(dist.reshape(n_res, k, -1)).reshape(n_res, k, -1)
+    context = torch.no_grad() if fixed_backbone else torch.enable_grad()
+    with context:
+        frame = frame_atom_coords(coords, topo)
+        diff = frame[:, None, :, None, :] - frame[neighbours][:, :, None, :, :]
+        dist = diff.norm(dim=-1)
+        valid = (
+            topo.frame_valid[:, None, :, None]
+            & topo.frame_valid[neighbours][:, :, None, :]
+        )
+        dist = torch.where(valid, dist, torch.full_like(dist, RBF_MAX))
+        n_res, k = neighbours.shape
+        return rbf(dist.reshape(n_res, k, -1)).reshape(n_res, k, -1)
 
 
 def edge_features(
@@ -336,6 +353,7 @@ def edge_features(
     edge_mask: Tensor,
     cutoff: float = 10.0,
     backbone_block: Tensor | None = None,
+    fixed_backbone: bool = True,
 ) -> tuple[Tensor, Tensor, dict[str, slice]]:
     """``(edge_features, envelope, slices)``. Block order matches ``graph.py``."""
     n_res, k = neighbours.shape
@@ -344,7 +362,7 @@ def edge_features(
     rot, origin = backbone_frames(coords, topo)
 
     bb_block = (
-        backbone_edge_block(coords, topo, neighbours)
+        backbone_edge_block(coords, topo, neighbours, fixed_backbone)
         if backbone_block is None
         else backbone_block
     )
@@ -419,17 +437,24 @@ def build_graph(
     cutoff: float = 10.0,
     include_sequence_neighbours: bool = True,
     backbone_block: Tensor | None = None,
+    fixed_backbone: bool = True,
 ) -> TorchGraph:
     """Select neighbours and featurise. Differentiable except for the selection.
 
+    Featurise from ``coords.float()`` for training: float32 cuts retained
+    activations by about a third (measured), and distances and RBF expansions
+    do not need double precision. Keep the *torsion* arithmetic in float64,
+    which is where the exactness guarantee lives.
+
     Pass ``backbone_block`` from a previous call with the *same* neighbour list
-    to skip recomputing 70% of the edge features.
+    to skip recomputing it. Note the neighbour list changes most steps, so this
+    helps less than it looks -- ``fixed_backbone`` is the saving that matters.
     """
     neighbours, edge_mask = select_neighbours(
         coords, topo, k, cutoff, include_sequence_neighbours
     )
     features, envelope, slices = edge_features(
-        coords, topo, neighbours, edge_mask, cutoff, backbone_block
+        coords, topo, neighbours, edge_mask, cutoff, backbone_block, fixed_backbone
     )
     return TorchGraph(
         neighbours=neighbours,

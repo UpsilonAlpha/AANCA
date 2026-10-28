@@ -135,12 +135,42 @@ step roughly halves. The measured churn figures are synchronous and are an upper
 
 ## 4. Memory, which is the real constraint
 
-Keeping full edge features for a 300-residue protein at k=64 is ~44 MB/step in fp32, so ~2.2 GB for
-a 50-step rollout before activations. **Caching the backbone block** — 400 of the 575 edge
-dimensions, constant across a rollout because the backbone is fixed — drops the per-step tensor to
-~10 MB, so ~500 MB. That is the difference between fitting on one MI355X and not.
+**Measured, replacing an earlier estimate that was 12× too optimistic.** Run
+`scripts/measure_rollout_memory.py`. It counts the activations torch retains for backward, via
+`saved_tensors_hooks` — process RSS was tried first and is useless here, giving negative deltas that
+contradicted their own per-step figures.
 
-Combine with **truncated BPTT**: backprop through 8–16 steps and seed the rest from the sample pool.
+Retained activations per step, k=64, 10 Å:
+
+| | 1UBQ (76 res) | 193L (129) | 4HHB (574, 4 chains) |
+|---|---|---|---|
+| baseline, float64 | 70.7 MB | 120.1 MB | 534.3 MB |
+| `fixed_backbone`, float64 | 37.2 MB | 63.2 MB | 281.1 MB |
+| `fixed_backbone` + float32 | **31.4 MB** | **53.3 MB** | **237.1 MB** |
+
+Cost is linear in residue count at fixed k, so a 300-residue target is ~124 MB/step: **6.2 GB for a
+50-step rollout, 3.7 GB for 30 steps — per sample.**
+
+The earlier estimate said ~500 MB for the same thing. It counted only the edge-feature tensor and
+forgot the network's own activations: the message MLP operates on `(R, K, 384)` and `(R, K, 128)`
+tensors, every one of which is retained. Those dominate.
+
+Two optimisations, both measured:
+
+- **`fixed_backbone=True`** builds the 400-dimension backbone block under `no_grad`, worth 47%. It
+  is exact rather than approximate — only side chains rotate, and the backbone is excluded from
+  every chi's downstream atom set, so that block's gradient is identically zero. **Detaching it
+  afterwards does not work**, which was measured: by then the tensor has been built inside the graph
+  and saved for backward, and a later `.detach()` frees nothing. It has to not be computed under
+  grad. This flag must flip when the backbone-remodelling escalation lands.
+- **Featurise from `coords.float()`**, worth a further 16%. Torsion arithmetic stays float64, where
+  the exactness guarantee lives; distances and RBF expansions do not need it.
+
+**Consequence for the plan: truncated BPTT is mandatory, not optional.** At 3.7 GB per sample for a
+300-residue protein at 30 steps, a batch of 8 is ~30 GB and a batch of 32 is out of reach. Backprop
+through 8–16 steps and seed the rest from the sample pool.
+
+Wall time on CPU is ~0.5 s/step at 574 residues, so these rollouts are GPU work, not laptop work.
 
 Before any run that writes many files, check `rquota` — the Bunya quota binds on inodes, not bytes,
 and a checkpoint or rollout sweep is exactly that pattern. See `BUNYA_BROWSER_SHELL.md`.
