@@ -46,6 +46,11 @@ class TorsionTopology:
     ``chi_atoms[r, i]`` holds the four atom indices defining chi ``i+1``, and
     ``downstream[r, i]`` marks the atoms that chi rotation moves. Padded entries
     are zero-filled and guarded by ``chi_mask``.
+
+    The ``bond_*`` and ``angle_*`` fields are the same idea for the other two
+    internal coordinates a classical forcefield controls. They are frozen in v1
+    but defined here so the degrees of freedom exist; ring bonds are excluded,
+    so PRO has none and the aromatics expose only their exocyclic bonds.
     """
 
     atom_mask: Tensor
@@ -53,6 +58,12 @@ class TorsionTopology:
     chi_atoms: Tensor
     downstream: Tensor
     periodic: Tensor
+    bond_mask: Tensor
+    bond_atoms: Tensor
+    bond_moving: Tensor
+    angle_mask: Tensor
+    angle_atoms: Tensor
+    angle_moving: Tensor
     resnames: tuple[str, ...]
     atom_names: tuple[tuple[str, ...], ...]
 
@@ -61,14 +72,24 @@ class TorsionTopology:
         return self.atom_mask.shape[0]
 
     def to(self, device: torch.device | str) -> "TorsionTopology":
+        moved = {
+            name: getattr(self, name).to(device)
+            for name in (
+                "atom_mask",
+                "chi_mask",
+                "chi_atoms",
+                "downstream",
+                "periodic",
+                "bond_mask",
+                "bond_atoms",
+                "bond_moving",
+                "angle_mask",
+                "angle_atoms",
+                "angle_moving",
+            )
+        }
         return TorsionTopology(
-            atom_mask=self.atom_mask.to(device),
-            chi_mask=self.chi_mask.to(device),
-            chi_atoms=self.chi_atoms.to(device),
-            downstream=self.downstream.to(device),
-            periodic=self.periodic.to(device),
-            resnames=self.resnames,
-            atom_names=self.atom_names,
+            resnames=self.resnames, atom_names=self.atom_names, **moved
         )
 
 
@@ -114,12 +135,47 @@ def topology_from_protein(
             downstream[r, i, moving] = True
             periodic[r, i] = flags[i] if i < len(flags) else False
 
+    bond_mask = torch.zeros(n_res, rc.MAX_BONDS, dtype=torch.bool)
+    bond_atoms = torch.zeros(n_res, rc.MAX_BONDS, 2, dtype=torch.long)
+    bond_moving = torch.zeros(n_res, rc.MAX_BONDS, MAX_ATOMS, dtype=torch.bool)
+    angle_mask = torch.zeros(n_res, rc.MAX_ANGLES, dtype=torch.bool)
+    angle_atoms = torch.zeros(n_res, rc.MAX_ANGLES, 3, dtype=torch.long)
+    angle_moving = torch.zeros(n_res, rc.MAX_ANGLES, MAX_ATOMS, dtype=torch.bool)
+
+    for r, res in enumerate(protein.residues):
+        index = res.index
+        for i, (near, far, moving) in enumerate(rc.MOVABLE_BONDS[res.resname]):
+            if near not in index or far not in index:
+                continue
+            present = [index[n] for n in moving if n in index]
+            if not present:
+                continue
+            bond_mask[r, i] = True
+            bond_atoms[r, i] = torch.tensor([index[near], index[far]])
+            bond_moving[r, i, present] = True
+
+        for i, (a, b, c, moving) in enumerate(rc.MOVABLE_ANGLES[res.resname]):
+            if not all(n in index for n in (a, b, c)):
+                continue
+            present = [index[n] for n in moving if n in index]
+            if not present:
+                continue
+            angle_mask[r, i] = True
+            angle_atoms[r, i] = torch.tensor([index[a], index[b], index[c]])
+            angle_moving[r, i, present] = True
+
     topology = TorsionTopology(
         atom_mask=atom_mask,
         chi_mask=chi_mask,
         chi_atoms=chi_atoms,
         downstream=downstream,
         periodic=periodic,
+        bond_mask=bond_mask,
+        bond_atoms=bond_atoms,
+        bond_moving=bond_moving,
+        angle_mask=angle_mask,
+        angle_atoms=angle_atoms,
+        angle_moving=angle_moving,
         resnames=tuple(r.resname for r in protein.residues),
         atom_names=tuple(r.atom_names for r in protein.residues),
     )
@@ -200,6 +256,14 @@ def apply_chi_deltas(
 
     for i in range(rc.MAX_CHI):
         moving = topo.downstream[:, i, :]
+        # Only skip slots no residue uses. Do NOT also skip slots whose deltas
+        # are all zero: R(axis, 0) is the identity, so (x - origin) @ I + origin
+        # is not *bitwise* x and a zero update perturbs the last bits -- but
+        # d(coords)/d(delta) at delta = 0 is not zero, and the rule is
+        # identity-initialised, so skipping there would sever the coordinate
+        # gradient path on the first training step. The round-off is ~1e-16 and
+        # the measured round trip is exact to 1e-14 after hundreds of
+        # operations; a real gradient is worth more than the last bit.
         if not bool(moving.any()):
             continue
         pb = _gather_atoms(coords, topo.chi_atoms[:, i, 1:2])[:, 0, :]
@@ -208,6 +272,148 @@ def apply_chi_deltas(
         origin = pc.unsqueeze(1)
         rotated = (coords - origin) @ R.transpose(-1, -2) + origin
         coords = torch.where(moving.unsqueeze(-1), rotated, coords)
+    return coords
+
+
+def measure_bonds(coords: Tensor, topo: TorsionTopology) -> Tensor:
+    """``(n_res, MAX_BONDS)`` bond lengths in Angstrom, zero where masked."""
+    pts = _gather_atoms(coords, topo.bond_atoms)
+    lengths = (pts[..., 1, :] - pts[..., 0, :]).norm(dim=-1)
+    return torch.where(topo.bond_mask, lengths, torch.zeros_like(lengths))
+
+
+def measure_angles(coords: Tensor, topo: TorsionTopology) -> Tensor:
+    """``(n_res, MAX_ANGLES)`` bond angles in radians, zero where masked."""
+    pts = _gather_atoms(coords, topo.angle_atoms)
+    u = pts[..., 0, :] - pts[..., 1, :]
+    v = pts[..., 2, :] - pts[..., 1, :]
+    u = u / u.norm(dim=-1, keepdim=True).clamp_min(EPS)
+    v = v / v.norm(dim=-1, keepdim=True).clamp_min(EPS)
+    angles = torch.acos((u * v).sum(-1).clamp(-1.0 + 1e-12, 1.0 - 1e-12))
+    return torch.where(topo.angle_mask, angles, torch.zeros_like(angles))
+
+
+def apply_bond_deltas(
+    coords: Tensor, deltas: Tensor, topo: TorsionTopology
+) -> Tensor:
+    """Stretch side-chain bonds by ``deltas`` ``(n_res, MAX_BONDS)`` Angstrom.
+
+    Implemented as a translation of the distal atom set along the bond axis.
+    That is **exactly invertible**: the near atom does not move and the far atom
+    moves along the axis, so the axis direction is unchanged and ``-delta``
+    restores the original coordinates bit for bit. Only the length changes.
+
+    Ring bonds are excluded by the topology -- a rigid translation of one side
+    of a ring cannot be absorbed by the closure.
+    """
+    if deltas.shape != (topo.n_residues, rc.MAX_BONDS):
+        raise ValueError(
+            f"expected bond deltas of shape {(topo.n_residues, rc.MAX_BONDS)}, "
+            f"got {tuple(deltas.shape)}"
+        )
+    deltas = torch.where(topo.bond_mask, deltas, torch.zeros_like(deltas))
+
+    for i in range(rc.MAX_BONDS):
+        moving = topo.bond_moving[:, i, :]
+        if not bool(moving.any()):
+            continue
+        near = _gather_atoms(coords, topo.bond_atoms[:, i, 0:1])[:, 0, :]
+        far = _gather_atoms(coords, topo.bond_atoms[:, i, 1:2])[:, 0, :]
+        axis = far - near
+        axis = axis / axis.norm(dim=-1, keepdim=True).clamp_min(EPS)
+        shifted = coords + (deltas[:, i, None] * axis).unsqueeze(1)
+        coords = torch.where(moving.unsqueeze(-1), shifted, coords)
+    return coords
+
+
+def apply_angle_deltas(
+    coords: Tensor, deltas: Tensor, topo: TorsionTopology
+) -> Tensor:
+    """Bend side-chain angles by ``deltas`` ``(n_res, MAX_ANGLES)`` radians.
+
+    Implemented as a rotation of the distal atom set about the axis through the
+    apex atom perpendicular to the ``a-b-c`` plane. Also **exactly invertible**:
+    rotating about the plane normal maps the plane to itself, so the normal is
+    unchanged by the operation and ``-delta`` undoes it exactly.
+    """
+    if deltas.shape != (topo.n_residues, rc.MAX_ANGLES):
+        raise ValueError(
+            f"expected angle deltas of shape {(topo.n_residues, rc.MAX_ANGLES)}, "
+            f"got {tuple(deltas.shape)}"
+        )
+    deltas = torch.where(topo.angle_mask, deltas, torch.zeros_like(deltas))
+
+    for i in range(rc.MAX_ANGLES):
+        moving = topo.angle_moving[:, i, :]
+        if not bool(moving.any()):
+            continue
+        pts = _gather_atoms(coords, topo.angle_atoms[:, i])
+        a, b, c = pts[:, 0], pts[:, 1], pts[:, 2]
+        normal = torch.cross(a - b, c - b, dim=-1)
+        # A collinear angle has no well-defined plane; leave it alone rather
+        # than rotating about a numerically arbitrary axis.
+        degenerate = normal.norm(dim=-1) < 1e-6
+        theta = torch.where(degenerate, torch.zeros_like(deltas[:, i]), deltas[:, i])
+        R = rotation_matrices(normal, theta)
+        origin = b.unsqueeze(1)
+        rotated = (coords - origin) @ R.transpose(-1, -2) + origin
+        coords = torch.where(moving.unsqueeze(-1), rotated, coords)
+    return coords
+
+
+#: The order internal coordinates are applied in.
+#:
+#: Measured: inversion is **order-independent**. Negating the deltas restores the
+#: coordinates to ~3e-14 A whether the inverse runs in this order or the reverse,
+#: across every permutation of the three. The reason is that each operation
+#: re-derives its axis from the coordinates it sees, and every axis is pinned by
+#: atoms *upstream* of that operation's own moving set, plus at most one atom
+#: that stays on the axis (chi's ``c``, bond's ``far`` moving along it) or in the
+#: plane (angle's ``c`` rotating about the plane normal). So the axis is carried
+#: covariantly by whatever happened earlier and is re-derived identically on the
+#: way back.
+#:
+#: :func:`invert_internal_deltas` still runs in reverse, which is the safe
+#: default if a future coordinate breaks that property -- but it is not currently
+#: load-bearing, and ``tests/test_internal_coordinates.py`` pins the fact.
+INTERNAL_ORDER = ("chi", "angle", "bond")
+
+
+def apply_internal_deltas(
+    coords: Tensor,
+    topo: TorsionTopology,
+    chi: Tensor | None = None,
+    angle: Tensor | None = None,
+    bond: Tensor | None = None,
+) -> Tensor:
+    """Apply chi, angle and bond deltas in ``INTERNAL_ORDER``.
+
+    ``None`` skips that coordinate entirely, which is the v1 path: the rule
+    emits chis only, so no bond or angle work is done at all.
+    """
+    if chi is not None:
+        coords = apply_chi_deltas(coords, chi, topo)
+    if angle is not None:
+        coords = apply_angle_deltas(coords, angle, topo)
+    if bond is not None:
+        coords = apply_bond_deltas(coords, bond, topo)
+    return coords
+
+
+def invert_internal_deltas(
+    coords: Tensor,
+    topo: TorsionTopology,
+    chi: Tensor | None = None,
+    angle: Tensor | None = None,
+    bond: Tensor | None = None,
+) -> Tensor:
+    """Exactly undo :func:`apply_internal_deltas`: negated, in reverse order."""
+    if bond is not None:
+        coords = apply_bond_deltas(coords, -bond, topo)
+    if angle is not None:
+        coords = apply_angle_deltas(coords, -angle, topo)
+    if chi is not None:
+        coords = apply_chi_deltas(coords, -chi, topo)
     return coords
 
 

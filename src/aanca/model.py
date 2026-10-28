@@ -37,6 +37,14 @@ EDGE_FEATURE_DIM = 575
 #: ~3 degrees -- already tighter than crystallographic precision warrants.
 MAX_LOG_KAPPA = 6.0
 
+#: Hard bounds on the bond and angle heads, when enabled. Chosen from the
+#: physics rather than tuned: bond lengths vary by ~0.01-0.02 A and bond angles
+#: by ~2-3 degrees at the energies side-chain packing cares about, so these caps
+#: are a few times the real spread -- loose enough to be useful, tight enough
+#: that the rule cannot resolve a clash by deforming chemistry.
+MAX_BOND_DELTA = 0.05
+MAX_ANGLE_DELTA = 0.15
+
 
 class AANCARule(nn.Module):
     """One update step. Apply repeatedly with the same weights.
@@ -54,6 +62,9 @@ class AANCARule(nn.Module):
         hidden_dim: int = 96,
         message_dim: int = 128,
         max_log_kappa: float = MAX_LOG_KAPPA,
+        bond_geometry: bool = False,
+        max_bond_delta: float = MAX_BOND_DELTA,
+        max_angle_delta: float = MAX_ANGLE_DELTA,
     ) -> None:
         super().__init__()
         self.node_dim = node_dim
@@ -88,6 +99,27 @@ class AANCARule(nn.Module):
         self.kappa_head = nn.Sequential(
             nn.Linear(state_dim, 64), nn.GELU(), nn.Linear(64, rc.MAX_CHI)
         )
+
+        # Bond and angle control. A classical forcefield has stretching and
+        # bending terms, so a learned one needs the scope for them; these heads
+        # exist so the degrees of freedom do not have to be retro-fitted later.
+        #
+        # Off in v1. When on, the outputs are hard-bounded here AND harmonically
+        # restrained to the crystal values in the loss. That pairing is the
+        # point: unrestrained bond geometry is a physically wrong way to relieve
+        # a steric clash -- squash a bond instead of finding the right rotamer --
+        # which lowers the clash term, raises chi MAE, and is invisible in
+        # aggregate metrics.
+        self.bond_geometry = bond_geometry
+        self.max_bond_delta = max_bond_delta
+        self.max_angle_delta = max_angle_delta
+        if bond_geometry:
+            self.bond_head = nn.Sequential(
+                nn.Linear(state_dim, 64), nn.GELU(), nn.Linear(64, rc.MAX_BONDS)
+            )
+            self.angle_head = nn.Sequential(
+                nn.Linear(state_dim, 64), nn.GELU(), nn.Linear(64, rc.MAX_ANGLES)
+            )
         self._init_heads()
 
     def _init_heads(self, initial_log_kappa: float = 1.0) -> None:
@@ -109,6 +141,11 @@ class AANCARule(nn.Module):
                 torch.tensor(initial_log_kappa / self.max_log_kappa)
             ) * self.max_log_kappa
             final_kappa.bias.fill_(float(raw))
+
+        if self.bond_geometry:
+            for head in (self.bond_head, self.angle_head):
+                nn.init.zeros_(head[-1].weight)
+                nn.init.zeros_(head[-1].bias)
 
     def initial_hidden(
         self, n_residues: int, device: torch.device | str = "cpu",
@@ -167,6 +204,26 @@ class AANCARule(nn.Module):
         log_kappa = self.max_log_kappa * torch.tanh(raw_kappa / self.max_log_kappa)
 
         return mu, log_kappa, new_hidden
+
+    def internal_deltas(
+        self, node_features: Tensor, hidden: Tensor
+    ) -> tuple[Tensor, Tensor] | tuple[None, None]:
+        """Bond and angle deltas from an already-updated state, or ``(None, None)``.
+
+        Separate from ``forward`` so the v1 path never touches these tensors:
+        ``None`` means :func:`torch_geometry.apply_internal_deltas` skips the
+        coordinate entirely rather than applying zeros.
+        """
+        if not self.bond_geometry:
+            return None, None
+        state = torch.cat([node_features, hidden], dim=-1)
+        bond = self.max_bond_delta * torch.tanh(
+            self.bond_head(state) / self.max_bond_delta
+        )
+        angle = self.max_angle_delta * torch.tanh(
+            self.angle_head(state) / self.max_angle_delta
+        )
+        return bond, angle
 
     def parameter_count(self) -> int:
         return sum(p.numel() for p in self.parameters())

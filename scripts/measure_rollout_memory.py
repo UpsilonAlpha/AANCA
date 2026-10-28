@@ -55,6 +55,14 @@ class SavedTensorAccountant:
     Keyed on ``data_ptr`` so two saved references to one storage count once,
     which is what the allocator sees. Saved tensors are not freed while the
     graph is alive, so a repeated pointer cannot be a different tensor.
+
+    **Caveat:** this sums distinct storages *ever* saved, which equals live
+    bytes only while nothing is freed -- i.e. for an untruncated rollout, which
+    is what is measured below. Under truncated BPTT the freed windows stay in
+    the total, so it over-reports, and a freed pointer could be reused by a
+    later tensor, so it could also under-report. For truncation, test the
+    property instead: see
+    ``tests/test_rollout.py::test_truncation_severs_the_gradient_path``.
     """
 
     def __init__(self) -> None:

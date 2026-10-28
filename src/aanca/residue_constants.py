@@ -185,16 +185,26 @@ def _adjacency(resname: str) -> dict[str, set[str]]:
     return adj
 
 
-def _downstream(resname: str, chi_index: int) -> frozenset[str]:
-    """Atoms that move when chi_(chi_index+1) of ``resname`` is rotated.
+BACKBONE_ATOMS = frozenset({"N", "CA", "C", "O"})
 
-    Walk the residue's bond graph outward from atom ``c`` of the chi tuple,
-    forbidden to cross back through ``b``. If the walk reaches ``a`` or ``b``
-    anyway, the axis is in a ring.
+
+def downstream_atoms(resname: str, b: str, c: str) -> frozenset[str]:
+    """Side-chain atoms that move when the ``b-c`` bond is driven.
+
+    Walk the residue's bond graph outward from ``c``, forbidden to cross back
+    through ``b``. This is the moving set for *any* internal coordinate hinged on
+    that bond -- a chi rotation about it, a stretch along it, or a bend of the
+    angle that ends at it.
+
+    Reaching a backbone atom means the walk came round a ring, since no
+    legitimate side-chain moving set contains backbone. PRO is the only standard
+    residue where this happens.
     """
-    a, b, c, _d = CHI_ATOMS[resname][chi_index]
     adj = _adjacency(resname)
+    if c not in adj or b not in adj.get(c, ()):
+        raise KeyError(f"{resname}: {b}-{c} is not a bond")
 
+    # Walk outward from c with b deleted from the graph.
     seen = {b, c}
     moving: set[str] = set()
     queue = deque([c])
@@ -202,15 +212,33 @@ def _downstream(resname: str, chi_index: int) -> frozenset[str]:
         for nxt in adj[queue.popleft()]:
             if nxt in seen:
                 continue
-            if nxt in (a, b):
+            if nxt in BACKBONE_ATOMS:
                 raise CyclicTorsion(
-                    f"{resname} chi{chi_index + 1}: axis {b}-{c} lies in a ring "
-                    f"(reached {nxt})"
+                    f"{resname}: the {b}-{c} bond lies in a ring "
+                    f"(the walk reached backbone atom {nxt})"
                 )
             seen.add(nxt)
             moving.add(nxt)
             queue.append(nxt)
+
+    # If any *other* neighbour of b is reachable without passing through b, then
+    # b sits on a cycle and driving this bond would break the ring closure.
+    # Checking only for backbone atoms is not enough: PRO's ring contains N and
+    # is caught that way, but an aromatic ring contains no backbone at all, so
+    # PHE's CG-CD1 would otherwise look stretchable.
+    looped = (adj[b] - {c}) & moving
+    if looped:
+        raise CyclicTorsion(
+            f"{resname}: the {b}-{c} bond lies in a ring "
+            f"(reached {sorted(looped)[0]}, also bonded to {b})"
+        )
     return frozenset(moving)
+
+
+def _downstream(resname: str, chi_index: int) -> frozenset[str]:
+    """Atoms that move when chi_(chi_index+1) of ``resname`` is rotated."""
+    _a, b, c, _d = CHI_ATOMS[resname][chi_index]
+    return downstream_atoms(resname, b, c)
 
 
 #: ``CHI_DOWNSTREAM[resname][i]`` is the set of atom names rotated by chi_(i+1).
@@ -230,6 +258,68 @@ for _res in AA3:
     except CyclicTorsion as exc:
         CHI_DOWNSTREAM[_res] = ()
         RIGID_RESIDUES[_res] = str(exc)
+
+
+def _oriented_sidechain_bonds(resname: str) -> list[tuple[str, str]]:
+    """Side-chain bonds as ``(near, far)``, ordered by bond count from CA."""
+    depth = sidechain_depth(resname)
+    depth["CA"] = 0
+    out: list[tuple[str, str]] = []
+    for u, v in SIDECHAIN_BONDS[resname]:
+        if u in BACKBONE_ATOMS and v in BACKBONE_ATOMS:
+            continue
+        du, dv = depth.get(u), depth.get(v)
+        if du is None or dv is None or du == dv:
+            # A ring-closing bond joins two atoms at equal depth, or an atom the
+            # side-chain walk never reaches (PRO's CD-N). Neither is drivable.
+            continue
+        out.append((u, v) if du < dv else (v, u))
+    return out
+
+
+def movable_bonds(resname: str) -> tuple[tuple[str, str, frozenset[str]], ...]:
+    """Stretchable side-chain bonds as ``(near, far, moving_atoms)``.
+
+    A bond inside a ring is excluded: its length cannot change without the rest
+    of the ring absorbing it, which a rigid translation of one side cannot do.
+    """
+    out = []
+    for near, far in _oriented_sidechain_bonds(resname):
+        try:
+            out.append((near, far, downstream_atoms(resname, near, far) | {far}))
+        except CyclicTorsion:
+            continue
+    return tuple(out)
+
+
+def movable_angles(resname: str) -> tuple[tuple[str, str, str, frozenset[str]], ...]:
+    """Bendable side-chain angles as ``(a, b, c, moving_atoms)``.
+
+    The angle ``a-b-c`` is changed by rotating ``c`` and everything beyond it
+    about the axis through ``b`` perpendicular to the ``a-b-c`` plane. ``a`` may
+    be a backbone atom (CA for the N-CA-CB style angles at the attachment
+    point), but ``b-c`` must not be in a ring.
+    """
+    adj = _adjacency(resname)
+    depth = sidechain_depth(resname)
+    depth["CA"] = 0
+
+    out = []
+    for near, far in _oriented_sidechain_bonds(resname):
+        try:
+            moving = downstream_atoms(resname, near, far) | {far}
+        except CyclicTorsion:
+            continue
+        # The apex is `near`; `a` is any atom bonded to it that is closer to CA.
+        for other in sorted(adj[near]):
+            if other == far or depth.get(other) is None:
+                continue
+            if depth[other] < depth[near] or (
+                depth[other] == depth[near] and other < far
+            ):
+                out.append((other, near, far, moving))
+                break
+    return tuple(out)
 
 
 def num_chi(resname: str) -> int:
@@ -333,3 +423,22 @@ def symmetric_relabellings(resname: str) -> tuple[dict[str, str], ...]:
 SIDECHAIN_TIP_ATOMS: dict[str, frozenset[str]] = {
     res: _tip_atoms(res) for res in AA3
 }
+
+#: Internal coordinates beyond the chis that the rule *may* drive, if enabled.
+#: Frozen in v1 -- see ``docs/PLAN_V1.md`` -- but the topology is defined here so
+#: the degrees of freedom exist rather than having to be retro-fitted. A
+#: classical forcefield has bond and angle terms, so a learned one needs the
+#: scope for them. What stops them becoming cheap clash relief is the harmonic
+#: restraint in ``losses.py``, not their absence.
+#:
+#: Computed after ``sidechain_depth`` because the bond orientation depends on it.
+MOVABLE_BONDS: dict[str, tuple[tuple[str, str, frozenset[str]], ...]] = {
+    res: movable_bonds(res) for res in AA3
+}
+MOVABLE_ANGLES: dict[str, tuple[tuple[str, str, str, frozenset[str]], ...]] = {
+    res: movable_angles(res) for res in AA3
+}
+
+#: Padding widths for the batched tensors in ``torch_geometry``.
+MAX_BONDS = max(len(v) for v in MOVABLE_BONDS.values())
+MAX_ANGLES = max(len(v) for v in MOVABLE_ANGLES.values())

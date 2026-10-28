@@ -32,8 +32,10 @@ the open questions.
 | The rule — one hop, two heads | `src/aanca/model.py` | done, untrained |
 | Von Mises likelihood + no-op term | `src/aanca/losses.py` | done |
 | Torch port of the featuriser | `src/aanca/torch_graph.py` | done |
-| Rollout with sample pool + async mask | — | **next** |
-| Dataset pipeline | — | next |
+| Rollout: async mask, truncated BPTT, sample pool | `src/aanca/rollout.py` | done |
+| Bond/angle degrees of freedom + restraints | `src/aanca/torch_geometry.py` | built, off in v1 |
+| Dataset pipeline | — | **next** |
+| Nonbonded fields ("hormone gradients") | — | next, see plan §2b |
 | Chemical damage (mutation) | `src/aanca/damage.py` | deferred — not in v1 |
 
 **v1 scope is in [`docs/PLAN_V1.md`](docs/PLAN_V1.md)** — read that before adding anything. The short
@@ -234,6 +236,44 @@ exact, not approximate — the backbone never moves, so that block's gradient is
 inside the graph and saved for backward, so a later `.detach()` frees nothing. It has to not be
 computed under grad in the first place. The flag must flip when backbone remodelling lands, and a
 test asserts the escalation path still differentiates.
+
+## The rollout
+
+`rollout.py` holds the NCA machinery and the v1 objective. Four things, each with a test:
+
+- **Asynchronous updates**, gating the hidden state as well as the coordinates — a cell either ticks
+  or it doesn't. This costs nothing in fixed-point terms: the no-op term forces zero output at the
+  native structure, and any subset of zeros is still zero, so the mask randomises the *path* and not
+  the attractor.
+- **Loss at a random late step**, drawn from the back half. Supervising the last step teaches a
+  trajectory of that length; supervising an unpredictable late step is what forces an attractor.
+- **Truncated BPTT**, mandatory at the measured memory above. A test asserts truncation actually
+  severs the gradient path to the start, rather than counting bytes — the saved-tensor accountant
+  sums distinct storages *ever* saved, which doesn't shrink under truncation because freed tensors
+  were already counted.
+- **A sample pool**, keyed by structure, so the rule is re-seeded from partially-converged states it
+  produced itself and has to stay stable rather than merely arrive.
+
+Mean |Δχ| per step falls out of the rollout for free — that's the tier-2 convergence curve.
+
+### Bond and angle control
+
+Built, off in v1. A classical forcefield has stretching and bending terms, so a learned one needs the
+scope. **An earlier version of the plan claimed free bond geometry would cost the exactness
+guarantee; that was wrong** — a bond stretch is a translation along the bond axis and an angle bend a
+rotation about the plane normal, and both are exactly invertible. Measured: all three coordinates
+round-trip to ~3e-14 Å, and inversion is **order-independent** across every permutation, because each
+operation re-derives its axis from atoms upstream of its own moving set.
+
+What makes them safe to expose is the pairing of a hard cap (0.05 Å, 0.15 rad — a few times the real
+spread) with a harmonic restraint to the *crystal* values, which is what a forcefield does. Without
+that, deforming a bond is a cheaper way to relieve a clash than finding the right rotamer: the clash
+term falls, χ MAE rises, and nothing in the aggregate metrics shows it.
+
+Ring bonds are excluded, and the test for that is derived rather than listed: whether the hinge atom
+is still reachable with itself removed. Checking only backbone reachability is **not** enough — an
+aromatic ring contains no backbone, so PHE's CG–CD1 would look stretchable. PRO and GLY expose
+nothing; PHE/TYR/TRP/HIS expose only CA–CB and CB–CG; TYR adds CZ–OH, which is exocyclic.
 
 ## Setup
 

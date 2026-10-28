@@ -133,6 +133,25 @@ def noop_nll(
     return chi_nll(mu, log_kappa, torch.zeros_like(mu), chi_mask, periodic)
 
 
+def harmonic_restraint(
+    current: Tensor, reference: Tensor, mask: Tensor, stiffness: float
+) -> Tensor:
+    """``stiffness * mean((current - reference)^2)`` over the masked entries.
+
+    This is what makes bond and angle control safe to expose. A classical
+    forcefield's stretching and bending terms are stiff springs about ideal
+    values, and so is this -- the reference is the *crystal* geometry, not an
+    ideal-geometry table, so the restraint preserves whatever the structure
+    actually had rather than pulling it toward a library mean.
+
+    Without it, bond geometry is a physically wrong shortcut: deforming a bond
+    relieves a steric clash more cheaply than finding the right rotamer, which
+    lowers the clash term, raises chi MAE, and does not show up in any
+    aggregate metric.
+    """
+    return stiffness * masked_mean((current - reference) ** 2, mask)
+
+
 def chi_mae_degrees(
     pred: Tensor, target: Tensor, chi_mask: Tensor, periodic: Tensor | None = None
 ) -> Tensor:

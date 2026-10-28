@@ -29,7 +29,7 @@ because the unpublished-for-proteins result (tier 2 below) does not depend on it
 | SKEMPI, ΔΔG, mutations | A separate piece of work. Brings the leakage split, the cross-task leak, and the readout choice with it. |
 | `damage.mutate()` | Stays an explicit `NotImplementedError`. Its seeding rule interacts with the ddG readout. |
 | ProteinEBM scoring | Post-hoc, addable to a trained model at any time. |
-| Free bond lengths and angles | See §3. |
+| Bond and angle *driving* | The degrees of freedom and their restraints are **built** (§2a); the heads are off in v1. |
 | Per-residue energy head, variant (B) | See §3. |
 | Gibbs sampling as a run mode | Falls out of the architecture for free once wanted. See §3. |
 | Loop remodelling, backbone remodelling | The escalation ladder, untouched. |
@@ -78,12 +78,8 @@ B-factor check (§5) makes it testable without any ddG data.
 **κ is capped.** A likelihood loss can be reduced by claiming enormous confidence rather than by
 getting the mean right. Cap `log κ` and watch whether it saturates.
 
-**Bond lengths and angles stay rigid.** Not on principle — they vary by ~0.01–0.02 Å and ~2–3° at
-the energies packing cares about, which is why Rosetta, AttnPacker, DiffPack and FlowPacker all fix
-them. Making them free outputs hands the model a physically wrong way to relieve a steric clash:
-squash a bond instead of finding the correct rotamer. The clash term falls, χ MAE rises, and the
-failure is invisible in aggregate metrics. It would also cost the Milestone 1 exactness guarantee,
-which holds precisely because every move is a rigid rotation about a bond.
+**Bond lengths and angles are built but frozen.** See §2a — an earlier version of this plan argued
+they would cost the exactness guarantee, which was wrong.
 
 **Delta head, not energy head.** Variant (B) — a per-residue von Mises *energy* over its own chis,
 with the joint defined as the sum — is the more defensible object: consistent conditionals,
@@ -101,6 +97,68 @@ joint, so Gibbs from them can depend on scan order. Measure that dependence befo
 sample from anything; severe dependence is the empirical argument for (B).
 
 ---
+
+## 2a. Bond and angle control
+
+A classical forcefield has stretching and bending terms as well as torsions, so a learned one needs
+the scope for them. The degrees of freedom are built; the heads are off in v1.
+
+**The exactness objection was wrong.** An earlier version of this plan said free bond geometry would
+cost the Milestone 1 round-trip guarantee. It does not, provided the operations are *incremental*
+rather than a rebuild:
+
+- a bond stretch is a translation of the distal atoms **along** the bond axis. The near atom does not
+  move and the far atom moves along the axis, so the axis direction is unchanged and `-delta`
+  restores the coordinates exactly;
+- an angle bend is a rotation of the distal atoms about the axis through the apex **perpendicular to
+  the a-b-c plane**. Rotating about a plane's normal maps the plane to itself, so the normal is
+  preserved and `-delta` undoes it exactly.
+
+Measured: all three coordinates round-trip to ~3e-14 Å, and **inversion is order-independent** —
+negating the deltas restores the structure whichever order the inverse runs in, across every
+permutation. The reason is that each operation re-derives its axis from the coordinates it sees, and
+every axis is pinned by atoms upstream of that operation's own moving set plus at most one atom that
+stays on the axis or in the plane. That makes composing damage operators safe without tracking order.
+
+**The clash objection stands, and is handled the way a forcefield handles it.** Unrestrained, bond
+geometry is a physically wrong shortcut: deforming a bond relieves a steric clash more cheaply than
+finding the right rotamer, which lowers the clash term, raises χ MAE, and is invisible in aggregate
+metrics. So the heads are bounded *and* restrained:
+
+- hard caps of 0.05 Å and 0.15 rad, a few times the real spread (bond lengths vary ~0.01–0.02 Å,
+  angles ~2–3° at these energies);
+- a harmonic restraint to the **crystal** values, not to an ideal-geometry table, so the structure's
+  own geometry is preserved rather than pulled toward a library mean.
+
+**Ring bonds are excluded**, derived rather than listed. A rigid translation of one side of a ring
+cannot be absorbed by the closure. The test is whether the hinge atom is still reachable with itself
+removed — checking only for backbone reachability is *not* enough, since an aromatic ring contains no
+backbone and PHE's CG–CD1 would otherwise look stretchable. Result: PRO and GLY expose nothing,
+PHE/TYR/TRP/HIS expose only CA–CB and CB–CG, and TYR additionally CZ–OH, which is exocyclic.
+
+## 2b. Nonbonded fields as hormone gradients — the next design step
+
+Electrostatics and van der Waals as *perception*, giving each residue a local reading of a
+long-range field. This is the most promising way to get distance information into a strictly local
+rule, and it is physically honest: a residue senses the local value of a global field without any
+information pathway, exactly as a morphogen gradient works, and real atoms do feel electrostatics at
+range.
+
+**State the cost to the locality claim honestly.** Computing the potential at residue *i* sums over
+all charges, so it *is* a global reduction. The claim weakens from "strictly local" to "no *learned*
+global pathway; the only global information is a physically-derived field that real atoms also
+sense." That is defensible, and arguably more interesting than pure locality, but it is a different
+claim and a reviewer will notice the difference.
+
+Not built yet, deliberately: it needs partial-charge and Lennard-Jones parameter tables, where a
+wrong entry produces silently plausible garbage features. When it lands:
+
+- compute from *current* coordinates every step, so the field moves with the side chains — that
+  dynamic is the whole point of calling it a gradient;
+- feed invariant readings (potential, field magnitude, field direction in the residue's own backbone
+  frame, LJ energy), never raw vectors;
+- keep it separate from the loss. vdW-as-feature is perception; vdW-as-penalty is supervision. Both
+  are reasonable and they are different things.
 
 ## 3. Training
 
