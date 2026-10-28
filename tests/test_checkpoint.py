@@ -49,6 +49,16 @@ def test_fingerprint_refuses_a_changed_rollout_length():
         ckpt.check_fingerprint(stored, {**stored, "steps": 30})
 
 
+def test_fingerprint_refuses_a_changed_split():
+    """The indices are in the checkpoint, so this change would be invisible."""
+    import argparse
+
+    args = argparse.Namespace(crop_size=384, steps=20, seed=0, split="validation")
+    moved = argparse.Namespace(**{**vars(args), "split": "train"})
+    with pytest.raises(ValueError, match="different settings"):
+        ckpt.check_fingerprint(ckpt.fingerprint(args), ckpt.fingerprint(moved))
+
+
 def test_fingerprint_allows_extending_the_run():
     """``--updates`` is deliberately not pinned: a longer run is the same run."""
     import argparse

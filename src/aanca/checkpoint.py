@@ -46,8 +46,15 @@ import torch
 #: ``--eval-every``, ``--max-seconds``) are free to change: extending a run or
 #: evaluating it more often does not invalidate what came before, while a
 #: different crop size or rollout length makes the curve two curves.
+#:
+#: ``split`` is pinned for a sharper reason than the others: the structure
+#: indices are *in* the checkpoint, so a resume that asked for a different
+#: split would restore the old indices and carry on training on them while the
+#: log and the run directory claimed otherwise. That is a wrong answer with no
+#: symptom, which is worse than a refusal.
 PINNED = (
     "crop_size", "steps", "truncate", "seed", "pool_probability", "k", "noop_weight",
+    "split",
 )
 
 #: Exit code for "checkpointed and stopped early, not finished". The batch
