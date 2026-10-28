@@ -218,7 +218,7 @@ python scripts/graph_report.py
 python scripts/measure_rollout_memory.py
 ```
 
-464 tests, ~40 s. The real-structure tests skip cleanly when `data/raw/` is empty, so the suite runs
+477 tests, ~40 s. The real-structure tests skip cleanly when `data/raw/` is empty, so the suite runs
 without network access — synthetic residues built by forward kinematics cover the maths, and the
 downloaded entries cover PDB atom naming, altlocs and disordered side chains.
 
@@ -242,6 +242,8 @@ src/aanca/
   metrics.py             the published packing benchmark
   data.py                dataset assembly, cluster splitting, damage sampling
   crop.py                spatial cropping; the mask of complete perception
+  evaluate.py            held-out protocol at fixed difficulty
+  checkpoint.py          the whole training state, atomically
 ```
 
 Importing `aanca` does **not** import Torch — the data layer stays usable without it.
@@ -252,5 +254,55 @@ by `+θ` about the directed axis `b → c` adds `+θ` to the dihedral.
 
 ## Running it
 
-Training runs on a GPU cluster, not locally — measured wall time is ~0.5 s/step on CPU at 574
-residues. Local notes on cluster access live outside this repository.
+Training runs on a cluster, not locally: a shakedown on this laptop managed ~4 s/update at crop 256
+and 12 steps, so a run of the 10^4–10^5 updates the objective needs would take days to weeks.
+
+```bash
+python scripts/train.py --updates 2000 --eval-every 200     # the loop itself
+```
+
+Progress is **never** read off the training loss. Its target is measured from the rule's own input
+at the supervised step, so the question gets easier as the rule improves and a falling loss
+conflates that with better prediction. `src/aanca/evaluate.py` holds a fixed set of structures, at
+fixed crops, with damage drawn once and stored as coordinates, rolled out under a fixed
+asynchronous mask sequence, and reports three things because the objective makes three claims that
+can fail separately: chi MAE and accuracy (does it pack), mean `|delta|` per step (does it
+converge), and drift from a native start (does it stay). Every number sits beside the chi MAE of
+the *damaged input*, because at kappa=100 the input is already 4.5 degrees from native and a rule
+with no skill at all scores 99.7% accuracy there.
+
+### An interruption costs minutes, not the run
+
+`runs/<tag>/last.pt` carries the whole training state — weights, optimiser, the Python RNG, the
+torch generator, the global torch RNG, the sample pool and *its* RNG, the structure split and the
+history. Saving only the weights would continue from the right parameters along a different
+trajectory, and the diagnostics above are read as a curve over updates; a curve assembled from
+differently-seeded segments is not a curve.
+
+Measured: a run stopped and resumed is **bit-identical** to one that ran straight through, at one
+thread. (Two identical invocations differ by ~6e-8 at torch's default thread count, because
+multithreaded reductions sum in whatever order the threads finish, so the resume test pins
+`--threads 1`, where an inequality can only mean a bookkeeping bug.) Writes are atomic, so a kill
+during the save costs the new checkpoint rather than the old one.
+
+### On Bunya
+
+```bash
+bash scripts/bunya_stage.sh                                   # login node, once
+sbatch --constraint=$(cat .venv_bunya/arch.txt) scripts/bunya_fetch.slurm --split train
+bash scripts/bunya_submit.sh gpu --tag v1 --updates 200000 --eval-every 500
+```
+
+Day-long segments that resubmit themselves: shorter jobs start sooner, a 48 h job that dies at 47 h
+costs 47 h, and the GPU QOS allows four jobs at a time. Exit 64 means "checkpointed, not finished"
+and is the only code that resubmits, so a crash stops the chain instead of retrying forever. To
+stop it, `touch runs/<tag>/STOP` — deliberately a different event from an interruption, or
+`scancel` would be followed by a resubmitted job.
+
+Two things the cluster taught us, both of which failed before they worked. Bunya keeps a separate
+software tree per CPU generation, so a venv over a module interpreter is built for one of them: the
+first queued job died in two seconds with `Illegal instruction (core dumped)` on an epyc3 node.
+`bunya_stage.sh` records the architecture, the submitter passes it as `--constraint`, and the job
+scripts check it and print the fix rather than dumping core. And the download job is resumable with
+no checkpoint at all — `fetch_structures.py` lists what is on disk and fetches the rest — which is
+the cheapest kind of resumable there is.

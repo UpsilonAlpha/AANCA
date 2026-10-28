@@ -613,7 +613,7 @@ geometric damage operators, the per-step perception graph with invariant feature
 `k=64` default, a differentiable Torch path pinned against that NumPy reference, the rule itself at
 200,268 parameters, the von Mises loss with symmetry mixtures, the rollout with truncated BPTT and a
 sample pool, the dataset pipeline with spatial cropping, and the published-metric conventions
-reverse-engineered and reproduced against four packers. 464 tests.
+reverse-engineered and reproduced against four packers. 477 tests.
 
 The whole path from a downloaded coordinate file to a parameter update has been run end to end on
 real structures (`scripts/smoke_train.py`). On all 949 validation entries, 926 parse (97.6%); the 23
@@ -634,7 +634,33 @@ chain ended in TRP overflowed by one atom and vanished from the pool as a parse 
 now derived from the tables, and the rate of that bug rose with the multi-chain assemblies cropping
 brought in, since every chain has its own terminus.
 
-**What v1 still needs is a training run.** Every component works and the plumbing is verified, but
-nothing has been trained, so whether the fixed-point objective produces a converging rule is
-entirely unknown. After that: nonbonded fields as perception (§2b), which needs partial-charge and
-Lennard-Jones tables, and the characterisation in §6a, which needs a trained model to characterise.
+### The run is interruptible, because on a cluster that is the normal case
+
+Walltime, pre-emption, a cancelled job: the question is never whether a run is interrupted, only
+whether the interruption costs its history or its last few minutes. `src/aanca/checkpoint.py` saves
+the whole training state -- weights, optimiser, the Python RNG, the torch generator, the global
+torch RNG, the sample pool and its own RNG, the structure split and the history -- because saving
+the weights alone would continue from the right parameters along a *different trajectory*, and
+every diagnostic in §6 is read as a curve over updates. A curve assembled from differently-seeded
+segments is not a curve.
+
+Measured: stopped and resumed is bit-identical to straight through, at one thread. Two identical
+invocations differ by ~6e-8 at the default thread count, because multithreaded reductions sum in
+thread-completion order, so the regression test pins `--threads 1` -- the one condition under which
+an inequality can only be a bookkeeping bug. Checkpoint writes are atomic, so a kill during the
+save costs the new checkpoint rather than the old one.
+
+A deliberate stop and an interruption are different events and exit differently (0 against 64), so
+`scancel` is not followed by a resubmitted job while a walltime is. Resuming with a different crop
+size, rollout length, truncation, seed, k or no-op weight is refused: that is two experiments, not
+one run. Extending `--updates` is allowed, because a longer run is the same run.
+
+**What v1 still needs is the result of a training run.** Every component works, the plumbing is
+verified and the first chains are queued on Bunya, but nothing has been trained to convergence, so
+whether the fixed-point objective produces a converging rule is still unknown. The shakedown's two
+early signals are the ones to read first: mean `|delta|` was **flat** across the rollout rather than
+decaying, and drift from a native start rose 0.000 -> 0.473 A in 40 updates, which is the
+reconstruction term beating the no-op term. `--noop-weight` exists for exactly that, and the first
+pair of runs differs in it. After that: nonbonded fields as perception (§2b), which needs
+partial-charge and Lennard-Jones tables, and the characterisation in §6a, which needs a trained
+model to characterise.
