@@ -81,10 +81,15 @@ echo "arch  : ${ARCH:-unknown}"
 source "${VENV}/bin/activate"
 python -m pip install --quiet --upgrade pip wheel
 
+# ``--upgrade`` is load-bearing when restaging: without it, pip sees a torch
+# already installed, reports "requirement already satisfied" and leaves the
+# old wheel in place -- so switching index from rocm6.4 to rocm7.0 looks like
+# it worked and changes nothing. The symptom is a staging log that prints the
+# version it was supposed to replace.
 if [[ -n "${ROCM}" ]]; then
-    python -m pip install --quiet torch --index-url "https://download.pytorch.org/whl/rocm${ROCM}"
+    python -m pip install --quiet --upgrade torch --index-url "https://download.pytorch.org/whl/rocm${ROCM}"
 else
-    python -m pip install --quiet torch --index-url "https://download.pytorch.org/whl/cpu"
+    python -m pip install --quiet --upgrade torch --index-url "https://download.pytorch.org/whl/cpu"
 fi
 python -m pip install --quiet "numpy>=2.0" "biotite>=1.0" "pytest>=8.0"
 python -m pip install --quiet --no-deps -e "${ROOT}"
