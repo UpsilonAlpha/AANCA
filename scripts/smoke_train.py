@@ -152,7 +152,7 @@ def main() -> int:
             return 1
 
         pool.insert(index, result.state)
-        history.append(float(terms.total))
+        history.append((sample.concentration, float(terms.total)))
         print(
             f"  {update:<4}{sample.pdb_id:<7}{sample.topology.n_residues:>5}"
             f"{sample.concentration:>7.0f}{float(terms.total):>10.3f}"
@@ -162,8 +162,25 @@ def main() -> int:
 
     print(f"\ngradient norm on the last update: {float(grad_norm):.3f}")
     print(f"pool holds {len(pool)} states")
-    print(f"loss first {history[0]:.3f} -> last {history[-1]:.3f} "
-          f"(12 updates on {len(loaded)} structures proves nothing about learning)")
+
+    # Report by damage level, not first-versus-last. Loss is not comparable
+    # across levels -- uniform damage costs about three times mild noise -- so a
+    # first-to-last comparison says only which levels those two samples drew.
+    # An earlier version of this summary did exactly that and read as a 3x
+    # regression when nothing had regressed.
+    by_level: dict[float, list[float]] = {}
+    for concentration, value in history:
+        by_level.setdefault(concentration, []).append(value)
+    print("\nmean loss by damage level (kappa 0 is uniform, higher is milder):")
+    for level in sorted(by_level, reverse=True):
+        values = by_level[level]
+        print(
+            f"  kappa {level:>5.0f}  n={len(values):<3} mean {sum(values) / len(values):.3f}"
+        )
+    print(
+        f"\n{args.updates} updates on {len(loaded)} structures says nothing about "
+        "whether this learns. It says the plumbing is connected."
+    )
 
     # Stage 3: is the native structure a fixed point for an untrained rule, and
     # does the benchmark table run on real output?
