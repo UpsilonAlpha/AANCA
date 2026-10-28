@@ -282,6 +282,8 @@ class RepackingDataset:
         concentrations: tuple[float, ...] = (100.0, 20.0, 5.0, 0.0),
         cache_topologies: bool = True,
         device: torch.device | str = "cpu",
+        max_residues: int | None = 1000,
+        min_residues: int | None = 40,
     ) -> None:
         if not specs:
             raise ValueError("no structures given")
@@ -290,6 +292,20 @@ class RepackingDataset:
         self.specs = specs
         self.concentrations = concentrations
         self.device = device
+        #: A second line of defence behind the manifest's size filter. Retained
+        #: activations are linear in residue count -- measured ~124 MB per step
+        #: per 300 residues -- so a 3,500-residue assembly slipping through
+        #: would need ~13 GB for one 30-step rollout and fail as an opaque OOM
+        #: in the middle of training. Failing loudly at load time is cheaper.
+        #: ``None`` disables the check.
+        self.max_residues = max_residues
+        #: And a floor, which the manifest filter cannot provide on its own.
+        #: RCSB's ``deposited_polymer_monomer_count`` counts *all* polymer
+        #: monomers, nucleotides included, so a DNA-protein complex passes a
+        #: 40-residue filter and then yields almost no amino acids once the
+        #: loader keeps only the standard twenty. The smoke test found entries
+        #: down to 2 residues this way.
+        self.min_residues = min_residues
         self._cache: dict[str, tuple[FeatureTopology, Tensor]] = {}
         self._cache_topologies = cache_topologies
 
@@ -301,6 +317,22 @@ class RepackingDataset:
         if spec.pdb_id in self._cache:
             return self._cache[spec.pdb_id]
         topo, coords = feature_topology(load_protein(spec.path), device=self.device)
+        if self.max_residues is not None and topo.n_residues > self.max_residues:
+            raise ValueError(
+                f"{spec.pdb_id} has {topo.n_residues} residues, over the "
+                f"max_residues limit of {self.max_residues}. Retained "
+                f"activations are linear in residue count, so this would need "
+                f"roughly {topo.n_residues * 0.41:.0f} MB per rollout step. "
+                f"Filter the manifest, raise the limit deliberately, or crop."
+            )
+        if self.min_residues is not None and topo.n_residues < self.min_residues:
+            raise ValueError(
+                f"{spec.pdb_id} yields only {topo.n_residues} standard amino "
+                f"acids, under the min_residues limit of {self.min_residues}. "
+                f"RCSB's polymer-monomer count includes nucleotides, so a "
+                f"nucleic-acid complex can pass the manifest filter and still "
+                f"have almost no protein."
+            )
         if self._cache_topologies:
             self._cache[spec.pdb_id] = (topo, coords)
         return topo, coords

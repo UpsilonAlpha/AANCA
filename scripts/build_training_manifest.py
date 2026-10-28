@@ -72,12 +72,28 @@ def cluster_file() -> Path:
     return path
 
 
-def candidate_entries(resolution: float) -> list[str]:
-    """X-ray protein entries at or better than ``resolution``.
+def candidate_entries(
+    resolution: float, min_residues: int, max_residues: int
+) -> list[str]:
+    """X-ray protein entries within the resolution and size bounds.
 
-    The resolution cutoff is **ours**, not theirs: no packing paper documents
-    one. It is recorded as a parameter so the choice is visible rather than
-    buried.
+    **All three bounds are ours, not theirs.** No packing paper documents a
+    resolution cutoff or a size range for the training pool, so they are
+    parameters rather than buried constants.
+
+    The size bounds exist for concrete reasons found by measurement, not taste.
+    Without them the pool runs from 12-residue peptides -- not packing targets in
+    any useful sense -- to 3,570-residue assemblies, which at the measured
+    ~124 MB of retained activations per 300 residues per step would need ~13 GB
+    for a single 30-step rollout. Counts at 2.5 A: no bounds 161,997; 30+ loses
+    only 428 entries; 40-1000 keeps 138,765 (86%); 40-600 keeps 109,637 (68%).
+    1,000 bounds a sample at roughly 12 GB while keeping most of the data.
+
+    The nearest published precedent is AttnPacker's 600-residue cap, which
+    applies to their non-native-backbone *test* set rather than to training.
+    Spatial cropping would let large assemblies back in -- a local rule tolerates
+    it, since interior residues keep correct context -- and is the better fix
+    later.
     """
     query = (
         rcsb.FieldQuery(
@@ -87,9 +103,20 @@ def candidate_entries(resolution: float) -> list[str]:
             "rcsb_entry_info.polymer_entity_count_protein", greater_or_equal=1
         )
         & rcsb.FieldQuery("exptl.method", exact_match="X-RAY DIFFRACTION")
+        & rcsb.FieldQuery(
+            "rcsb_entry_info.deposited_polymer_monomer_count",
+            greater_or_equal=min_residues,
+        )
+        & rcsb.FieldQuery(
+            "rcsb_entry_info.deposited_polymer_monomer_count",
+            less_or_equal=max_residues,
+        )
     )
     ids = rcsb.search(query, return_type="entry")
-    print(f"candidates: {len(ids)} X-ray protein entries at <= {resolution} A")
+    print(
+        f"candidates: {len(ids)} X-ray protein entries at <= {resolution} A, "
+        f"{min_residues}-{max_residues} residues"
+    )
     return [i.upper() for i in ids]
 
 
@@ -151,6 +178,8 @@ def leaking_entries(
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--resolution", type=float, default=2.5)
+    parser.add_argument("--min-residues", type=int, default=40)
+    parser.add_argument("--max-residues", type=int, default=1000)
     parser.add_argument("--validation-fraction", type=float, default=0.04)
     parser.add_argument("--limit", type=int, default=0, help="cap candidates (testing)")
     parser.add_argument("--seed", type=int, default=0)
@@ -164,7 +193,9 @@ def main() -> int:
     clusters = ClusterIndex.from_file(cluster_file())
     print(f"clusters: {len(clusters)} entries indexed")
 
-    entries = candidate_entries(args.resolution)
+    entries = candidate_entries(
+        args.resolution, args.min_residues, args.max_residues
+    )
     if args.limit:
         entries = entries[: args.limit]
         print(f"candidates: capped at {len(entries)}")
@@ -227,6 +258,8 @@ def main() -> int:
 
     meta = {
         "resolution_max": args.resolution,
+        "min_residues": args.min_residues,
+        "max_residues": args.max_residues,
         "validation_fraction": args.validation_fraction,
         "seed": args.seed,
         "candidates": len(entries),

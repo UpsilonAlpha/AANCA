@@ -303,6 +303,42 @@ def test_epoch_visits_every_structure(dataset):
     assert sorted(seen) == ["193L", "1UBQ"]
 
 
+def test_oversized_structures_fail_loudly(dataset):
+    """A size guard behind the manifest filter.
+
+    The smoke test on real data found entries from 12 to 3,570 residues. At the
+    measured ~124 MB of retained activations per 300 residues per step, a 3,570
+    residue assembly needs ~13 GB for one 30-step rollout -- which would surface
+    as an opaque OOM mid-training rather than as a data problem.
+    """
+    dataset.max_residues = 10
+    dataset._cache.clear()
+    with pytest.raises(ValueError, match="over the max_residues limit"):
+        dataset.load(0)
+
+
+def test_tiny_structures_fail_loudly(dataset):
+    """The manifest filter cannot catch these on its own.
+
+    RCSB's deposited_polymer_monomer_count includes nucleotides, so a
+    DNA-protein complex passes a 40-residue filter and then yields almost no
+    amino acids once the loader keeps only the standard twenty. The smoke test
+    on real data found entries down to 2 residues that way.
+    """
+    dataset.min_residues = 10_000
+    dataset._cache.clear()
+    with pytest.raises(ValueError, match="under the min_residues limit"):
+        dataset.load(0)
+
+
+def test_size_guards_can_be_disabled(dataset):
+    dataset.max_residues = None
+    dataset.min_residues = None
+    dataset._cache.clear()
+    topo, _coords = dataset.load(0)
+    assert topo.n_residues > 10
+
+
 def test_rejects_empty_inputs():
     with pytest.raises(ValueError):
         RepackingDataset([])
