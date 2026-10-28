@@ -48,10 +48,37 @@ def test_entries_sharing_a_cluster_are_grouped(clusters):
     assert clusters.group_of("1ABC") == clusters.group_of("2DEF")
 
 
-def test_grouping_is_transitive(clusters):
-    """4JKL shares one cluster with 3GHI and another with 5MNO, so all three are
-    related. Union-find is what makes that chain close."""
-    assert clusters.group_of("3GHI") == clusters.group_of("5MNO")
+def test_grouping_is_deliberately_not_transitive(clusters):
+    """4JKL shares one cluster with 3GHI and another with 5MNO, but 3GHI and
+    5MNO are *not* grouped together.
+
+    Transitive grouping was tried and measured: on 7,601 X-ray entries at 1.2 A
+    it produced a single group of 6,682 entries -- 88% of the pool -- because a
+    promiscuous entity chains unrelated entries and the merging cascades
+    globally. Grouping by the primary entity cut that to a largest group of 751
+    and tripled the usable pool. The cost is borne by the test-leakage filter,
+    which is sequence-based and does not rely on this at all.
+    """
+    assert clusters.group_of("3GHI") != clusters.group_of("5MNO")
+    # 4JKL's primary entity is the one shared with 3GHI, so it groups there.
+    assert clusters.group_of("4JKL") == clusters.group_of("3GHI")
+
+
+def test_clusters_of_is_the_conservative_view(clusters):
+    """Exclusion uses every cluster an entry touches, not just the primary one:
+    a test target's homolog may sit at any entity number."""
+    assert len(clusters.clusters_of("4JKL")) == 2
+    assert clusters.clusters_of("9XYZ") == set()
+
+
+def test_holdout_exclusion_follows_every_cluster(clusters):
+    """Even a non-primary shared cluster must remove the entry."""
+    specs = _specs(clusters, ["3GHI", "4JKL", "5MNO", "9XYZ"])
+    splits = split_by_cluster(specs, {"5MNO"}, clusters, validation_fraction=0.0)
+    excluded = {s.pdb_id for s in splits["excluded"]}
+    # 4JKL shares 5MNO's cluster through its second entity, so it goes too.
+    assert excluded == {"5MNO", "4JKL"}
+    assert {s.pdb_id for s in splits["train"]} == {"3GHI", "9XYZ"}
 
 
 def test_unlisted_entries_are_their_own_group(clusters):
@@ -72,17 +99,20 @@ def test_group_ids_are_stable_not_insertion_ordered():
 
 
 def test_group_size_histogram_exposes_over_merging(clusters):
-    """Counts members *present in the given list*, so the cost of over-merging
-    is visible for the pool actually being split rather than for all of RCSB."""
+    """Counts members *present in the given list*, so the cost of grouping is
+    visible for the pool actually being split rather than for all of RCSB.
+
+    This is the diagnostic that caught the union-find collapse, so it earns its
+    place: a largest-group number is the cheapest signal that grouping has gone
+    wrong.
+    """
     histogram = clusters.group_size_histogram(
         ["1ABC", "2DEF", "3GHI", "4JKL", "5MNO", "9XYZ"]
     )
-    # {1ABC,2DEF} = 2, the transitively merged {3GHI,4JKL,5MNO} = 3, 9XYZ alone.
-    assert histogram == {1: 1, 2: 1, 3: 1}
-
-    # Drop one member and that group shrinks, rather than being counted in full.
-    partial = clusters.group_size_histogram(["1ABC", "2DEF", "3GHI", "4JKL", "9XYZ"])
-    assert partial == {1: 1, 2: 2}
+    # {1ABC,2DEF} share a primary cluster = 2; {3GHI,4JKL} = 2; 5MNO and 9XYZ
+    # are each alone, 5MNO because its only cluster is not 4JKL's primary.
+    assert histogram == {1: 2, 2: 2}
+    assert max(histogram) == 2, "no group should swallow the pool"
 
 
 # -- splitting -------------------------------------------------------------

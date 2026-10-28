@@ -60,6 +60,14 @@ CHI_ATOMS: dict[str, tuple[tuple[str, str, str, str], ...]] = {
 
 AA3 = tuple(sorted(CHI_ATOMS))
 
+#: Three-letter to one-letter residue codes, for sequence-identity queries.
+THREE_TO_ONE: dict[str, str] = {
+    "ALA": "A", "ARG": "R", "ASN": "N", "ASP": "D", "CYS": "C",
+    "GLN": "Q", "GLU": "E", "GLY": "G", "HIS": "H", "ILE": "I",
+    "LEU": "L", "LYS": "K", "MET": "M", "PHE": "F", "PRO": "P",
+    "SER": "S", "THR": "T", "TRP": "W", "TYR": "Y", "VAL": "V",
+}
+
 MAX_CHI = 4
 
 #: Chis whose terminal group is two-fold symmetric: the 180-degree-flipped

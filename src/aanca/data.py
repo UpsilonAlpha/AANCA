@@ -69,65 +69,76 @@ class StructureSpec:
 
 
 class ClusterIndex:
-    """Entry-level relatedness, derived from RCSB's entity-level clusters.
+    """RCSB's entity-level 40% sequence clusters, read two different ways.
 
     The published file lists one cluster per line as ``PDBID_ENTITYID`` tokens.
-    Two *entries* are treated as related when they share any cluster, which is
-    resolved by union-find. That deliberately over-merges: a promiscuous entity
-    can chain unrelated entries into one group, which costs training data but
-    never leaks. Over-merging is the safe direction, and
-    :meth:`group_size_histogram` makes the cost visible rather than hidden.
+    An entry has several entities, so there are two sensible notions of "related
+    entries", and they are used for different jobs:
+
+    :meth:`group_of` -- the cluster of the entry's **primary** (lowest-numbered)
+    protein entity. Used to **split train from validation**. One cluster per
+    entry, no transitivity.
+
+    :meth:`clusters_of` -- **every** cluster the entry touches. Used to
+    **exclude test homologs**, where over-caution is correct.
+
+    An earlier version treated two entries as related whenever they shared *any*
+    cluster, resolved by union-find. That was measured and it collapses: on 7,601
+    X-ray entries at 1.2 A it produced a single group of **6,682 entries**, 88%
+    of the pool, because a promiscuous entity -- a tag, a chaperone, a common
+    lysozyme -- chains otherwise unrelated entries together, and the merging
+    cascades globally. Grouping by the primary entity removes the cascade.
+
+    What makes that safe is that the two jobs have very different stakes. Test
+    leakage is handled separately and rigorously, by an MMseqs2 sequence-identity
+    search against the actual test targets (see
+    ``scripts/build_training_manifest.py``), which catches a homologous chain
+    whatever entity number it carries. Cluster grouping only has to keep
+    train and validation apart, and for that the primary entity is enough.
     """
 
     def __init__(self, lines: list[str]) -> None:
-        self._parent: dict[str, str] = {}
+        #: ``PDBID`` -> the (entity number, cluster id) pairs it contains.
+        #: Keyed by entry so lookups are O(1); scanning the entity table per
+        #: query is 250k operations and far too slow at pool scale.
+        self._entry_entities: dict[str, list[tuple[int, str]]] = {}
+
         for line in lines:
-            entries = {token.split("_")[0].upper() for token in line.split() if token}
-            if len(entries) < 2:
-                for entry in entries:
-                    self._parent.setdefault(entry, entry)
+            tokens = [t.strip().upper() for t in line.split() if t.strip()]
+            if not tokens:
                 continue
-            iterator = iter(sorted(entries))
-            first = next(iterator)
-            self._parent.setdefault(first, first)
-            for other in iterator:
-                self._parent.setdefault(other, other)
-                self._union(first, other)
+            cluster = tokens[0]
+            for token in tokens:
+                entry, _, suffix = token.partition("_")
+                number = int(suffix) if suffix.isdigit() else 10**9
+                self._entry_entities.setdefault(entry, []).append((number, cluster))
+
+        for entities in self._entry_entities.values():
+            entities.sort()
 
     @classmethod
     def from_file(cls, path: str | Path) -> "ClusterIndex":
         with open(path, encoding="utf-8") as handle:
             return cls(handle.readlines())
 
-    def _find(self, entry: str) -> str:
-        root = entry
-        while self._parent[root] != root:
-            root = self._parent[root]
-        while self._parent[entry] != root:
-            self._parent[entry], entry = root, self._parent[entry]
-        return root
-
-    def _union(self, a: str, b: str) -> None:
-        ra, rb = self._find(a), self._find(b)
-        if ra != rb:
-            # Keep the lexicographically smaller root, so group ids are stable
-            # across runs rather than depending on insertion order.
-            if rb < ra:
-                ra, rb = rb, ra
-            self._parent[rb] = ra
-
     def __len__(self) -> int:
-        return len(self._parent)
+        return len(self._entry_entities)
 
     def group_of(self, pdb_id: str) -> str:
-        """Group id, or the entry itself when RCSB lists no cluster for it.
+        """Cluster of the entry's primary entity; the entry id if unlisted.
 
-        A singleton is the conservative reading: an unclustered entry is assumed
-        related to nothing, which risks nothing because it cannot pull a
-        homolog across the split.
+        "Primary" is the lowest entity number present, which for a
+        protein-of-interest plus accessories is the one that matters. An
+        unlisted entry becomes its own group, which cannot pull anything across
+        a split.
         """
         key = pdb_id.upper()
-        return self._find(key) if key in self._parent else key
+        entities = self._entry_entities.get(key)
+        return entities[0][1] if entities else key
+
+    def clusters_of(self, pdb_id: str) -> set[str]:
+        """Every cluster this entry touches. For conservative exclusion."""
+        return {cluster for _number, cluster in self._entry_entities.get(pdb_id.upper(), ())}
 
     def group_size_histogram(self, pdb_ids: list[str]) -> dict[int, int]:
         counts: dict[str, int] = {}
@@ -164,12 +175,19 @@ def split_by_cluster(
     if not 0.0 <= validation_fraction < 1.0:
         raise ValueError(f"validation_fraction must be in [0, 1), got {validation_fraction}")
 
-    banned = {clusters.group_of(pdb_id) for pdb_id in holdout_ids}
+    # Exclusion uses EVERY cluster a holdout entry touches, not just its primary
+    # one: a test target's homolog may sit at any entity number, and
+    # over-caution is the right error here. Splitting train from validation uses
+    # the primary cluster only (see ClusterIndex), because that job has far
+    # lower stakes and the conservative version collapses the pool.
+    banned: set[str] = set()
+    for pdb_id in holdout_ids:
+        banned |= clusters.clusters_of(pdb_id) or {pdb_id.upper()}
 
     by_group: dict[str, list[StructureSpec]] = {}
     excluded: list[StructureSpec] = []
     for spec in specs:
-        if spec.group in banned:
+        if clusters.clusters_of(spec.pdb_id) & banned or spec.group in banned:
             excluded.append(spec)
         else:
             by_group.setdefault(spec.group, []).append(spec)

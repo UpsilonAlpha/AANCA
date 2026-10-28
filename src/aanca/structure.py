@@ -78,6 +78,21 @@ class Protein:
             res_ids=self.res_ids,
         )
 
+    def sequences(self) -> dict[str, str]:
+        """One-letter sequences per chain, in residue order.
+
+        Used for the sequence-identity leakage filter. Built from the residues
+        actually present, so a gap in the model shortens the sequence rather
+        than inserting a placeholder -- which is what we want for an identity
+        search, since the alternative invents residues the structure lacks.
+        """
+        out: dict[str, list[str]] = {}
+        for index, residue in enumerate(self.residues):
+            code = rc.THREE_TO_ONE.get(residue.resname)
+            if code is not None:
+                out.setdefault(self.chain_ids[index], []).append(code)
+        return {chain: "".join(codes) for chain, codes in out.items()}
+
     # -- rigid motion -------------------------------------------------------
 
     def transformed(

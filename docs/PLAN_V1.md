@@ -281,6 +281,42 @@ What is actually obtainable, which is the awkward part:
   empty holdout list, because silently training on everything is how an indefensible number gets
   produced.
 
+### The leakage filter uses the same tool they did
+
+The papers remove training chains within 40% sequence identity of any test target using MMseqs2.
+MMseqs2 is not installed here and is awkward on Windows — but **RCSB runs it on their servers**, and
+biotite exposes it as `rcsb.SequenceQuery(sequence, "protein", min_identity=0.4)`. So the filter is
+done with the same tool rather than a reimplementation, and the comparison does not hinge on our
+having got sequence search right.
+
+`scripts/build_training_manifest.py` extracts each CASP target's sequence from the benchmark archive,
+queries at 40%, and excludes every cluster the hits touch.
+
+### Grouping: the conservative version collapses the pool
+
+Two notions of "related entries" are needed, for two jobs with very different stakes.
+
+An earlier version treated entries as related whenever they shared **any** 40% cluster, resolved by
+union-find. Measured on 7,601 X-ray entries at 1.2 Å, that produced a single group of **6,682
+entries — 88% of the pool**, because a promiscuous entity (a tag, a chaperone, a common lysozyme)
+chains otherwise unrelated entries together and the merging cascades globally. It left 648 usable
+representatives.
+
+Grouping instead by each entry's **primary (lowest-numbered) entity** cut the largest group to 751
+and raised the pool to 2,123 — 3.3× more data — with no transitivity.
+
+What makes that safe is the separation of concerns:
+
+| job | notion used | stakes |
+|---|---|---|
+| exclude test homologs | `clusters_of` — **every** cluster the entry touches, plus the sequence-identity filter above | high: this is test leakage |
+| split train from validation | `group_of` — the primary entity's cluster only | low: contaminating validation costs calibration, not credibility |
+
+Test leakage is caught by the sequence search, which finds a homologous chain whatever entity number
+it carries. Cluster grouping only has to keep train and validation apart, and the primary entity is
+enough for that. `group_size_histogram` is kept as a diagnostic because a largest-group number is the
+cheapest possible signal that grouping has gone wrong — it is what caught this.
+
 Include multi-chain entries so interfaces are in distribution (§1).
 
 One caveat on local smoke-testing: by the burial definition in §6, ubiquitin is only 15.8% core and
