@@ -47,14 +47,16 @@ import torch
 #: evaluating it more often does not invalidate what came before, while a
 #: different crop size or rollout length makes the curve two curves.
 #:
-#: ``split`` is pinned for a sharper reason than the others: the structure
-#: indices are *in* the checkpoint, so a resume that asked for a different
-#: split would restore the old indices and carry on training on them while the
-#: log and the run directory claimed otherwise. That is a wrong answer with no
-#: symptom, which is worse than a refusal.
+#: ``split``, ``structures`` and ``eval_structures`` are pinned for a sharper
+#: reason than the others: the structure indices are *in* the checkpoint, so a
+#: resume that asked for a different split or a bigger pool would restore the
+#: old indices and carry on training on them while the log and the run
+#: directory claimed otherwise. That is a wrong answer with no symptom, which
+#: is worse than a refusal. ``cache`` is deliberately absent: it changes how
+#: often an entry is re-parsed and nothing else.
 PINNED = (
     "crop_size", "steps", "truncate", "seed", "pool_probability", "k", "noop_weight",
-    "split",
+    "split", "structures", "eval_structures",
 )
 
 #: Exit code for "checkpointed and stopped early, not finished". The batch

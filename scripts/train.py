@@ -124,6 +124,12 @@ def main() -> int:
     parser.add_argument("--eval-every", type=int, default=200)
     parser.add_argument("--structures", type=int, default=400, help="training pool")
     parser.add_argument("--eval-structures", type=int, default=12)
+    parser.add_argument(
+        "--cache",
+        type=int,
+        default=0,
+        help="parsed entries to keep (0: enough for the whole training pool)",
+    )
     parser.add_argument("--steps", type=int, default=20)
     parser.add_argument("--eval-steps", type=int, default=30)
     parser.add_argument("--truncate", type=int, default=8)
@@ -214,11 +220,19 @@ def main() -> int:
         print(f"no coordinates in {PDB} -- run scripts/fetch_structures.py")
         return 1
 
+    # Hold the whole training pool in the parse cache. The dataset's default
+    # bound is 256, which is right for a 23,761-entry split and wrong here:
+    # the run draws from ``--structures`` entries at random, so a cache
+    # smaller than that pool thrashes and the expensive part -- parsing -- is
+    # paid again on most updates. It is transparent to the results either way,
+    # which is why it is not pinned in the fingerprint.
+    cache = args.cache if args.cache > 0 else args.structures + args.eval_structures
     dataset = RepackingDataset(
         available,
         concentrations=(100.0, 20.0, 5.0, 0.0),
         crop_size=args.crop_size,
         device=device,
+        cache_limit=max(cache, 1),
     )
 
     out_dir = RUNS / args.tag
