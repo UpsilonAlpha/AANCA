@@ -285,10 +285,27 @@ multithreaded reductions sum in whatever order the threads finish, so the resume
 `--threads 1`, where an inequality can only mean a bookkeeping bug.) Writes are atomic, so a kill
 during the save costs the new checkpoint rather than the old one.
 
+Resuming is refused if a pinned setting changed — crop size, rollout length, truncation, seed, k,
+no-op weight, and the three that choose the structures (`--split`, `--structures`,
+`--eval-structures`). Those last three matter for a sharper reason than the rest: the indices are
+*in* the checkpoint, so a resume asking for a different split would restore the old indices and
+train on them while the log claimed otherwise. A wrong answer with no symptom is worse than a
+refusal. Extending `--updates` is allowed, because a longer run is the same run.
+
+### A non-finite update is skipped, not applied
+
+`clip_grad_norm_` does not contain a NaN gradient, it spreads it: the total norm is NaN, every
+gradient is divided by it, and the optimiser step writes NaN into every weight permanently. The
+sample pool then makes it durable, because a NaN state stored there is drawn as a *seed* later —
+so the update that fails is not the update that erred, and the run dies at a neighbour search
+("data must be finite") pointing at scipy. Both are now closed: the update is skipped, the pool
+refuses the state, both are counted and printed, and `--max-skipped` stops a run that is only
+skipping. This is containment; it makes the first NaN reportable rather than explaining it.
+
 ### On Bunya
 
 ```bash
-bash scripts/bunya_stage.sh                                   # login node, once
+AANCA_ROCM=7.0 bash scripts/bunya_stage.sh                    # login node, once
 sbatch --constraint=$(cat .venv_bunya/arch.txt) scripts/bunya_fetch.slurm --split train
 bash scripts/bunya_submit.sh gpu --tag v1 --updates 200000 --eval-every 500
 ```
@@ -299,7 +316,16 @@ and is the only code that resubmits, so a crash stops the chain instead of retry
 stop it, `touch runs/<tag>/STOP` — deliberately a different event from an interruption, or
 `scancel` would be followed by a resubmitted job.
 
-Two things the cluster taught us, both of which failed before they worked. Bunya keeps a separate
+**The ROCm version is not a preference.** A ROCm wheel carries code only for the architectures it
+was built for, and `rocm6.4` has no gfx950 — the MI355X, which is the card these runs get. The
+failure is worth knowing because it does not look like a mismatch: `rocminfo` prints gfx950, torch
+in the same job reports `is_available() False`, and the first `.to(device)` raises `No HIP GPUs are
+available`, exactly as it would on a node with no card. HIP hides devices no compiled target
+matches. `--gres` is pinned to `gpu:mi355x:1` for the same reason: with an untyped request the
+architecture is whatever the queue hands out, so the same submission is correct or broken
+depending on the hour.
+
+Three things the cluster taught us, all of which failed before they worked. Bunya keeps a separate
 software tree per CPU generation, so a venv over a module interpreter is built for one of them: the
 first queued job died in two seconds with `Illegal instruction (core dumped)` on an epyc3 node.
 `bunya_stage.sh` records the architecture, the submitter passes it as `--constraint`, and the job

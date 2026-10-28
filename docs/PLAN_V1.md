@@ -655,9 +655,18 @@ A deliberate stop and an interruption are different events and exit differently 
 size, rollout length, truncation, seed, k or no-op weight is refused: that is two experiments, not
 one run. Extending `--updates` is allowed, because a longer run is the same run.
 
-**What v1 still needs is the result of a training run.** Every component works, the plumbing is
-verified and the first chains are queued on Bunya, but nothing has been trained to convergence, so
-whether the fixed-point objective produces a converging rule is still unknown. The shakedown's two
+**What v1 still needs is the result of a training run.** Every component works and the plumbing is
+verified, but the first night on Bunya produced no training at all: the GPU arm could not see the
+card (a ROCm 6.4 wheel on a gfx950 MI355X) and the CPU arm died after 22 minutes at a neighbour
+search on non-finite coordinates. The second is the one that matters scientifically. A non-finite
+update is now skipped rather than applied — `clip_grad_norm_` turns one NaN gradient into NaN
+weights, permanently — and the sample pool refuses a non-finite state, since a state stored there
+is drawn as a seed later and makes the failure outlive the update that caused it. **That is
+containment, not an explanation.** What produces the first NaN is unknown, and the next run's
+`skipped` counters and the update number it first reports are the measurement that will say.
+
+Nothing has been trained to convergence, so whether the fixed-point objective produces a
+converging rule is still unknown. The shakedown's two
 early signals are the ones to read first: mean `|delta|` was **flat** across the rollout rather than
 decaying, and drift from a native start rose 0.000 -> 0.473 A in 40 updates, which is the
 reconstruction term beating the no-op term. `--noop-weight` exists for exactly that, and the first

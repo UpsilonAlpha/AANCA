@@ -302,11 +302,46 @@ Project memory in this project also holds `protein-nca-prior-art` and
 ## 12. Live on Bunya — added 2026-10-29
 
 Checkout: `/scratch/user/uquadhik/AANCA` (a git clone; `git pull` to update).
-Environment: `.venv_bunya`, torch 2.9.1+rocm6.4 over `python/3.12.3-gcccore-13.3.0`.
+Environment: `.venv_bunya`, torch **2.10.0+rocm7.0** over `python/3.12.3-gcccore-13.3.0`.
 Diagnostics written for the browser bridge: `/scratch/user/uquadhik/.cc_aanca/`.
 Job logs: `/scratch/user/uquadhik/AANCA/logs/<name>-<jobid>.{out,err}`.
 
-Queued on 2026-10-29 at ~01:00 AEST:
+### What is live now (2026-10-29, ~08:30 AEST)
+
+| job | what | depends on |
+|---|---|---|
+| 30879747 | fetch, train split — running, ~24.1k of 23.8k+949 entries on disk | — |
+| 30925556 | `bunya_gpu_check.slurm` on torch 2.10.0+rocm7.0 | — |
+| 30926033 | `v2_noop4` chain, CPU, `--split train --noop-weight 4` | afterok:30879747 |
+| 30926053 | `v2_gpu` chain, `--split train` | afterok:30879747:30925556 |
+
+New tags because the split is now pinned in the resume fingerprint, so these are new runs rather
+than continuations of the v1 ones — which is what they are scientifically too.
+
+### The first night: everything failed, and the two failures were unrelated
+
+Recorded because the diagnoses are reusable and the symptoms were both misleading.
+
+**The GPU arm never ran a line of project code.** On bun161, `rocminfo` prints
+`amdgcn-amd-amdhsa--gfx950` and torch 2.9.1+rocm6.4 in the same job reports `is_available() False`
+with an empty arch list, then raises `No HIP GPUs are available` at the first `.to(device)`. A ROCm
+wheel carries code only for the architectures it was built for, and HIP does not report a mismatch
+as a mismatch — it declines to enumerate the device, so the message is identical to having no card.
+The account's own working MI355X environment (`/scratch/user/uquadhik/.venv_esm`) runs
+torch 2.10.0+rocm7.0, which is now what `bunya_stage.sh` installs; `--gres` is pinned to
+`gpu:mi355x:1` so the architecture is no longer whatever the queue happens to hand out.
+
+**The CPU arm died after 22 minutes inside scipy**, at `cKDTree`: `data must be finite`. That is a
+report from the scene of the symptom. Two amplifiers stand between it and the cause, and both are
+now closed: `clip_grad_norm_` divides by a total norm that is itself NaN, so one non-finite
+gradient writes NaN into every weight permanently; and the sample pool stores states the rule
+produced, so a NaN written there is drawn as a *seed* later and the update that fails is not the
+update that erred. Non-finite updates are now skipped and counted, the pool refuses a non-finite
+state, and `--max-skipped` stops a run that is only skipping. **What produces the first NaN is
+still open** — the guards turn it into a reported update number instead of a scipy traceback, which
+is the next thing to read.
+
+### Queued on 2026-10-29 at ~01:00 AEST (all three failed; see above)
 
 | job | what | depends on |
 |---|---|---|
@@ -335,4 +370,11 @@ that asks for zero output on an undamaged structure.
    the next one is submitted. Delete the file to resume.
 3. **The OnDemand terminal can be dead while looking alive.** Keystrokes went nowhere and the
    screenshot still showed prompts; the fix was a new terminal from the command palette. Probe
-   every terminal with a write-then-fetch before trusting it.
+   every terminal with a write-then-fetch before trusting it. A second way to lose a command:
+   `computer{type}` with a trailing newline does **not** submit it in this xterm — the text piles
+   up on one line and three commands concatenate into nonsense. Send an explicit `key: Return`.
+   And check which terminal has focus: the pane may be showing one the user is running `grep` in,
+   where your keystrokes become that process's stdin.
+4. **`pip install torch` does not replace an existing torch**, so restaging against a different
+   ROCm index prints "requirement already satisfied" and changes nothing. `bunya_stage.sh` now
+   passes `--upgrade`; the symptom was a staging log printing the version it was meant to replace.
