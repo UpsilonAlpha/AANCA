@@ -389,3 +389,45 @@ def test_topology_without_a_mask_supervises_everything(ubiquitin):
     assert topo.supervised is None
     assert topo.supervised_mask.all()
     assert topo.supervised_mask.shape == (len(ubiquitin),)
+
+
+# -- scoring a crop --------------------------------------------------------
+
+
+def test_benchmark_table_scores_only_supervised_residues(ubiquitin):
+    """Reporting accuracy on the boundary shell would mix a different, harder
+    task into the published number."""
+    from aanca.metrics import benchmark_table
+
+    supervised = np.zeros(len(ubiquitin), dtype=bool)
+    supervised[: len(ubiquitin) // 2] = True
+    masked_topo, native = feature_topology(ubiquitin, supervised=supervised)
+    whole_topo, _ = feature_topology(ubiquitin)
+
+    masked = benchmark_table([(native, native, masked_topo)])
+    whole = benchmark_table([(native, native, whole_topo)])
+    assert masked.n_residues < whole.n_residues
+    # An explicit mask is intersected with the crop mask, never overriding it.
+    both = benchmark_table(
+        [(native, native, masked_topo, torch.ones(len(ubiquitin), dtype=torch.bool))]
+    )
+    assert both.n_residues == masked.n_residues
+
+
+def test_burial_is_exact_for_supervised_residues(haemoglobin):
+    """A CB neighbour within BURIAL_RADIUS has its minimum heavy-atom distance
+    within the same radius, so the crop retains every neighbour the burial
+    count needs -- the bands are not approximated for scored residues."""
+    from aanca.metrics import BURIAL_RADIUS, cb_neighbour_counts
+
+    assert BURIAL_RADIUS <= CUTOFF
+    taken = crop(haemoglobin, 300, cutoff=CUTOFF, seed_residue=250)
+    whole_topo, whole_coords = feature_topology(haemoglobin)
+    crop_topo, crop_coords = feature_topology(
+        taken.protein, supervised=taken.supervised
+    )
+    whole_counts = cb_neighbour_counts(whole_coords, whole_topo)
+    crop_counts = cb_neighbour_counts(crop_coords, crop_topo)
+    for position, original in enumerate(taken.indices):
+        if taken.supervised[position]:
+            assert int(crop_counts[position]) == int(whole_counts[original])

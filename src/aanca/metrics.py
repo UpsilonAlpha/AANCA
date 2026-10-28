@@ -349,6 +349,15 @@ def benchmark_table(
     native residue -- scoring an unmatched residue against whatever happens to
     sit at its index is how a plausible but meaningless number gets produced.
 
+    **A cropped topology restricts scoring to its supervised residues**, and an
+    explicit mask is intersected with them rather than overriding them. The
+    boundary shell of a crop was never predicted from complete information, so
+    reporting its accuracy would quietly mix a different, harder task into the
+    number. Burial bands stay exact under this: a residue counted as a CB
+    neighbour within ``BURIAL_RADIUS`` has its minimum heavy-atom distance
+    within the same radius, so for a supervised residue every neighbour the
+    burial count needs is still present in the crop.
+
     Pooled across structures by residue, not by averaging per-structure numbers:
     the papers report per-residue statistics, and averaging per-structure means
     would weight a 50-residue target the same as a 500-residue one.
@@ -368,8 +377,8 @@ def benchmark_table(
         predicted, native, topo = pair[0], pair[1], pair[2]
         scored = pair[3] if len(pair) > 3 else None
         torsion = topo.torsion
-        if scored is None:
-            scored = torch.ones(topo.n_residues, dtype=torch.bool)
+        complete = topo.supervised_mask
+        scored = complete if scored is None else (scored & complete)
 
         pred_chis = measure_chis(predicted, torsion)
         native_chis = measure_chis(native, torsion)
