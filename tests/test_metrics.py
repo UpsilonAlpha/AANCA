@@ -174,6 +174,82 @@ def test_torch_rmsd_respects_symmetry(loaded):
 # -- the assembled table ----------------------------------------------------
 
 
+def test_published_convention_differs_from_the_chemical_one(loaded):
+    """Two conventions, two purposes, and they must not be conflated.
+
+    The loss should fold what is physically identical; the metric should fold
+    what the people we compare against fold. The published set was
+    reverse-engineered from their released predictions and includes ASN chi2 and
+    HIS chi2 while excluding GLN chi3 -- chemically inconsistent, but it is what
+    reproduces their table.
+    """
+    from aanca.metrics import CHEMICAL, PUBLISHED, periodic_mask
+
+    assert PUBLISHED.periodic != CHEMICAL.periodic
+    assert ("ASN", 1) in PUBLISHED.periodic and ("ASN", 1) not in CHEMICAL.periodic
+    assert ("HIS", 1) in PUBLISHED.periodic
+    assert ("GLN", 2) not in PUBLISHED.periodic, "folding GLN chi3 breaks chi3 MAE"
+    # The chemical set is exactly what residue_constants declares, so the loss
+    # cannot silently inherit the reverse-engineered one.
+    assert CHEMICAL.periodic == frozenset(
+        {("ASP", 1), ("GLU", 2), ("PHE", 1), ("TYR", 1)}
+    )
+    assert PUBLISHED.accuracy_per_residue and not CHEMICAL.accuracy_per_residue
+    assert PUBLISHED.rmsd_include_cb and not PUBLISHED.rmsd_symmetry
+
+    _protein, topo, _coords = loaded
+    mask = periodic_mask(topo.torsion, PUBLISHED)
+    assert mask.shape == topo.torsion.chi_mask.shape
+    for row, resname in enumerate(topo.torsion.resnames):
+        if resname == "ASN":
+            assert bool(mask[row, 1])
+
+
+def test_per_residue_accuracy_is_stricter_than_per_chi(loaded):
+    """The published definition scores a residue only if *every* chi is right.
+
+    Pooling per chi instead reads about 10 points high, which was the single
+    largest discrepancy against their table.
+    """
+    from aanca.metrics import CHEMICAL, PUBLISHED, benchmark_table
+
+    _protein, topo, coords = loaded
+    torch.manual_seed(0)
+    deltas = torch.where(
+        topo.torsion.chi_mask,
+        torch.randn(topo.torsion.chi_mask.shape, dtype=coords.dtype) * 0.4,
+        0.0,
+    )
+    damaged = apply_chi_deltas(coords, deltas, topo.torsion)
+
+    per_residue = benchmark_table([(damaged, coords, topo)], convention=PUBLISHED)
+    per_chi = benchmark_table([(damaged, coords, topo)], convention=CHEMICAL)
+    assert per_residue.accuracy["all"] < per_chi.accuracy["all"]
+
+
+def test_rmsd_switches_move_the_number_as_measured(loaded):
+    """Including CB lowers RMSD; dropping symmetry raises it. Both matter at the
+    0.1 A scale, which is the scale the published comparison lives at."""
+    from aanca.metrics import sidechain_rmsd_torch
+
+    _protein, topo, coords = loaded
+    torch.manual_seed(1)
+    deltas = torch.where(
+        topo.torsion.chi_mask,
+        torch.rand(topo.torsion.chi_mask.shape, dtype=coords.dtype) * 2 - 1,
+        0.0,
+    )
+    damaged = apply_chi_deltas(coords, deltas, topo.torsion)
+
+    def mean(**kwargs):
+        return float(
+            np.nanmean(sidechain_rmsd_torch(damaged, coords, topo, **kwargs).numpy())
+        )
+
+    assert mean(include_cb=True) < mean(include_cb=False)
+    assert mean(respect_symmetry=False) > mean(respect_symmetry=True)
+
+
 def test_evaluate_packing_produces_the_published_table(loaded):
     _protein, topo, coords = loaded
     table = evaluate_packing(coords, coords, topo)

@@ -320,7 +320,47 @@ One caveat on local smoke-testing: by the burial definition in §6, ubiquitin is
    CASP13 and 27 CASP14 targets, ≤600 residues, Cα RMSD < 2.5 Å from native). Worth knowing it
    exists so we do not invent a different robustness test.
 
-### Metric validation status — unfinished, and blocking
+### Metric validation — resolved, with one gap
+
+Reverse-engineered from AttnPacker's released predictions by recomputing DiffPack's Table 1 and
+sweeping candidate definitions. **The headline metrics now reproduce.** Four independent methods,
+CASP13:
+
+| | χ1 | χ2 | χ3 | χ4 | acc all | core | surf | RMSD all |
+|---|---|---|---|---|---|---|---|---|
+| SCWRL ours / pub | 28.45 / 27.64 | 29.30 / 28.97 | 47.57 / 49.75 | 57.30 / 61.54 | 55.1 / 56.2 | 70.8 / 71.3 | 43.7 / 43.4 | 0.936 / 0.934 |
+| FASPR ours / pub | 27.80 / 27.04 | 28.90 / 28.41 | 48.30 / 50.30 | 57.28 / 60.89 | 55.3 / 56.4 | 69.6 / 70.3 | 44.1 / 43.6 | 0.907 / 0.910 |
+| RosettaPacker | 26.59 / 25.88 | 28.58 / 28.25 | 46.23 / 48.13 | 55.22 / 59.82 | 57.5 / 58.6 | 74.7 / 75.3 | 44.3 / 35.7 | 0.870 / 0.872 |
+| DLPacker | 22.89 / 22.18 | 27.88 / 27.00 | 50.82 / 51.22 | 68.79 / 70.04 | 57.5 / 58.8 | 73.2 / 73.9 | 45.3 / 45.4 | 0.787 / 0.772 |
+
+Three definitions had to be recovered, none of them stated in any paper. They are encoded as
+`metrics.Convention`, with `PUBLISHED` for comparability and `CHEMICAL` for the loss — conflating
+the two would either make our numbers incomparable or put a reverse-engineered convention into the
+training signal.
+
+1. **Angle Accuracy is per *residue*, not per chi.** A residue counts once, and only when every chi
+   it has is within 20°. Pooling per chi reads ~10 points high, which was the largest single
+   discrepancy.
+2. **RMSD includes CB and does *not* minimise over symmetry-equivalent labellings** — even though
+   the angle error *is* folded. Inconsistent of them, but it takes all-RMSD from 0.15 Å high to
+   0.003 Å (FASPR: 0.907 against 0.910).
+3. **The symmetry set is AlphaFold's plus ASN χ2 and HIS χ2, but excluding GLN χ3.** Folding ASN/HIS
+   χ2 takes χ2 from a 3.9° gap to 0.5°; folding GLN χ3 as well takes χ3 from a 2° agreement to a 5°
+   disagreement across all four methods. Chemically odd — GLN's amide is as ambiguous as ASN's — so
+   treat it as an observed convention of theirs, not a defensible rule.
+
+**The remaining gap: burial-stratified RMSD.** Core RMSD is ~0.14 Å high (0.658 vs 0.502 for FASPR)
+and surface ~0.10 Å high, while all-RMSD matches to 0.003 Å. That is only arithmetically possible if
+their band *populations* differ from ours. Excluding glycine's virtual CB from the neighbour count
+narrows it slightly (0.658 → 0.634) but does not close it. Untested candidates: neighbour counts
+taken on the predicted rather than the native structure, a different radius, or backbone atoms
+included in the count.
+
+So: **χ MAE, Angle Accuracy (all/core/surface) and all-residue RMSD are safe to quote. Core and
+surface RMSD are provisional.** Also unresolved: AttnPacker's own files need a different residue
+alignment and still produce nonsense, which matters because it is the strongest baseline.
+
+### How that validation was reached
 
 AttnPacker's Zenodo release (record 7713779) ships the native test structures *and* every baseline's
 predictions, so `metrics.py` can be checked against the published table rather than against itself.

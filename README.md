@@ -125,25 +125,38 @@ within 10 Å, surface ≤15 — deliberately not a partition).
 
 AttnPacker's benchmark release ships the native test structures *and* every baseline's predictions,
 which allows a much stronger check than self-consistency: recompute their published table from their
-own files. `scripts/validate_benchmark.py` does this. Current state on CASP13:
+own files. `scripts/validate_benchmark.py` does this, and it now reproduces. CASP13, ours against
+published:
 
-| χ1 MAE | ours | published | gap |
-|---|---|---|---|
-| SCWRL | 28.45 | 27.64 | +0.81 |
-| FASPR | 27.80 | 27.04 | +0.76 |
-| RosettaPacker | 26.59 | 25.88 | +0.71 |
-| DLPacker | 22.89 | 22.18 | +0.71 |
+| | χ1 | χ2 | χ3 | χ4 | acc all | core | surf | RMSD all |
+|---|---|---|---|---|---|---|---|---|
+| SCWRL | 28.45 / 27.64 | 29.30 / 28.97 | 47.57 / 49.75 | 57.30 / 61.54 | 55.1 / 56.2 | 70.8 / 71.3 | 43.7 / 43.4 | 0.936 / 0.934 |
+| FASPR | 27.80 / 27.04 | 28.90 / 28.41 | 48.30 / 50.30 | 57.28 / 60.89 | 55.3 / 56.4 | 69.6 / 70.3 | 44.1 / 43.6 | 0.907 / 0.910 |
+| RosettaPacker | 26.59 / 25.88 | 28.58 / 28.25 | 46.23 / 48.13 | 55.22 / 59.82 | 57.5 / 58.6 | 74.7 / 75.3 | 44.3 / 35.7 | 0.870 / 0.872 |
+| DLPacker | 22.89 / 22.18 | 27.88 / 27.00 | 50.82 / 51.22 | 68.79 / 70.04 | 57.5 / 58.8 | 73.2 / 73.9 | 45.3 / 45.4 | 0.787 / 0.772 |
 
-**χ1 reproduces to under 1° across four independent methods**, which validates the chi extraction,
-the symmetry folding and the burial classification. But χ2 runs 3–4° high, χ3/χ4 run low, accuracy
-is ~10 points high and RMSD ~0.15 Å high — all systematically, in the same direction for every
-method. That pattern means at least one definitional difference remains unidentified, so **the
-metrics are not yet safe to quote against published numbers.** Candidates being checked: which
-residues enter the denominator, whether CB is included in the RMSD atom set, and whether their
-accuracy folds symmetry. AttnPacker's own files need a different residue alignment and currently
-produce nonsense.
+Getting there required recovering three definitions that no paper states, each found by sweeping
+candidates until the table matched:
 
-This is the kind of thing worth finding before a training run rather than after.
+1. **Angle Accuracy is per *residue*, not per chi** — a residue counts only when every chi it has is
+   within 20°. Pooling per chi reads ~10 points high.
+2. **RMSD includes CB and does *not* minimise over symmetry-equivalent labellings**, even though the
+   angle error *is* folded. Inconsistent of them, but it takes all-RMSD from 0.15 Å high to 0.003 Å.
+3. **The symmetry set is AlphaFold's plus ASN χ2 and HIS χ2, but excluding GLN χ3.** Folding ASN/HIS
+   χ2 takes χ2 from a 3.9° gap to 0.5°; also folding GLN χ3 takes χ3 from agreement to a 5°
+   disagreement across all four methods. Chemically odd, so it is treated as an observed convention
+   of theirs rather than a rule.
+
+These live in `metrics.Convention` as `PUBLISHED` and `CHEMICAL`. The split is deliberate: the loss
+should fold what is physically identical, while the metric should fold what the people we compare
+against fold. Conflating them would either make the numbers incomparable or put a reverse-engineered
+convention into the training signal.
+
+**Still open:** burial-stratified RMSD. Core runs ~0.14 Å high and surface ~0.10 Å high while
+all-RMSD matches to 0.003 Å, which is only possible if their band populations differ from ours.
+So χ MAE, Angle Accuracy and all-residue RMSD are safe to quote; core and surface RMSD are
+provisional. AttnPacker's own files also need a different residue alignment and still produce
+nonsense, which matters because it is the strongest baseline.
 
 ## Setup
 

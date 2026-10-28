@@ -54,6 +54,86 @@ BURIAL_RADIUS = 10.0
 #: A chi counts as correct within this many degrees.
 ACCURACY_TOLERANCE_DEGREES = 20.0
 
+#: Chis the published evaluation treats as two-fold symmetric, as
+#: ``(residue, chi_index)`` with chi1 at index 0.
+#:
+#: **Reverse-engineered, not quoted.** None of the papers state their symmetry
+#: set, so it was recovered by recomputing their tables from the predictions they
+#: released and sweeping candidate sets (see ``scripts/validate_benchmark.py``).
+#: This set is AlphaFold's plus ASN chi2 and HIS chi2 -- amide and imidazole
+#: terminal groups being experimentally indistinguishable in density -- but
+#: **excluding GLN chi3**, which is the odd part: GLN's terminal amide is as
+#: ambiguous as ASN's. Folding GLN chi3 moves chi3 MAE from a 0.4-2.2 degree
+#: agreement to a 4-6 degree disagreement across all four methods, so the data
+#: is unambiguous even though the chemistry is not. Treat it as an observed
+#: convention of theirs rather than a defensible rule.
+PUBLICATION_PERIODIC: frozenset[tuple[str, int]] = frozenset(
+    {
+        ("ASP", 1),
+        ("GLU", 2),
+        ("PHE", 1),
+        ("TYR", 1),
+        ("ASN", 1),
+        ("HIS", 1),
+    }
+)
+
+
+@dataclass(frozen=True)
+class Convention:
+    """How to compute the metrics.
+
+    Two instances matter. :data:`PUBLISHED` reproduces the packing literature so
+    the tier-1 comparison is auditable. :data:`CHEMICAL` is what the geometry
+    and the *loss* use, which is a different question: the loss should fold what
+    is physically identical, while the metric should fold what the people we are
+    comparing against fold. Conflating the two would either make our numbers
+    incomparable or put a reverse-engineered convention into the training signal.
+    """
+
+    periodic: frozenset[tuple[str, int]]
+    #: True scores a *residue* correct only when every one of its chis is within
+    #: tolerance. That is the published definition of "Angle Accuracy" --
+    #: pooling per chi instead reads about 10 points high.
+    accuracy_per_residue: bool
+    #: Published RMSD includes CB, which is almost always correct and therefore
+    #: lowers the number; excluding it reads ~0.15 A high.
+    rmsd_include_cb: bool
+    #: Published RMSD does *not* minimise over symmetry-equivalent labellings,
+    #: even though the angle error folds symmetry. Inconsistent of them, but it
+    #: is what matches: 0.907 against a published 0.910 for FASPR.
+    rmsd_symmetry: bool
+
+
+PUBLISHED = Convention(
+    periodic=PUBLICATION_PERIODIC,
+    accuracy_per_residue=True,
+    rmsd_include_cb=True,
+    rmsd_symmetry=False,
+)
+
+CHEMICAL = Convention(
+    periodic=frozenset(
+        (resname, index)
+        for resname, flags in rc.CHI_PI_PERIODIC.items()
+        for index, flag in enumerate(flags)
+        if flag
+    ),
+    accuracy_per_residue=False,
+    rmsd_include_cb=False,
+    rmsd_symmetry=True,
+)
+
+
+def periodic_mask(topo: TorsionTopology, convention: Convention) -> Tensor:
+    """``(n_res, MAX_CHI)`` bool mask of the chis this convention folds."""
+    mask = torch.zeros_like(topo.chi_mask)
+    for row, resname in enumerate(topo.resnames):
+        for name, index in convention.periodic:
+            if resname == name:
+                mask[row, index] = True
+    return mask
+
 
 def cb_neighbour_counts(
     coords: Tensor, topo: FeatureTopology, include_glycine_cb: bool = True
@@ -256,8 +336,12 @@ def benchmark_table(
         | tuple[Tensor, Tensor, FeatureTopology, Tensor | None]
     ],
     include_glycine_cb: bool = True,
+    convention: Convention | None = None,
 ) -> BenchmarkRow:
     """Aggregate the published table over many structures.
+
+    ``convention`` defaults to :data:`PUBLISHED`, which reproduces the packing
+    literature's definitions (see :class:`Convention`).
 
     Each pair is ``(predicted, native, topology)`` or
     ``(predicted, native, topology, residue_mask)``. The optional mask selects
@@ -269,6 +353,7 @@ def benchmark_table(
     the papers report per-residue statistics, and averaging per-structure means
     would weight a 50-residue target the same as a 500-residue one.
     """
+    convention = convention or PUBLISHED
     mae_num = [0.0] * rc.MAX_CHI
     mae_den = [0] * rc.MAX_CHI
     acc_num: dict[str, float] = {}
@@ -288,13 +373,21 @@ def benchmark_table(
 
         pred_chis = measure_chis(predicted, torsion)
         native_chis = measure_chis(native, torsion)
-        errors = chi_residual(pred_chis, native_chis, torsion.periodic).abs()
+        errors = chi_residual(
+            pred_chis, native_chis, periodic_mask(torsion, convention)
+        ).abs()
         # Burial is a property of the native structure, so it is computed on the
         # full structure and only then restricted to the scored residues -- a
         # residue's neighbour count must not depend on which residues matched.
         bands = classify_burial(cb_neighbour_counts(native, topo, include_glycine_cb))
         bands = {label: mask & scored for label, mask in bands.items()}
-        rmsd = sidechain_rmsd_torch(predicted, native, topo)
+        rmsd = sidechain_rmsd_torch(
+            predicted,
+            native,
+            topo,
+            include_cb=convention.rmsd_include_cb,
+            respect_symmetry=convention.rmsd_symmetry,
+        )
         n_residues += int(scored.sum())
 
         for i in range(rc.MAX_CHI):
@@ -302,11 +395,20 @@ def benchmark_table(
             mae_num[i] += float((errors[:, i] * column).sum())
             mae_den[i] += int(column.sum())
 
+        within = errors <= tolerance.to(errors.dtype)
         for label, residues in bands.items():
             chi_mask = torsion.chi_mask & residues.unsqueeze(-1)
-            correct = (errors <= tolerance.to(errors.dtype)).to(errors.dtype)
-            acc_num[label] = acc_num.get(label, 0.0) + float((correct * chi_mask).sum())
-            acc_den[label] = acc_den.get(label, 0) + int(chi_mask.sum())
+            if convention.accuracy_per_residue:
+                # A residue counts once, and only if every chi it has is right.
+                has_chi = torsion.chi_mask.any(dim=1) & residues
+                good = (within | ~torsion.chi_mask).all(dim=1) & has_chi
+                acc_num[label] = acc_num.get(label, 0.0) + float(good.sum())
+                acc_den[label] = acc_den.get(label, 0) + int(has_chi.sum())
+            else:
+                acc_num[label] = acc_num.get(label, 0.0) + float(
+                    (within.to(errors.dtype) * chi_mask).sum()
+                )
+                acc_den[label] = acc_den.get(label, 0) + int(chi_mask.sum())
 
             defined = residues & ~torch.isnan(rmsd)
             rmsd_num[label] = rmsd_num.get(label, 0.0) + float(
@@ -334,15 +436,24 @@ def benchmark_table(
 
 
 def sidechain_rmsd_torch(
-    predicted: Tensor, native: Tensor, topo: FeatureTopology
+    predicted: Tensor,
+    native: Tensor,
+    topo: FeatureTopology,
+    include_cb: bool = False,
+    respect_symmetry: bool = True,
 ) -> Tensor:
-    """``(n_res,)`` symmetry-aware side-chain heavy-atom RMSD, NaN where undefined.
+    """``(n_res,)`` side-chain heavy-atom RMSD, NaN where undefined.
 
-    The Torch counterpart of ``structure.sidechain_rmsd``. Minimising over
-    ``rc.symmetric_relabellings`` matters: without it a 180-degree-flipped PHE
-    scores ~1.8 A against a structure it is chemically identical to, which
-    inflates the whole-protein mean by 0.26-0.36 A -- about the entire gap
-    between competing methods.
+    The Torch counterpart of ``structure.sidechain_rmsd``. The two switches are
+    the ones the published convention needs (see :class:`Convention`):
+    ``include_cb=True`` and ``respect_symmetry=False`` reproduce their numbers to
+    ~0.003 A, while the defaults here are the chemically sensible pair.
+
+    Symmetry matters a lot when it is on: without it a 180-degree-flipped PHE
+    scores ~1.8 A against a structure it is chemically identical to, inflating
+    the whole-protein mean by 0.26-0.36 A. That the published numbers match the
+    *unsymmetrised* RMSD while their angle error *is* folded is inconsistent of
+    them, but it is what the data says.
     """
     n_res = predicted.shape[0]
     out = torch.full((n_res,), float("nan"), dtype=predicted.dtype)
@@ -351,13 +462,18 @@ def sidechain_rmsd_torch(
         resname = topo.torsion.resnames[r]
         names = topo.torsion.atom_names[r]
         index = {name: i for i, name in enumerate(names)}
-        wanted = rc.sidechain_atoms(resname) - {"CB"}
+        wanted = rc.sidechain_atoms(resname)
+        if not include_cb:
+            wanted = wanted - {"CB"}
         selected = [i for i, name in enumerate(names) if name in wanted]
         if not selected:
             continue
 
+        options = (
+            rc.symmetric_relabellings(resname) if respect_symmetry else ({},)
+        )
         best = float("inf")
-        for relabel in rc.symmetric_relabellings(resname):
+        for relabel in options:
             other = [index.get(relabel.get(names[i], names[i]), i) for i in selected]
             diff = predicted[r, selected] - native[r, other]
             best = min(best, float(diff.pow(2).sum(-1).mean().sqrt()))
