@@ -2,16 +2,27 @@
 # One-time environment build for AANCA on Bunya, on a LOGIN node.
 #
 #   bash scripts/bunya_stage.sh            # CPU wheels (works everywhere)
-#   AANCA_ROCM=6.4 bash scripts/bunya_stage.sh   # ROCm wheels for gpu_rocm
+#   AANCA_ROCM=7.0 bash scripts/bunya_stage.sh   # ROCm wheels for gpu_rocm
 #
 # Kept out of the batch job on purpose: a dependency resolution failure should
 # cost a login shell, not a GPU allocation, and the job script stays a pure
 # "run the thing".
 #
-# **Which wheel.** The AMD cards here need a ROCm build of torch, and a ROCm
-# wheel only runs on the architectures it was compiled for -- a wheel built for
-# gfx90a will not run an MI355X (gfx950). So the GPU path installs and then
-# *checks*, in this script, rather than discovering it inside a queued job. If
+# **Which wheel: 7.0, and this is not a preference.** A ROCm wheel only runs on
+# the architectures it was compiled for, and ``rocm6.4`` has no gfx950 -- which
+# is the MI355X, the only ROCm card on this cluster the environment can
+# actually reach. Measured on bun161, 29 Oct: rocminfo prints
+# ``amdgcn-amd-amdhsa--gfx950``, and the same job's torch 2.9.1+rocm6.4 reports
+# ``is_available() False`` and ``get_arch_list() []``, then raises "No HIP GPUs
+# are available" on the first ``.to(device)``. Note what that failure is *not*:
+# not a kernel error, not a wrong answer, but a card the runtime declines to
+# enumerate at all, because HIP hides devices no compiled target matches. The
+# account's own working MI355X environment (``/scratch/user/uquadhik/.venv_esm``)
+# runs torch 2.10.0+rocm7.0, which is where the version below comes from.
+#
+# The GPU path installs and then *checks*, in this script, rather than
+# discovering it inside a queued job -- though the check is weak on a login
+# node, because ``get_arch_list()`` is empty without a GPU either way. If
 # the check fails, the CPU profile is still a complete answer: this model is
 # small (a few hundred thousand parameters over a few hundred residues), its
 # rollout is sequential, and its neighbour search is NumPy on the host, so the

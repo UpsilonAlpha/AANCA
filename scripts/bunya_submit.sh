@@ -33,13 +33,16 @@ PROFILE="${1:-}"
 shift || true
 
 ACCOUNT="${AANCA_ACCOUNT:-a_imb_ccbcd}"
-# The partition and the gres name are overridable because this cluster has
-# MI210, MI300X and MI355X behind one ``gpu_rocm`` partition and the names have
-# changed before. ``sinfo -p gpu_rocm -o '%n %G'`` prints what is actually
-# there; pass AANCA_GRES to pin a card.
+# This cluster has MI210 (gfx90a), MI300X (gfx942) and MI355X (gfx950) behind
+# one ``gpu_rocm`` partition, and **the card is pinned on purpose**: a ROCm
+# wheel carries code only for the architectures it was built for, so an
+# untyped ``gpu:1`` makes the architecture a property of the queue. Pinning it
+# turns a silent "No HIP GPUs are available" into a wait. mi355x because the
+# environment is a rocm7.0 wheel; ``sinfo -p gpu_rocm -o '%n %G'`` prints what
+# is actually there, and AANCA_GRES overrides this if the wheel changes.
 GPU_PARTITION="${AANCA_GPU_PARTITION:-gpu_rocm}"
 GPU_QOS="${AANCA_GPU_QOS:-gpu}"
-GRES="${AANCA_GRES:-gpu:1}"
+GRES="${AANCA_GRES:-gpu:mi355x:1}"
 CPU_PARTITION="${AANCA_CPU_PARTITION:-general}"
 WALL="${AANCA_WALL:-24:00:00}"
 CHAIN_LIMIT="${AANCA_CHAIN_LIMIT:-30}"
