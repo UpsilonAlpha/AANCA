@@ -88,8 +88,18 @@ if [[ -s "${ARCH_FILE}" ]]; then
     CONSTRAINT=(--constraint="$(cat "${ARCH_FILE}")")
 fi
 
+# A one-off dependency for the first segment, e.g. "afterok:<fetch job>" so a
+# chain can be queued before its data has finished downloading. Deliberately
+# not inherited by the resubmission: bunya_train.slurm clears it, because by
+# then the dependency has already been satisfied and a stale one would hold
+# every later segment forever.
+DEPENDENCY=()
+if [[ -n "${AANCA_DEPENDENCY:-}" ]]; then
+    DEPENDENCY=(--dependency="${AANCA_DEPENDENCY}")
+fi
+
 mkdir -p "${ROOT}/logs"
-CMD=(sbatch --account="${ACCOUNT}" "${RESOURCES[@]}" "${CONSTRAINT[@]}"
+CMD=(sbatch --account="${ACCOUNT}" "${RESOURCES[@]}" "${CONSTRAINT[@]}" "${DEPENDENCY[@]}"
      --job-name="aanca-${PROFILE}" --signal=B:USR1@300
      --output="${ROOT}/logs/%x-%j.out" --error="${ROOT}/logs/%x-%j.err"
      --export="ALL,AANCA_PROFILE=${PROFILE},AANCA_CHAIN=${CHAIN},AANCA_WALL_SECONDS=${WALL_SECONDS}"

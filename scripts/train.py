@@ -132,6 +132,15 @@ def main() -> int:
     parser.add_argument("--lr", type=float, default=3e-4)
     parser.add_argument("--clip", type=float, default=10.0)
     parser.add_argument("--pool-probability", type=float, default=0.5)
+    parser.add_argument(
+        "--noop-weight",
+        type=float,
+        default=1.0,
+        help="weight on the no-op term, which asks for zero output at the "
+        "native structure. Raising it buys stability at a native start at the "
+        "cost of the reconstruction term; the two pull against each other and "
+        "which wins is visible as the drift number.",
+    )
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--tag", default="run")
     parser.add_argument("--split", default="validation", help="manifest split to draw from")
@@ -387,6 +396,7 @@ def main() -> int:
             train_config,
             generator=generator,
             rng=rng,
+            noop_weight=args.noop_weight,
         )
         optimiser.zero_grad()
         terms.total.backward()

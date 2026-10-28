@@ -46,7 +46,9 @@ import torch
 #: ``--eval-every``, ``--max-seconds``) are free to change: extending a run or
 #: evaluating it more often does not invalidate what came before, while a
 #: different crop size or rollout length makes the curve two curves.
-PINNED = ("crop_size", "steps", "truncate", "seed", "pool_probability", "k")
+PINNED = (
+    "crop_size", "steps", "truncate", "seed", "pool_probability", "k", "noop_weight",
+)
 
 #: Exit code for "checkpointed and stopped early, not finished". The batch
 #: script keys its resubmission off this, so a genuine crash (any other

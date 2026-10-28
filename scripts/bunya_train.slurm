@@ -146,7 +146,9 @@ if (( RC == 64 )); then
         exit 0
     fi
     echo "resubmitting segment $((CHAIN + 1))"
-    AANCA_CHAIN=$((CHAIN + 1)) bash "${ROOT}/scripts/bunya_submit.sh" "${PROFILE}" "$@"
+    export AANCA_CHAIN=$((CHAIN + 1))
+    export AANCA_DEPENDENCY=""
+    bash "${ROOT}/scripts/bunya_submit.sh" "${PROFILE}" "$@"
     exit 0
 fi
 
