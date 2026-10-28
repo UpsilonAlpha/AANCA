@@ -319,6 +319,44 @@ One caveat on local smoke-testing: by the burial definition in §6, ubiquitin is
    Later escalation, already defined by their protocol: the **non-native backbone** variants (47
    CASP13 and 27 CASP14 targets, ≤600 residues, Cα RMSD < 2.5 Å from native). Worth knowing it
    exists so we do not invent a different robustness test.
+
+### Metric validation status — unfinished, and blocking
+
+AttnPacker's Zenodo release (record 7713779) ships the native test structures *and* every baseline's
+predictions, so `metrics.py` can be checked against the published table rather than against itself.
+`scripts/validate_benchmark.py` does that. Where it stands on CASP13 (DiffPack Table 1 as reference):
+
+| | χ1 ours | χ1 published | χ2 gap | accuracy gap | RMSD gap |
+|---|---|---|---|---|---|
+| SCWRL | 28.45 | 27.64 | +3.4 | +10.5 pts | +0.150 Å |
+| FASPR | 27.80 | 27.04 | +3.8 | +10.4 pts | +0.150 Å |
+| RosettaPacker | 26.59 | 25.88 | +3.1 | +9.5 pts | +0.139 Å |
+| DLPacker | 22.89 | 22.18 | +4.3 | +7.6 pts | +0.134 Å |
+
+**χ1 reproduces to under 1° across four independent methods.** That validates chi extraction,
+symmetry folding and the burial classification — four different programs' outputs would not all land
+within 1° by accident.
+
+The rest is off *systematically and in the same direction for every method*, which means a
+definitional difference rather than a bug in any one place. Until it is identified, **our numbers
+cannot be quoted against theirs.** Candidates, cheapest first:
+
+1. **Is CB in the RMSD atom set?** We exclude it. CB is almost always correct, so including it would
+   lower RMSD — consistent in sign with our being 0.13–0.15 Å high across the board.
+2. **Which residues enter the denominator?** We score a residue when every side-chain atom is
+   present. They may additionally exclude incomplete, terminal or non-rotameric residues. Our
+   accuracy being high *and* RMSD being high is contradictory unless the populations differ, so this
+   is the most likely single explanation.
+3. **Does their accuracy fold symmetry?** Not folding would lower their accuracy. But it would also
+   raise their χ2 MAE, and theirs is *lower* than ours, so this does not explain both.
+4. **AttnPacker's own files need different residue alignment** — currently they match few residues
+   and produce nonsense (RMSD 3.6 Å against a published 0.669 Å). Their numbering differs from the
+   native files in a way the chain-blank fallback does not handle.
+
+Two things this exercise already fixed, both of which would otherwise have produced plausible wrong
+numbers forever: residues were being matched **by file position** across independently loaded files
+(giving a 2× error), and SCWRL4's output leaves the B-factor column blank, which a strict parse
+rejects outright (`load_protein(..., repair_columns=True)`).
 2. **Does it converge?** Mean |Δχ| against step count. Does it decay, or oscillate as some of
    Grattarola's morphogenesis rules did?
 3. **Does it hold?** 500 steps on a rule trained to 30. Measure drift from the step-30 structure.

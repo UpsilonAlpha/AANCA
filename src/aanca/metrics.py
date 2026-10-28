@@ -5,19 +5,28 @@ AttnPacker (PNAS 2023), DiffPack (NeurIPS 2023) and FlowPacker (Bioinformatics
 same way. Matching them exactly is the only way the tier-1 comparison is
 auditable, so this module implements *their* definitions:
 
-* **chi MAE** in degrees, per chi index, with the two-fold symmetric chis folded.
-* **chi accuracy**, the fraction of chis within 20 degrees. This is their
-  headline number alongside MAE and is easy to omit by accident.
-* **side-chain atom RMSD**, symmetry-aware (see ``structure.sidechain_rmsd``).
+* **chi MAE** in degrees, **per chi index**, over all residues, symmetric chis
+  folded.
+* **chi accuracy**, the fraction of chis within 20 degrees, **pooled over chis**
+  and split All / Core / Surface.
+* **side-chain atom RMSD**, per residue, split All / Core / Surface,
+  symmetry-aware.
 
-And stratified by burial, which was the thing most worth copying: **core**
-residues are the hard ones, and a pooled number hides whether a method is good
-at packing or merely good at solvent-exposed side chains that barely matter.
+Note the asymmetry in how they stratify, which is easy to get wrong: MAE is
+per-chi and *not* split by burial; accuracy and RMSD are split by burial and
+*not* per-chi. :func:`benchmark_table` reproduces that layout.
 
-AttnPacker's convention, as cited by the later papers: a residue is **core** with
-at least 20 CB atoms within 10 A and **surface** with at most 15. Note that is
-deliberately *not* a partition -- residues with 16 to 19 neighbours belong to
-neither band and are reported separately here rather than silently dropped.
+**Surface residues are the hard ones, not core.** DiffPack reports 82.7% core
+against 57.3% surface accuracy on CASP13, and their headline gain over
+AttnPacker was +20.4% on *surface* specifically. Core side chains are
+sterically boxed in and nearly solved; surface ones are floppy and are where
+methods actually differ. An earlier version of this docstring had that
+backwards.
+
+The burial convention, from AttnPacker via DiffPack 5.1: a residue is **core**
+with at least 20 CB atoms within 10 A and **surface** with at most 15. That is
+deliberately *not* a partition -- 16 to 19 neighbours is neither band, and is
+reported separately here rather than silently dropped.
 
 One judgement call: GLY has no CB, so the virtual CB from
 ``torch_graph.frame_atom_coords`` is used for it when counting neighbours. The
@@ -123,12 +132,37 @@ def chi_accuracy(
     return [_masked_mean(correct[:, i], mask[:, i]) for i in range(rc.MAX_CHI)]
 
 
+def chi_accuracy_pooled(
+    pred: Tensor,
+    native: Tensor,
+    topo: TorsionTopology,
+    residues: Tensor | None = None,
+    tolerance_degrees: float = ACCURACY_TOLERANCE_DEGREES,
+) -> float:
+    """One accuracy over **all** chis of the selected residues.
+
+    This is the published layout: their Angle Accuracy column is a single number
+    per burial band, pooled across chi1-chi4, not a per-chi breakdown. Averaging
+    the per-chi accuracies instead would weight chi4 -- which only ARG and LYS
+    have -- equally with chi1, and give a different number.
+    """
+    tolerance = torch.deg2rad(torch.tensor(tolerance_degrees, dtype=pred.dtype))
+    correct = (chi_residual(pred, native, topo.periodic).abs() <= tolerance).to(
+        pred.dtype
+    )
+    mask = topo.chi_mask
+    if residues is not None:
+        mask = mask & residues.unsqueeze(-1)
+    return _masked_mean(correct, mask)
+
+
 @dataclass
 class BurialMetrics:
     label: str
     n_residues: int
     chi_mae: list[float]
     chi_accuracy: list[float]
+    pooled_accuracy: float
     rmsd: float
 
     def summary(self) -> str:
@@ -173,9 +207,130 @@ def evaluate_packing(
             n_residues=int(residues.sum()),
             chi_mae=chi_mae_degrees(pred_chis, native_chis, torsion, residues),
             chi_accuracy=chi_accuracy(pred_chis, native_chis, torsion, residues),
+            pooled_accuracy=chi_accuracy_pooled(
+                pred_chis, native_chis, torsion, residues
+            ),
             rmsd=_masked_mean(torch.nan_to_num(rmsd), residues & ~torch.isnan(rmsd)),
         )
     return out
+
+
+@dataclass
+class BenchmarkRow:
+    """One method's row in the published layout: MAE per chi, then All/Core/Surface."""
+
+    n_structures: int
+    n_residues: int
+    chi_mae: list[float]
+    accuracy: dict[str, float]
+    rmsd: dict[str, float]
+
+    def header(self) -> str:
+        return (
+            f"{'':<16}{'chi1':>7}{'chi2':>7}{'chi3':>7}{'chi4':>7}"
+            f"{'acc all':>9}{'core':>8}{'surf':>8}"
+            f"{'rmsd all':>10}{'core':>8}{'surf':>8}"
+        )
+
+    def row(self, label: str) -> str:
+        def fmt(value, width, spec):
+            return (
+                f"{'-':>{width}}" if value != value else f"{value:>{width}{spec}}"
+            )
+
+        mae = "".join(fmt(m, 7, ".2f") for m in self.chi_mae)
+        acc = "".join(
+            fmt(self.accuracy.get(b, float("nan")) * 100, w, ".1f")
+            for b, w in (("all", 9), ("core", 8), ("surface", 8))
+        )
+        rmsd = "".join(
+            fmt(self.rmsd.get(b, float("nan")), w, ".3f")
+            for b, w in (("all", 10), ("core", 8), ("surface", 8))
+        )
+        return f"{label:<16}{mae}{acc}{rmsd}"
+
+
+def benchmark_table(
+    pairs: list[
+        tuple[Tensor, Tensor, FeatureTopology]
+        | tuple[Tensor, Tensor, FeatureTopology, Tensor | None]
+    ],
+    include_glycine_cb: bool = True,
+) -> BenchmarkRow:
+    """Aggregate the published table over many structures.
+
+    Each pair is ``(predicted, native, topology)`` or
+    ``(predicted, native, topology, residue_mask)``. The optional mask selects
+    residues to score, which is needed when a prediction does not cover every
+    native residue -- scoring an unmatched residue against whatever happens to
+    sit at its index is how a plausible but meaningless number gets produced.
+
+    Pooled across structures by residue, not by averaging per-structure numbers:
+    the papers report per-residue statistics, and averaging per-structure means
+    would weight a 50-residue target the same as a 500-residue one.
+    """
+    mae_num = [0.0] * rc.MAX_CHI
+    mae_den = [0] * rc.MAX_CHI
+    acc_num: dict[str, float] = {}
+    acc_den: dict[str, int] = {}
+    rmsd_num: dict[str, float] = {}
+    rmsd_den: dict[str, int] = {}
+    n_residues = 0
+
+    tolerance = torch.deg2rad(torch.tensor(ACCURACY_TOLERANCE_DEGREES))
+
+    for pair in pairs:
+        predicted, native, topo = pair[0], pair[1], pair[2]
+        scored = pair[3] if len(pair) > 3 else None
+        torsion = topo.torsion
+        if scored is None:
+            scored = torch.ones(topo.n_residues, dtype=torch.bool)
+
+        pred_chis = measure_chis(predicted, torsion)
+        native_chis = measure_chis(native, torsion)
+        errors = chi_residual(pred_chis, native_chis, torsion.periodic).abs()
+        # Burial is a property of the native structure, so it is computed on the
+        # full structure and only then restricted to the scored residues -- a
+        # residue's neighbour count must not depend on which residues matched.
+        bands = classify_burial(cb_neighbour_counts(native, topo, include_glycine_cb))
+        bands = {label: mask & scored for label, mask in bands.items()}
+        rmsd = sidechain_rmsd_torch(predicted, native, topo)
+        n_residues += int(scored.sum())
+
+        for i in range(rc.MAX_CHI):
+            column = torsion.chi_mask[:, i] & scored
+            mae_num[i] += float((errors[:, i] * column).sum())
+            mae_den[i] += int(column.sum())
+
+        for label, residues in bands.items():
+            chi_mask = torsion.chi_mask & residues.unsqueeze(-1)
+            correct = (errors <= tolerance.to(errors.dtype)).to(errors.dtype)
+            acc_num[label] = acc_num.get(label, 0.0) + float((correct * chi_mask).sum())
+            acc_den[label] = acc_den.get(label, 0) + int(chi_mask.sum())
+
+            defined = residues & ~torch.isnan(rmsd)
+            rmsd_num[label] = rmsd_num.get(label, 0.0) + float(
+                (torch.nan_to_num(rmsd) * defined).sum()
+            )
+            rmsd_den[label] = rmsd_den.get(label, 0) + int(defined.sum())
+
+    nan = float("nan")
+    return BenchmarkRow(
+        n_structures=len(pairs),
+        n_residues=n_residues,
+        chi_mae=[
+            float(torch.rad2deg(torch.tensor(mae_num[i] / mae_den[i])))
+            if mae_den[i]
+            else nan
+            for i in range(rc.MAX_CHI)
+        ],
+        accuracy={
+            b: (acc_num[b] / acc_den[b] if acc_den.get(b) else nan) for b in acc_num
+        },
+        rmsd={
+            b: (rmsd_num[b] / rmsd_den[b] if rmsd_den.get(b) else nan) for b in rmsd_num
+        },
+    )
 
 
 def sidechain_rmsd_torch(

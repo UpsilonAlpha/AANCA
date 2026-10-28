@@ -117,14 +117,59 @@ class Protein:
         save_structure(str(path), self.atoms)
 
 
-def load_protein(path: str | Path, model: int = 1) -> Protein:
+def _repaired_pdb_lines(path: Path) -> list[str]:
+    """Fill in blank occupancy/B-factor columns so a strict parser accepts the file.
+
+    Third-party packers write PDB files to varying standards. SCWRL4's output in
+    AttnPacker's benchmark release leaves the B-factor column empty, which makes
+    biotite raise while converting it to a float -- the file is otherwise fine
+    and its coordinates are what we want. Only columns 55-66 of ATOM/HETATM
+    records are touched, and only when blank, so no coordinate can be altered.
+    """
+    lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    out: list[str] = []
+    for line in lines:
+        if line.startswith(("ATOM", "HETATM")):
+            padded = line.ljust(80)
+            if not padded[54:60].strip():
+                padded = padded[:54] + "  1.00" + padded[60:]
+            if not padded[60:66].strip():
+                padded = padded[:60] + "  0.00" + padded[66:]
+            line = padded.rstrip()
+        out.append(line)
+    return out
+
+
+def load_protein(
+    path: str | Path, model: int = 1, repair_columns: bool = False
+) -> Protein:
     """Load a PDB/mmCIF file as a :class:`Protein`.
 
     Keeps standard amino acids and heavy atoms only, and keeps a single altloc
     per atom. Non-standard residue names are dropped rather than guessed at;
     silently mis-typing a residue would corrupt every chi downstream of it.
+
+    ``repair_columns`` retries a PDB that a strict parse rejects, filling blank
+    occupancy and B-factor fields. Off by default: it should be an explicit
+    decision for third-party files, not a silent fallback that hides a genuinely
+    broken input.
     """
-    atoms = load_structure(str(path), model=model, altloc="first")
+    path = Path(path)
+    try:
+        atoms = load_structure(str(path), model=model, altloc="first")
+    except ValueError:
+        if not repair_columns or path.suffix.lower() not in (".pdb", ".ent"):
+            raise
+        import io
+
+        from biotite.structure.io import pdb
+
+        # Read through the normal path rather than assigning ``.lines``, which
+        # skips the index building that ``get_structure`` then relies on.
+        handle = pdb.PDBFile.read(
+            io.StringIO("\n".join(_repaired_pdb_lines(path)) + "\n")
+        )
+        atoms = handle.get_structure(model=model, altloc="first")
     atoms = atoms[filter_amino_acids(atoms)]
     atoms = atoms[atoms.element != "H"]
     atoms = atoms[np.isin(atoms.res_name, rc.AA3)]

@@ -2,51 +2,48 @@
 
 An **a**mino-**a**cid **n**eural **c**ellular **a**utomaton for protein side-chain repacking.
 
-A per-residue rule, applied repeatedly to a fixed native backbone, that moves side chains into
-their correct packing. Each residue sees only its local neighbourhood, outputs a change to its own
-side-chain torsions, and the same rule runs again on the result. No global information pathway, no
-step index as input, no noise-level conditioning.
+A per-residue rule, applied repeatedly to a fixed native backbone, that moves side chains into their
+correct packing. Each residue sees only its local neighbourhood, outputs a change to its own
+side-chain torsions, and the same rule runs again on the result — one message-passing hop per step,
+no global pathway, no step index as input, no noise-level conditioning.
 
-**The novelty is the training objective, not the architecture.** Existing packers (AttnPacker,
-DiffPack, FlowPacker) predict torsions in a fixed number of passes or a fixed diffusion schedule.
-This trains for a **fixed point**: the rule must converge to the native packing and stay there, from
-many starting conditions, over a step count it was never told. That is the Growing-NCA objective
-applied to protein geometry.
+The distinguishing choice is the training objective rather than the architecture. Existing packers
+predict torsions in a fixed number of passes or along a fixed diffusion schedule. This trains for a
+**fixed point**: the rule must converge to the native packing and stay there, from many starting
+conditions, over a step count it was never told.
 
-See [`HANDOFF.md`](HANDOFF.md) for the full design, the evaluation tiers, the prior-art position and
-the open questions.
+> **Status: pre-training.** The geometry layer, perception graph, rule, loss and rollout are built
+> and tested. Nothing has been trained, so there are no accuracy results yet — every number below is
+> a correctness or cost measurement, not a performance claim.
 
-## Status
+## What's built
 
-**Milestone 1 — the geometry and data layer — is passing its exactness bar.** No model yet.
-
-| What | Where | State |
+| | Where | State |
 |---|---|---|
-| Chi definitions, bond graphs, symmetries for all 20 types | `src/aanca/residue_constants.py` | done |
-| Dihedral measurement and rigid bond rotation | `src/aanca/geometry.py` | done |
-| Chi extraction and modification per residue | `src/aanca/torsions.py` | done |
-| Structure loading, whole-protein chis, side-chain RMSD | `src/aanca/structure.py` | done |
-| Geometric damage operators | `src/aanca/damage.py` | done |
-| Local perception graph, rebuilt per step | `src/aanca/graph.py` | done |
-| Differentiable torsion path (Torch) | `src/aanca/torch_geometry.py` | done |
-| The rule — one hop, two heads | `src/aanca/model.py` | done, untrained |
-| Von Mises likelihood + no-op term | `src/aanca/losses.py` | done |
-| Torch port of the featuriser | `src/aanca/torch_graph.py` | done |
-| Rollout: async mask, truncated BPTT, sample pool | `src/aanca/rollout.py` | done |
-| Bond/angle degrees of freedom + restraints | `src/aanca/torch_geometry.py` | built, off in v1 |
-| Dataset pipeline | — | **next** |
-| Nonbonded fields ("hormone gradients") | — | next, see plan §2b |
-| Chemical damage (mutation) | `src/aanca/damage.py` | deferred — not in v1 |
+| Chi extraction and exact modification, all 20 residue types | `residue_constants.py`, `torsions.py` | done |
+| Structure loading, side-chain RMSD, rigid motion | `structure.py` | done |
+| Geometric damage operators | `damage.py` | done |
+| Per-step perception graph, invariant features | `graph.py` | done |
+| Differentiable torsion path (Torch) | `torch_geometry.py` | done |
+| Differentiable featuriser | `torch_graph.py` | done |
+| The rule — one hop, Δχ + κ heads | `model.py` | done, untrained |
+| Von Mises likelihood, no-op term, restraints | `losses.py` | done |
+| Rollout: async mask, truncated BPTT, sample pool | `rollout.py` | done |
+| Published benchmark metrics | `metrics.py` | done, partially validated |
+| Bond/angle degrees of freedom | `torch_geometry.py` | built, disabled by default |
+| Dataset assembly and splitting | `data.py` | done |
+| Training data acquisition | — | **next** |
+| Nonbonded fields as perception | — | next |
 
-**v1 scope is in [`docs/PLAN_V1.md`](docs/PLAN_V1.md)** — read that before adding anything. The short
-version: v1 answers *does a strictly local, step-unconditioned rule converge to the native packing
-and stay there?*, which needs only geometric damage on PDB structures. SKEMPI, ΔΔG, mutations,
-ProteinEBM, free bond geometry and the energy-head variant are all deferred.
+The design, with reasoning, is in [`docs/PLAN_V1.md`](docs/PLAN_V1.md). Read that before adding
+anything — it records which options were rejected and why, including two where the original argument
+turned out to be wrong.
 
-### The Milestone 1 result
+## Verified properties
 
-Randomise every measurable chi in a structure, then set the native values back. The worst
-coordinate deviation, on three crystal structures:
+### The chi round trip is exact
+
+Randomise every measurable chi, then set the native values back:
 
 | entry | resolution | chis | damage RMSD | max deviation |
 |---|---|---|---|---|
@@ -54,230 +51,103 @@ coordinate deviation, on three crystal structures:
 | 3NIR crambin | 0.48 Å | 53 | 2.17 Å | 7.11e-15 Å |
 | 1UBQ ubiquitin | 1.80 Å | 151 | 2.72 Å | 2.13e-14 Å |
 
-The bar in the plan was 0.01 Å; the result is double-precision noise, twelve orders under it. That
-is because `set_chi` is implemented as a **rigid rotation of the downstream atom set about the chi
-bond**, applied to the residue's existing coordinates — not a rebuild from ideal internal
-coordinates. The round trip is therefore exact by construction, and the crystal's own bond lengths
-and angles survive untouched.
+The target was 0.01 Å; the result is double-precision noise. `set_chi` is a rigid rotation of the
+downstream atom set about the chi bond, applied to the residue's existing coordinates, not a rebuild
+from ideal internal coordinates — so the inverse is exact by construction and the crystal's own bond
+lengths and angles survive untouched. The same holds for bond stretches (translation along the bond
+axis) and angle bends (rotation about the plane normal), and inversion is order-independent across
+all three.
 
-Two things worth knowing about that table:
+A round trip alone cannot catch a consistent sign error, so the convention is checked independently
+against rotamer statistics: χ1 comes out gauche-minus 51.5% / trans 29.5% / gauche-plus 19.0%,
+matching the standard ordering. A flipped sign would swap the two gauche populations.
 
-- **Measure deviations on `Protein.residues`, not `Protein.atoms.coord`.** biotite stores an
-  `AtomArray` as float32, where a 1e-14 Å error rounds to a flattering exact zero. `residues` holds
-  float64 and is the authoritative state; `atoms` is a mirror kept in sync for file output.
-- **The round trip alone does not prove the convention is right** — a consistent sign error would
-  also round-trip. The independent check is the chi1 rotamer distribution, which comes out
-  gauche-minus 51.5% / trans 29.5% / gauche-plus 19.0%, matching the standard ordering. A flipped
-  sign would swap the two gauche populations.
+### Locality is a test, not a claim
 
-### Two things handled explicitly, because they are quiet failures
+`test_one_step_is_exactly_one_hop` perturbs a non-neighbour's features and asserts the target
+residue's update is bit-identical. A companion test perturbs an actual neighbour and requires the
+output to change, so the first cannot pass by nothing mattering.
 
-- **Proline is a ring.** Rotating its chi1 would break the CD–N closure. PRO is detected as rigid by
-  *walking its bond graph and finding the cycle*, not by being named, and carries an all-false chi
-  mask. `tests/test_residue_constants.py` asserts it is the only such residue.
-- **Two-fold symmetric terminal chis** — ASP χ2, GLU χ3, PHE χ2, TYR χ2 — are equivalent under a
-  180° flip. `torsions.chi_error` and `damage.chi_mae_degrees` fold them. Using a plain difference
-  instead costs up to 180° of error on those chis, and the resulting numbers look plausible.
-  ASN/GLN/HIS are deliberately *not* folded: their terminal substituents differ.
-- **Side-chain RMSD is minimised over symmetry-equivalent atom labellings.** The same chemistry
-  means a carboxylate's two oxygens and an aromatic ring's two halves are indistinguishable, so
-  comparing a flipped PHE to a reference *by atom name* scores a ~1.8 Å error for a structure that
-  is physically identical. Measured: symmetry-aware RMSD drops the affected residues from 1.8 Å to
-  0.08 Å and the whole-protein mean from 0.257 Å to 0.011 Å on 193L. Published packer RMSDs sit
-  around 0.4–0.8 Å, so the unsymmetrised number would have inflated our tier-1 comparison by
-  roughly the entire gap between competing methods.
+Worth stating honestly: at a 10 Å all-heavy-atom cutoff, measured mean degree is 28 on a 76-residue
+protein, so **one hop already reaches a quarter to a third of a small protein**. The defensible claim
+is "one message-passing hop per update, no global pathway, no step conditioning" — not "each residue
+sees only a handful of neighbours". Locality is also size-dependent: 28 neighbours is 37% of
+ubiquitin but under 10% of a 300-residue target.
 
-  LEU's CD1/CD2 and VAL's CG1/CG2 are *not* swapped. Those methyls are chemically equivalent but
-  IUPAC assigns them geometrically, and swapping them changes the defining chi by ~120° rather than
-  180°, so it is not a periodicity. AlphaFold's table excludes them and the baselines follow it.
+### Equivariance is chosen, not inherited
 
-### The symmetry is chemical, not geometric
+Every edge feature is a distance, a relative orientation `Rᵢᵀ Rⱼ`, or a vector in a residue's own
+backbone frame — invariant features plus rotation augmentation. The invariance tests are not vacuous:
+the naive global-coordinate version of the same feature shifts by 1.13 under a random rotation,
+against a 1e-8 tolerance.
 
-Worth knowing because it bounds what the above can achieve. Exact invariance under a 180° flip would
-need ideal geometry — a carboxylate whose oxygens are related precisely by a rotation about CB–CG, or
-a ring whose own two-fold axis is precisely the CB–CG bond. Real side chains depart from that, and
-the lever arm to a distal atom amplifies it:
+### Chemical symmetry is handled in both directions
 
-| group | summary deviation under a flip | symmetry-aware RMSD residual |
-|---|---|---|
-| ASP, GLU | 0.04–0.19 Å | — |
-| PHE, TYR | up to 0.39 Å | — |
-| all symmetric residues | — | 0.08–0.15 Å |
+A carboxylate's two oxygens and an aromatic ring's two halves are indistinguishable, so a 180° flip
+is the same structure. Side-chain RMSD therefore minimises over symmetry-equivalent atom labellings;
+without that, a flipped PHE scores ~1.8 Å against a structure it is chemically identical to, and the
+whole-protein mean inflates by 0.26–0.36 Å — about the entire gap between competing published
+methods.
 
-The flip moves atoms by ~2.4 Å, so both quantities are an order of magnitude smaller — but neither
-is zero, and a test asserting exact invariance would be wrong. The residual is irreducible: the
-flipped structure genuinely differs in coordinates while being the same molecule.
+The symmetry is *chemical*, not geometric: exact invariance would need ideal geometry, and real side
+chains deviate by up to 0.39 Å at the aromatic tips where the lever arm is longest. Tests assert the
+measured bound rather than exactness.
 
-## The perception graph
+LEU's CD1/CD2 and VAL's CG1/CG2 are deliberately **not** swapped — chemically equivalent, but IUPAC
+assigns them geometrically and swapping changes the defining chi by ~120° rather than 180°.
 
-Decided: **the contact graph is rebuilt every step, not frozen.** Freezing it from the native
-structure would let the rule read the answer through the topology, and that topology does not exist
-at inference time on a novel structure — so a frozen graph measures something the method cannot
-actually do.
+### Rollout cost, measured
 
-That decision has a consequence that is easy to miss. **The backbone is fixed in this milestone, so
-a graph built from backbone and CB atoms alone would be identical at every step.** Per-step rebuild
-only means anything because neighbour selection runs over *all* heavy atoms, side chains included.
-Measured edge churn, as a fraction of the neighbour list that changes:
+Activations retained for backward, counted via `saved_tensors_hooks` (process RSS was tried first
+and is useless for this — it gave negative deltas that contradicted their own sums):
 
-| entry | mild noise (κ=20) | fully randomised |
-|---|---|---|
-| 193L | 2.7% | 14.3% |
-| 3NIR | 1.6% | 6.7% |
-| 1UBQ | 2.1% | 13.7% |
-
-Real, then, but modest — which is useful to know before paying for a rebuild in the inner loop.
-
-Two things handle the gradient discontinuity the rebuild introduces:
-
-- **A cosine envelope** on every edge, C1-continuous at the cutoff, so a neighbour crossing it fades
-  out instead of popping. Messages must be multiplied by `graph.envelope` or this is lost.
-- **`k` large enough that the cutoff, not `k`, excludes neighbours.** The envelope only smooths an
-  edge leaving through the *cutoff*; one dropped because `k` was full still jumps. ProteinMPNN's
-  customary `k=32` is **not** enough here — an all-heavy-atom cutoff admits more neighbours than a
-  CB-based one. Measured `k_binding_fraction`:
-
-  | k | 16 | 24 | 32 | 48 | 64 |
-  |---|---|---|---|---|---|
-  | 193L | 98% | 81% | 48% | 8% | **0%** |
-  | 1UBQ | 89% | 62% | 25% | 1% | **0%** |
-  | 3NIR | 85% | 48% | 11% | 0% | **0%** |
-
-  So the default is `k=64`, and `graph.stats.k_binding_fraction` is checked by a test so a future
-  change to the cutoff cannot silently break the smoothness guarantee.
-
-**Equivariance is chosen, not inherited.** Every edge feature is a distance, a relative orientation
-`Rᵢᵀ Rⱼ`, or a vector in a residue's own backbone frame — invariant features plus rotation
-augmentation (`Protein.transformed`), which is ProteinEBM's choice rather than E(n)-GNCA's. The
-tests assert invariance per feature block, and that assertion is not vacuous: the naive
-global-coordinate version of the same feature shifts by 1.13 under a random rotation, against a 1e-8
-tolerance.
-
-575 edge dimensions, 32 node dimensions. 400 of the 575 are the backbone block, which is constant
-across a rollout — a Torch port should cache it and recompute only the side-chain block.
-
-`graph.py` is a NumPy reference implementation, part of the verified data layer; the model's Torch
-version will be a port and should be checked against it. Neighbour selection is a hard argsort and
-is not differentiable in either version — gradients flow through the envelope weight, not through
-the choice of neighbour, which is why the envelope is there.
-
-## The rule
-
-200,268 parameters — about 0.3% of ProteinEBM. Parameter count is not the constraint here; BPTT
-memory is, and `graph.py`'s backbone/side-chain block split is what keeps a 50-step rollout under
-~500 MB instead of ~2.2 GB.
-
-Three things in `model.py` are load-bearing and each has a test asserting it:
-
-- **One message-passing hop per step.** Depth comes from time. `test_one_step_is_exactly_one_hop`
-  perturbs a non-neighbour's features and asserts the target residue's update is bit-identical —
-  that is the locality claim, checked rather than asserted in prose. A companion test perturbs an
-  actual neighbour and requires the output to *change*, so the first can't pass vacuously.
-- **Identity initialisation.** The delta head's final layer is zeroed with a bias giving
-  `(cos, sin) = (1, 0)`, so an untrained rule outputs exactly zero and is the identity map. Zeroing
-  the bias too would give `atan2(0, 0)`, whose gradient is undefined. A consequence worth knowing:
-  on the first step no gradient reaches the trunk, only the head's own weights — that looks like a
-  bug and has a test documenting it.
-- **κ is capped** at `log κ ≤ 6` through a `tanh`, because a likelihood loss can be reduced by
-  claiming confidence instead of being accurate.
-
-The loss is a von Mises NLL. The two-fold symmetric chis are scored as a proper two-component
-mixture `½p(x) + ½p(x+π)` rather than by folding the residual, which would compute `−log max(…)`
-instead of `−log mean(…)` and bias κ upward on exactly those chis.
-
-`torch_geometry.py` is checked against the NumPy reference, and the Milestone 1 round-trip
-exactness survives the port. Importing `aanca` does **not** import Torch — the data layer stays
-usable without it.
-
-### Where the gradient runs
-
-`torch_graph.py` is the training featuriser, pinned against the NumPy reference block by block. The
-split is deliberate:
-
-- **Neighbour selection is not differentiable and cannot be** — it's an argsort over distances. It
-  runs on detached coordinates through selection helpers *shared* with the NumPy path, so the two
-  cannot pick different neighbours. A test asserts they agree exactly.
-- **The envelope is differentiable, and is the gradient path for graph structure.** Once the
-  neighbour list is fixed, each pair's minimum heavy-atom distance is recomputed *with* gradient, so
-  moving a side chain changes how strongly its edges contribute. Without this the smooth cutoff
-  would be decoration — and there's a test that the gradient actually reaches the coordinates
-  through it.
-- **The backbone block is cached.** 400 of 575 edge dimensions, constant across a rollout for a
-  fixed neighbour list, with a test proving it doesn't move when side chains do.
-
-One optimisation worth knowing about: `pair_min_distances` finds the argmin under `no_grad` over the
-full `(R, K, 14, 14)` block, then measures only the winning atom pair *with* gradient. That's exact —
-the derivative of a min is the derivative of its argmin — and it keeps the tensors retained for
-backward at `(R, K, 3)` instead of `(R, K, 14, 14, 3)`.
-
-### Rollout memory, measured
-
-`scripts/measure_rollout_memory.py` counts the activations torch retains for backward, via
-`saved_tensors_hooks`. Process RSS was tried first and is useless for this — it gave negative deltas
-that contradicted their own per-step figures.
-
-Retained activations per step, k=64, 10 Å:
-
-| | 1UBQ (76 res) | 193L (129) | 4HHB (574, 4 chains) |
+| per step, k=64 | 1UBQ (76 res) | 193L (129) | 4HHB (574, 4 chains) |
 |---|---|---|---|
 | baseline, float64 | 70.7 MB | 120.1 MB | 534.3 MB |
 | `fixed_backbone`, float64 | 37.2 MB | 63.2 MB | 281.1 MB |
 | `fixed_backbone` + float32 | **31.4 MB** | **53.3 MB** | **237.1 MB** |
 
-Linear in residue count at fixed k, so a 300-residue target is ~124 MB/step: 3.7 GB for 30 steps,
-6.2 GB for 50 — per sample. **The plan's earlier estimate said ~500 MB and was 12× optimistic**: it
-counted the edge-feature tensor and forgot the network's own activations, and the message MLP's
-`(R, K, 384)` and `(R, K, 128)` tensors dominate. The consequence is that truncated BPTT is
-mandatory rather than optional.
+Linear in residue count, so a 300-residue target is ~124 MB/step: 3.7 GB for 30 steps per sample.
+An earlier estimate said ~500 MB and was 12× optimistic — it counted the edge-feature tensor and
+forgot the network's own activations, which dominate. Truncated BPTT is therefore mandatory rather
+than an optimisation.
 
 `fixed_backbone=True` builds the 400-dimension backbone block under `no_grad`, worth 47%. It is
-exact, not approximate — the backbone never moves, so that block's gradient is identically zero.
-**Detaching it afterwards does not work, and that was measured:** by then the tensor has been built
-inside the graph and saved for backward, so a later `.detach()` frees nothing. It has to not be
-computed under grad in the first place. The flag must flip when backbone remodelling lands, and a
-test asserts the escalation path still differentiates.
+exact, not approximate: the backbone never moves, so that block's gradient is identically zero.
+Detaching it *afterwards* saves nothing, which was measured — by then the tensor is already built
+inside the graph.
 
-## The rollout
+## Benchmark reproduction — partial
 
-`rollout.py` holds the NCA machinery and the v1 objective. Four things, each with a test:
+`metrics.py` implements the metrics AttnPacker, DiffPack and FlowPacker all report: χ MAE per chi
+index, χ accuracy within 20°, and side-chain atom RMSD, stratified by burial (core ≥20 CB atoms
+within 10 Å, surface ≤15 — deliberately not a partition).
 
-- **Asynchronous updates**, gating the hidden state as well as the coordinates — a cell either ticks
-  or it doesn't. This costs nothing in fixed-point terms: the no-op term forces zero output at the
-  native structure, and any subset of zeros is still zero, so the mask randomises the *path* and not
-  the attractor.
-- **Loss at a random late step**, drawn from the back half. Supervising the last step teaches a
-  trajectory of that length; supervising an unpredictable late step is what forces an attractor.
-- **Truncated BPTT**, mandatory at the measured memory above. A test asserts truncation actually
-  severs the gradient path to the start, rather than counting bytes — the saved-tensor accountant
-  sums distinct storages *ever* saved, which doesn't shrink under truncation because freed tensors
-  were already counted.
-- **A sample pool**, keyed by structure, so the rule is re-seeded from partially-converged states it
-  produced itself and has to stay stable rather than merely arrive.
+AttnPacker's benchmark release ships the native test structures *and* every baseline's predictions,
+which allows a much stronger check than self-consistency: recompute their published table from their
+own files. `scripts/validate_benchmark.py` does this. Current state on CASP13:
 
-Mean |Δχ| per step falls out of the rollout for free — that's the tier-2 convergence curve.
+| χ1 MAE | ours | published | gap |
+|---|---|---|---|
+| SCWRL | 28.45 | 27.64 | +0.81 |
+| FASPR | 27.80 | 27.04 | +0.76 |
+| RosettaPacker | 26.59 | 25.88 | +0.71 |
+| DLPacker | 22.89 | 22.18 | +0.71 |
 
-### Bond and angle control
+**χ1 reproduces to under 1° across four independent methods**, which validates the chi extraction,
+the symmetry folding and the burial classification. But χ2 runs 3–4° high, χ3/χ4 run low, accuracy
+is ~10 points high and RMSD ~0.15 Å high — all systematically, in the same direction for every
+method. That pattern means at least one definitional difference remains unidentified, so **the
+metrics are not yet safe to quote against published numbers.** Candidates being checked: which
+residues enter the denominator, whether CB is included in the RMSD atom set, and whether their
+accuracy folds symmetry. AttnPacker's own files need a different residue alignment and currently
+produce nonsense.
 
-Built, off in v1. A classical forcefield has stretching and bending terms, so a learned one needs the
-scope. **An earlier version of the plan claimed free bond geometry would cost the exactness
-guarantee; that was wrong** — a bond stretch is a translation along the bond axis and an angle bend a
-rotation about the plane normal, and both are exactly invertible. Measured: all three coordinates
-round-trip to ~3e-14 Å, and inversion is **order-independent** across every permutation, because each
-operation re-derives its axis from atoms upstream of its own moving set.
-
-What makes them safe to expose is the pairing of a hard cap (0.05 Å, 0.15 rad — a few times the real
-spread) with a harmonic restraint to the *crystal* values, which is what a forcefield does. Without
-that, deforming a bond is a cheaper way to relieve a clash than finding the right rotamer: the clash
-term falls, χ MAE rises, and nothing in the aggregate metrics shows it.
-
-Ring bonds are excluded, and the test for that is derived rather than listed: whether the hinge atom
-is still reachable with itself removed. Checking only backbone reachability is **not** enough — an
-aromatic ring contains no backbone, so PHE's CG–CD1 would look stretchable. PRO and GLY expose
-nothing; PHE/TYR/TRP/HIS expose only CA–CB and CB–CG; TYR adds CZ–OH, which is exocyclic.
+This is the kind of thing worth finding before a training run rather than after.
 
 ## Setup
 
-There is no system Python on the development laptop, but `uv` is installed, which is enough:
+Python 3.11+. No system Python is needed if `uv` is available:
 
 ```bash
 uv venv --python 3.11 .venv
@@ -285,52 +155,51 @@ uv pip install numpy biotite pytest
 uv pip install torch --index-url https://download.pytorch.org/whl/cpu
 ```
 
-CPU-only Torch deliberately: locally it is for correctness checks, and Bunya needs a ROCm build,
-which is a different wheel entirely.
+CPU-only Torch is deliberate: locally this is for correctness checks, and the training target needs
+a different build anyway.
 
-Then fetch the validation structures (small, ~1 MB total, gitignored) and run the checks:
+Fetch the small validation structures (~1 MB, gitignored) and run the checks:
 
 ```bash
 python scripts/fetch_test_structures.py
 python -m pytest
 python scripts/validate_geometry.py
+python scripts/graph_report.py
+python scripts/measure_rollout_memory.py
 ```
 
-301 tests, ~15 s. The real-structure tests skip cleanly if `data/raw/` is empty, so the suite runs
-without network access — the synthetic residues in `tests/synthetic.py` cover the maths, and the
+401 tests, ~20 s. The real-structure tests skip cleanly when `data/raw/` is empty, so the suite runs
+without network access — synthetic residues built by forward kinematics cover the maths, and the
 downloaded entries cover PDB atom naming, altlocs and disordered side chains.
 
 ## Layout
 
 ```
 src/aanca/
-  residue_constants.py   chi tuples, bond graphs, symmetry flags; downstream
-                         atom sets DERIVED from the bond graph, not listed
+  residue_constants.py   chi tuples, bond graphs, symmetries, movable internal
+                         coordinates; moving atom sets DERIVED from the bond
+                         graph, not listed, so they cannot drift out of sync
   geometry.py            dihedral, Rodrigues rotation, periodic angle maths
   torsions.py            Residue, measure_chis, set_chis, apply_chi_deltas
-  structure.py           Protein, load_protein, sidechain_rmsd
-  damage.py              geometric damage operators; mutation stub
+  structure.py           Protein, load_protein, symmetry-aware RMSD
+  damage.py              geometric damage operators
   graph.py               per-step k-NN graph, invariant edge features, envelope
-  torch_geometry.py      differentiable torsion path; static index topology
+  torch_geometry.py      differentiable torsion/bond/angle path
+  torch_graph.py         differentiable featuriser
   model.py               the rule: one hop, delta + kappa heads
-  losses.py              von Mises NLL, symmetry mixture, no-op term
-  torch_graph.py         differentiable featuriser; shared selection helpers
-scripts/
-  fetch_test_structures.py
-  validate_geometry.py   reports the round-trip table plus the rotamer check
-  graph_report.py        reports graph shape, the k choice, and edge churn
-tests/
-  synthetic.py           deterministic residues built by forward kinematics
+  losses.py              von Mises NLL, symmetry mixture, no-op, restraints
+  rollout.py             async mask, truncated BPTT, sample pool, objective
+  metrics.py             the published packing benchmark
+  data.py                dataset assembly, cluster splitting, damage sampling
 ```
 
-The sign convention is fixed in `geometry.py` and **asserted** in
-`tests/test_geometry.py::test_rotating_downstream_atoms_increases_the_dihedral_by_theta`:
-rotating by `+θ` about the directed axis `b → c` adds `+θ` to the dihedral.
+Importing `aanca` does **not** import Torch — the data layer stays usable without it.
 
-## Compute
+The sign convention is fixed in `geometry.py` and asserted in
+`tests/test_geometry.py::test_rotating_downstream_atoms_increases_the_dihedral_by_theta`: rotating
+by `+θ` about the directed axis `b → c` adds `+θ` to the dihedral.
 
-Training runs on UQ's Bunya cluster. **Read `binder-physics/docs/BUNYA_BROWSER_SHELL.md` before
-touching it** — access is a code-server pane inside an interactive SLURM job, the quota binds on
-inodes rather than bytes, and a job's SLURM state is not a health signal. An NCA checkpoint or
-rollout sweep writes exactly the many-small-files pattern that fills the inode quota, so check
-`rquota` first.
+## Running it
+
+Training runs on a GPU cluster, not locally — measured wall time is ~0.5 s/step on CPU at 574
+residues. Local notes on cluster access live outside this repository.
