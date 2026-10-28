@@ -405,12 +405,12 @@ def main() -> int:
         # refuses to store a non-finite state, but a checkpoint written
         # before it did so can still carry one, and a resume must not
         # reinstate a poisoned seed.
-        usable = (
+        reusable = (
             seed_state is not None
             and seed_state.coords.shape == sample.damaged.shape
             and bool(torch.isfinite(seed_state.coords).all())
         )
-        start = seed_state.coords if usable else sample.damaged
+        start = seed_state.coords if reusable else sample.damaged
 
         terms, result = training_objective(
             rule,
@@ -452,10 +452,33 @@ def main() -> int:
             # Persistent, not transient: something is wrong with the setup or
             # the data, and a run that skips every update is not training.
             if args.max_skipped > 0 and skipped["update"] >= args.max_skipped:
+                # Which of the two failures this is, said plainly, because
+                # they need different responses. Non-finite weights mean the
+                # rule is gone and the checkpoint is only useful as evidence;
+                # finite weights mean the forward pass is producing NaN from
+                # particular inputs, and the run is recoverable by finding
+                # them.
+                bad = [
+                    name
+                    for name, p in rule.named_parameters()
+                    if not torch.isfinite(p).all()
+                ]
                 print(
                     f"\n{skipped['update']} non-finite updates (limit "
                     f"--max-skipped {args.max_skipped}); stopping rather than "
                     "spending a walltime on a run that is not learning."
+                )
+                print(
+                    f"  weights: {len(bad)} non-finite parameters"
+                    + (f" ({', '.join(bad[:4])})" if bad else "")
+                    + "; "
+                    + (
+                        "the rule itself is destroyed -- the cause is earlier "
+                        "than this message."
+                        if bad
+                        else "the weights are intact, so the NaN is coming out "
+                        "of the forward pass on particular inputs."
+                    )
                 )
                 write_checkpoint(update)
                 write_history()
