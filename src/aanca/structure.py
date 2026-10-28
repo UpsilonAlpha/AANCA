@@ -168,11 +168,22 @@ def load_protein(path: str | Path, model: int = 1) -> Protein:
     )
 
 
-def sidechain_rmsd(a: Protein, b: Protein) -> np.ndarray:
+def sidechain_rmsd(
+    a: Protein, b: Protein, respect_symmetry: bool = True
+) -> np.ndarray:
     """Per-residue heavy-atom side-chain RMSD in Angstrom, NaN where undefined.
 
     No superposition: the backbone is fixed, so the structures are already in a
     common frame and superposing would hide exactly the error being measured.
+
+    ``respect_symmetry`` minimises over ``rc.symmetric_relabellings`` -- the atom
+    permutations that give a chemically identical structure. Without it, a PHE
+    ring flipped by 180 degrees scores a large RMSD against a reference that is
+    physically the same structure, which inflates the number in exactly the
+    tier-1 comparison against published packers that has to be auditable.
+    Measured on real entries, a symmetric flip moves atoms by ~2.4 A, so the
+    error this removes is not small. Pass False only to see the unsymmetrised
+    number.
     """
     if len(a) != len(b):
         raise ValueError(f"residue count differs: {len(a)} vs {len(b)}")
@@ -184,6 +195,16 @@ def sidechain_rmsd(a: Protein, b: Protein) -> np.ndarray:
         sel = [j for j, n in enumerate(ra.atom_names) if n in wanted]
         if not sel:
             continue
-        d = ra.coords[sel] - rb.coords[sel]
-        out[i] = float(np.sqrt(np.mean(np.sum(d * d, axis=-1))))
+
+        index = ra.index
+        options = (
+            rc.symmetric_relabellings(ra.resname) if respect_symmetry else ({},)
+        )
+        best = np.inf
+        for relabel in options:
+            # Compare a's atom j against b's atom that a's label maps to.
+            other = [index.get(relabel.get(ra.atom_names[j], ra.atom_names[j]), j) for j in sel]
+            d = ra.coords[sel] - rb.coords[other]
+            best = min(best, float(np.sqrt(np.mean(np.sum(d * d, axis=-1)))))
+        out[i] = best
     return out

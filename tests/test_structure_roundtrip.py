@@ -138,6 +138,40 @@ def test_proline_side_chains_are_never_touched(protein):
         )
 
 
+def test_rmsd_respects_chemical_symmetry(protein):
+    """A 180-degree flip of a symmetric chi is the same structure chemically.
+
+    Comparing by atom name scores it as a ~1.8 A error. Published packer RMSDs
+    are 0.4-0.8 A, so the unsymmetrised number would inflate the whole-protein
+    mean by 0.26-0.36 A -- comparable to the entire gap between competing
+    methods, in exactly the comparison that has to be auditable.
+    """
+    _chis, mask = protein.chis()
+    periodic = np.zeros_like(mask)
+    for i, res in enumerate(protein.residues):
+        flags = rc.chi_periodic_mask(res.resname)
+        periodic[i, : len(flags)] = flags
+    periodic &= mask
+    if not periodic.any():
+        pytest.skip("no symmetric chis in this entry")
+
+    flipped = protein.apply_chi_deltas(np.where(periodic, np.pi, 0.0))
+    rows = periodic.any(axis=1)
+
+    naive = sidechain_rmsd(flipped, protein, respect_symmetry=False)[rows]
+    aware = sidechain_rmsd(flipped, protein, respect_symmetry=True)[rows]
+
+    assert np.nanmean(naive) > 1.0, "the flip should look large when named naively"
+    # Not zero: the residual is real non-ideal geometry, the same source as the
+    # approximate feature invariance. But an order of magnitude smaller.
+    assert np.nanmean(aware) < 0.3
+    assert np.nanmean(aware) < np.nanmean(naive) / 5.0
+
+
+def test_rmsd_of_a_structure_against_itself_is_zero(protein):
+    assert np.allclose(np.nan_to_num(sidechain_rmsd(protein, protein)), 0.0, atol=1e-12)
+
+
 def test_lysozyme_covers_all_twenty_residue_types():
     protein = _load("193L")
     seen = {r.resname for r in protein.residues}

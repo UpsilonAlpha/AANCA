@@ -250,3 +250,86 @@ def sidechain_atoms(resname: str) -> frozenset[str]:
     """Heavy side-chain atom names, i.e. everything beyond CA except C and O."""
     names = {n for bond in SIDECHAIN_BONDS[resname] for n in bond}
     return frozenset(names - {"N", "CA", "C", "O"})
+
+
+def sidechain_depth(resname: str) -> dict[str, int]:
+    """Bond count from CA to each side-chain atom, CB being depth 1.
+
+    Topological, so it does not change when the side chain moves. PRO's CD-N
+    bond is not followed, since N is backbone.
+    """
+    adj: dict[str, set[str]] = {}
+    for u, v in SIDECHAIN_BONDS[resname]:
+        if u in ("N", "C", "O") or v in ("N", "C", "O"):
+            continue
+        adj.setdefault(u, set()).add(v)
+        adj.setdefault(v, set()).add(u)
+
+    depth = {"CA": 0}
+    frontier = ["CA"]
+    while frontier:
+        nxt: list[str] = []
+        for cur in frontier:
+            for other in adj.get(cur, ()):
+                if other not in depth:
+                    depth[other] = depth[cur] + 1
+                    nxt.append(other)
+        frontier = nxt
+    depth.pop("CA")
+    return depth
+
+
+def _tip_atoms(resname: str) -> frozenset[str]:
+    depth = sidechain_depth(resname)
+    if not depth:
+        return frozenset()
+    deepest = max(depth.values())
+    return frozenset(n for n, d in depth.items() if d == deepest)
+
+
+#: Atom relabellings that produce a chemically identical structure.
+#:
+#: These exist because the terminal atoms of a symmetric group are
+#: indistinguishable: a carboxylate's two oxygens, an aromatic ring's two
+#: halves, a guanidinium's two nitrogens. Comparing such a residue to a
+#: reference **by atom name** scores a large RMSD for two structures that are
+#: physically the same, which is why side-chain RMSD must be minimised over
+#: these permutations. The same chemistry is what makes the corresponding chis
+#: two-fold periodic (``CHI_PI_PERIODIC``).
+#:
+#: The aromatic swap moves both pairs at once, because it is a single 180-degree
+#: ring flip -- swapping CD1/CD2 without CE1/CE2 is not a symmetry of anything.
+#:
+#: LEU's CD1/CD2 and VAL's CG1/CG2 are deliberately absent. Those methyls are
+#: chemically equivalent but IUPAC assigns them by geometry, and swapping them
+#: changes the defining chi by ~120 degrees rather than 180, so it is not a
+#: periodicity. AlphaFold's table excludes them and the packing baselines follow
+#: it; matching that is what keeps the tier-1 comparison auditable.
+SYMMETRIC_RELABELLINGS: dict[str, tuple[dict[str, str], ...]] = {
+    "ASP": ({"OD1": "OD2", "OD2": "OD1"},),
+    "GLU": ({"OE1": "OE2", "OE2": "OE1"},),
+    "ARG": ({"NH1": "NH2", "NH2": "NH1"},),
+    "PHE": (
+        {"CD1": "CD2", "CD2": "CD1", "CE1": "CE2", "CE2": "CE1"},
+    ),
+    "TYR": (
+        {"CD1": "CD2", "CD2": "CD1", "CE1": "CE2", "CE2": "CE1"},
+    ),
+}
+
+
+def symmetric_relabellings(resname: str) -> tuple[dict[str, str], ...]:
+    """Relabellings giving a chemically identical structure, identity first."""
+    return ({},) + SYMMETRIC_RELABELLINGS.get(resname, ())
+
+
+#: The most distal side-chain atoms, by bond count from CA. Where several tie
+#: they are averaged, which is what you want for the chemically equivalent pairs
+#: (ARG's NH1/NH2, LEU's CD1/CD2, VAL's CG1/CG2).
+#:
+#: Chosen topologically rather than by distance from CA on purpose: the furthest
+#: atom *by distance* can change identity as the side chain rotates, which would
+#: put a discontinuity into the edge features at the moment the argmax flips.
+SIDECHAIN_TIP_ATOMS: dict[str, frozenset[str]] = {
+    res: _tip_atoms(res) for res in AA3
+}

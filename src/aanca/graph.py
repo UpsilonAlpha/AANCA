@@ -180,41 +180,55 @@ def frame_atom_coords(protein: Protein) -> np.ndarray:
 
 
 def sidechain_summary(protein: Protein) -> np.ndarray:
-    """``(n_res, 2, 3)``: side-chain centroid and the most distal side-chain atom.
+    """``(n_res, 2, 3)``: side-chain centroid, and the mean of the most distal atoms.
 
     This is the part of the perception that *moves*. Two points rather than one
     because a centroid alone cannot distinguish a long side chain folded back
     from a short one -- the tip carries the reach.
+
+    The tip is ``rc.SIDECHAIN_TIP_ATOMS``, chosen by bond count from CA rather
+    than by distance: a distance-based argmax can change identity mid-rotation,
+    which would put a discontinuity in the features. Averaging tied tips has a
+    useful side effect -- it makes this summary invariant under the 180-degree
+    flip of the two-fold symmetric chis (ASP/GLU tips average over the swapped
+    pair; PHE/TYR tips sit on the rotation axis), so the features cannot leak
+    which of two physically identical states a symmetric chi is in.
     """
     out = np.zeros((len(protein), 2, 3))
     for i, res in enumerate(protein.residues):
         idx = res.index
-        wanted = rc.sidechain_atoms(res.resname) - {"CB"}
-        sel = [idx[n] for n in wanted if n in idx]
-        if sel:
-            pts = res.coords[sel]
-            out[i, 0] = pts.mean(axis=0)
-            ca = res.coords[idx["CA"]] if "CA" in idx else pts.mean(axis=0)
-            out[i, 1] = pts[int(np.argmax(np.linalg.norm(pts - ca, axis=-1)))]
-        else:
-            fallback = res.coords[idx["CB"]] if "CB" in idx else (
-                res.coords[idx["CA"]] if "CA" in idx else res.coords.mean(axis=0)
-            )
-            out[i, 0] = fallback
-            out[i, 1] = fallback
+        body = [idx[n] for n in rc.sidechain_atoms(res.resname) - {"CB"} if n in idx]
+        tips = [idx[n] for n in rc.SIDECHAIN_TIP_ATOMS[res.resname] if n in idx]
+
+        fallback = res.coords[idx["CB"]] if "CB" in idx else (
+            res.coords[idx["CA"]] if "CA" in idx else res.coords.mean(axis=0)
+        )
+        out[i, 0] = res.coords[body].mean(axis=0) if body else fallback
+        out[i, 1] = res.coords[tips].mean(axis=0) if tips else fallback
     return out
 
 
 def residue_distances(protein: Protein, cutoff: float) -> tuple[np.ndarray, np.ndarray]:
-    """Minimum heavy-atom distance between residue pairs within ``cutoff``.
-
-    Returns ``(pairs, distances)``. Uses every heavy atom, side chains included
-    -- that is what makes the graph move between steps.
-    """
+    """Minimum heavy-atom distance between residue pairs within ``cutoff``."""
     coords = np.concatenate([r.coords for r in protein.residues])
     owner = np.concatenate(
         [np.full(len(r.atom_names), i) for i, r in enumerate(protein.residues)]
     )
+    return residue_distances_from_atoms(coords, owner, len(protein), cutoff)
+
+
+def residue_distances_from_atoms(
+    coords: np.ndarray, owner: np.ndarray, n_res: int, cutoff: float
+) -> tuple[np.ndarray, np.ndarray]:
+    """Minimum heavy-atom distance between residue pairs within ``cutoff``.
+
+    Returns ``(pairs, distances)``. Uses every heavy atom, side chains included
+    -- that is what makes the graph move between steps.
+
+    Takes flat arrays rather than a :class:`Protein` so the Torch path can share
+    it: neighbour *selection* is identical in both, and a second copy of this
+    logic would be free to drift from the verified one.
+    """
     tree = cKDTree(coords)
     atom_pairs = tree.query_pairs(cutoff, output_type="ndarray")
     if len(atom_pairs) == 0:
@@ -228,11 +242,70 @@ def residue_distances(protein: Protein, cutoff: float) -> tuple[np.ndarray, np.n
     )
 
     lo, hi = np.minimum(ri, rj), np.maximum(ri, rj)
-    flat = lo * len(protein) + hi
+    flat = lo * n_res + hi
     uniq, inverse = np.unique(flat, return_inverse=True)
     best = np.full(len(uniq), np.inf)
     np.minimum.at(best, inverse, d)
-    return np.stack([uniq // len(protein), uniq % len(protein)], axis=-1), best
+    return np.stack([uniq // n_res, uniq % n_res], axis=-1), best
+
+
+def sequence_neighbour_sets(
+    chain_ids: list[str], res_ids: list[int]
+) -> list[set[int]]:
+    """Covalently bonded sequence neighbours, which must never be dropped.
+
+    Same chain and contiguous numbering only. Across a chain break i and i+1 are
+    not bonded, and forcing an edge there would assert a contact that is not
+    real.
+    """
+    n_res = len(chain_ids)
+    forced: list[set[int]] = [set() for _ in range(n_res)]
+    for i in range(n_res - 1):
+        if chain_ids[i] == chain_ids[i + 1] and res_ids[i + 1] - res_ids[i] == 1:
+            forced[i].add(i + 1)
+            forced[i + 1].add(i)
+    return forced
+
+
+def select_neighbours(
+    n_res: int,
+    pairs: np.ndarray,
+    dists: np.ndarray,
+    forced: list[set[int]],
+    k: int,
+    cutoff: float,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Pick up to ``k`` neighbours per residue, forced edges first.
+
+    Returns ``(neighbours, edge_mask, edge_dist, k_bound)``. Shared with the
+    Torch path. ``edge_dist`` is only used for the NumPy envelope -- the Torch
+    path recomputes it differentiably from the selected pairs, so that gradients
+    reach the geometry through the envelope weight.
+    """
+    candidates: list[list[tuple[float, int]]] = [[] for _ in range(n_res)]
+    for (i, j), d in zip(pairs, dists):
+        candidates[i].append((d, j))
+        candidates[j].append((d, i))
+
+    neighbours = np.zeros((n_res, k), dtype=np.int64)
+    edge_mask = np.zeros((n_res, k), dtype=bool)
+    edge_dist = np.zeros((n_res, k))
+    k_bound = np.zeros(n_res, dtype=bool)
+
+    for i in range(n_res):
+        by_index = {j: d for d, j in sorted(candidates[i])}
+        for j in forced[i]:
+            by_index.setdefault(j, cutoff)
+        ordered = sorted(
+            by_index.items(), key=lambda kv: (kv[0] not in forced[i], kv[1])
+        )
+        k_bound[i] = len(ordered) > k
+        for slot, (j, d) in enumerate(ordered[:k]):
+            neighbours[i, slot] = j
+            edge_dist[i, slot] = d
+            edge_mask[i, slot] = True
+
+    return neighbours, edge_mask, edge_dist, k_bound
 
 
 def build_graph(
@@ -273,40 +346,14 @@ def build_graph(
 
     n_res = len(protein)
     pairs, dists = residue_distances(protein, cutoff)
-
-    # Symmetric adjacency as per-residue candidate lists.
-    candidates: list[list[tuple[float, int]]] = [[] for _ in range(n_res)]
-    for (i, j), d in zip(pairs, dists):
-        candidates[i].append((d, j))
-        candidates[j].append((d, i))
-
-    # Sequence neighbours are covalent and must never be dropped, whatever the
-    # side chains are doing. Same chain only: across a chain break, i and i+1
-    # are not bonded and forcing an edge would assert a contact that is not real.
-    forced: list[set[int]] = [set() for _ in range(n_res)]
-    if include_sequence_neighbours:
-        for i in range(n_res - 1):
-            same_chain = protein.chain_ids[i] == protein.chain_ids[i + 1]
-            contiguous = protein.res_ids[i + 1] - protein.res_ids[i] == 1
-            if same_chain and contiguous:
-                forced[i].add(i + 1)
-                forced[i + 1].add(i)
-
-    neighbours = np.zeros((n_res, k), dtype=np.int64)
-    edge_mask = np.zeros((n_res, k), dtype=bool)
-    edge_dist = np.zeros((n_res, k))
-    k_bound = np.zeros(n_res, dtype=bool)
-
-    for i in range(n_res):
-        by_index = {j: d for d, j in sorted(candidates[i])}
-        for j in forced[i]:
-            by_index.setdefault(j, cutoff)
-        ordered = sorted(by_index.items(), key=lambda kv: (kv[0] not in forced[i], kv[1]))
-        k_bound[i] = len(ordered) > k
-        for slot, (j, d) in enumerate(ordered[:k]):
-            neighbours[i, slot] = j
-            edge_dist[i, slot] = d
-            edge_mask[i, slot] = True
+    forced = (
+        sequence_neighbour_sets(protein.chain_ids, protein.res_ids)
+        if include_sequence_neighbours
+        else [set() for _ in range(n_res)]
+    )
+    neighbours, edge_mask, edge_dist, k_bound = select_neighbours(
+        n_res, pairs, dists, forced, k, cutoff
+    )
 
     envelope = np.where(edge_mask, cosine_envelope(edge_dist, cutoff), 0.0)
 

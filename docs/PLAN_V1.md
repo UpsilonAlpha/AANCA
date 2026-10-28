@@ -167,6 +167,14 @@ and a checkpoint or rollout sweep is exactly that pattern. See `BUNYA_BROWSER_SH
    AttnPacker, FlowPacker and Rosetta. Not winning is fine; a strictly local, step-unconditioned
    rule landing *close* to a globally attentive diffusion model is already the interesting result.
    Being far off is the kill signal.
+
+   **Both metrics must respect chemical symmetry**, and this is not a detail. A carboxylate's two
+   oxygens and an aromatic ring's two halves are indistinguishable, so a 180-degree flip is the same
+   structure. Scoring it by atom name costs ~1.8 Å on the affected residues and inflates the
+   whole-protein mean side-chain RMSD by 0.26–0.36 Å — comparable to the entire gap between
+   competing methods, in the one comparison that has to be auditable. `sidechain_rmsd` minimises
+   over `rc.symmetric_relabellings`; `chi_error` and `chi_mae_degrees` fold the periodic chis.
+   LEU/VAL methyls are excluded, matching AlphaFold's table and therefore the baselines.
 2. **Does it converge?** Mean |Δχ| against step count. Does it decay, or oscillate as some of
    Grattarola's morphogenesis rules did?
 3. **Does it hold?** 500 steps on a rule trained to 30. Measure drift from the step-30 structure.
