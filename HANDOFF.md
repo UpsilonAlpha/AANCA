@@ -296,3 +296,43 @@ Project memory in this project also holds `protein-nca-prior-art` and
   the backbone-remodelling escalation.
 - **Some Graph NCA rules oscillate instead of converging.** Expect it, measure it (§4 tier 2), and
   resist the urge to fix it with a global pathway.
+
+---
+
+## 12. Live on Bunya — added 2026-10-29
+
+Checkout: `/scratch/user/uquadhik/AANCA` (a git clone; `git pull` to update).
+Environment: `.venv_bunya`, torch 2.9.1+rocm6.4 over `python/3.12.3-gcccore-13.3.0`.
+Diagnostics written for the browser bridge: `/scratch/user/uquadhik/.cc_aanca/`.
+Job logs: `/scratch/user/uquadhik/AANCA/logs/<name>-<jobid>.{out,err}`.
+
+Queued on 2026-10-29 at ~01:00 AEST:
+
+| job | what | depends on |
+|---|---|---|
+| 30879935 | `bunya_gpu_check.slurm` — does the ROCm wheel run on gfx950 | — |
+| 30879610 | fetch, validation split (949 entries) | — |
+| 30879747 | fetch, train split (23,761 entries) | — |
+| 30880356 | `v1_gpu` chain, defaults, 200k updates | afterok:30879610 |
+| 30880357 | `v1_noop4` chain, `--noop-weight 4`, CPU | afterok:30879610 |
+
+Both chains run on `--split validation` (the only split downloaded when they were queued), which
+makes them a **development signal and never a benchmark result**; the train split is downloading
+for the run that is.
+
+The pair differs only in the no-op weight, which is the knob the shakedown pointed at: drift from a
+native start rose 0.000 -> 0.473 A in 40 updates, i.e. the reconstruction term beating the term
+that asks for zero output on an undamaged structure.
+
+**Three things that will bite a later session.**
+
+1. **CPU generation.** Bunya has a software tree per generation and the venv is built for `epyc5`.
+   A job on an epyc3 node dies in two seconds with `Illegal instruction (core dumped)` before
+   running any project code. `bunya_submit.sh` passes `--constraint` automatically; a bare `sbatch`
+   of `bunya_fetch.slurm` needs `--constraint=$(cat .venv_bunya/arch.txt)`. A second architecture
+   means a second venv (`AANCA_VENV=.venv_bunya_epyc3 bash scripts/bunya_stage.sh`).
+2. **Stopping a chain is not `scancel`.** `touch runs/<tag>/STOP` first, or the segment exits 64 and
+   the next one is submitted. Delete the file to resume.
+3. **The OnDemand terminal can be dead while looking alive.** Keystrokes went nowhere and the
+   screenshot still showed prompts; the fix was a new terminal from the command palette. Probe
+   every terminal with a write-then-fetch before trusting it.
