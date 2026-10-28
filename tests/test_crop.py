@@ -39,15 +39,26 @@ DATA = Path(__file__).resolve().parent.parent / "data" / "raw"
 CUTOFF = 10.0
 
 
+def _load(name: str):
+    """Load a reference entry, or skip. These two fixtures used to load it
+    unconditionally, which raised ``OSError`` on a fresh checkout instead of
+    skipping -- so a suite documented as "skips cleanly without data/raw"
+    failed on the cluster, where the reference entries are not fetched."""
+    path = DATA / name
+    if not path.exists():
+        pytest.skip(f"{path} missing; run scripts/fetch_test_structures.py")
+    return load_protein(path)
+
+
 @pytest.fixture(scope="module")
 def ubiquitin():
-    return load_protein(DATA / "1UBQ.pdb")
+    return _load("1UBQ.pdb")
 
 
 @pytest.fixture(scope="module")
 def haemoglobin():
     """Four chains, ~574 residues: large enough to crop and multi-chain."""
-    return load_protein(DATA / "4HHB.pdb")
+    return _load("4HHB.pdb")
 
 
 # -- Protein.subset --------------------------------------------------------

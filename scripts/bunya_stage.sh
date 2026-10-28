@@ -108,6 +108,12 @@ print("arch list    :", torch.cuda.get_arch_list())
 PY
 
 echo
+# Two small reference entries. Without them a third of the suite skips, and a
+# suite that skips the structural tests is not evidence that the checkout is
+# sound -- which is the only thing running it here is for.
+python "${ROOT}/scripts/fetch_test_structures.py" || true
+
+echo
 echo "running the test suite (no GPU needed; proves the checkout is sound)"
 python -m pytest -q -m "not slow" "${ROOT}/tests" | tail -3
 
