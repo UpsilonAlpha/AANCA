@@ -116,8 +116,10 @@ def update_mask(
     """Bernoulli mask over residues. ``probability >= 1`` gives a synchronous step."""
     if probability >= 1.0:
         return torch.ones(n_residues, dtype=torch.bool, device=device)
-    draws = torch.rand(n_residues, device=device, generator=generator)
-    return draws < probability
+    # Drawn on the CPU and moved, for the same reason the damage is: the mask
+    # sequence has to be a property of the seed, not of the device.
+    draws = torch.rand(n_residues, generator=generator)
+    return (draws < probability).to(device)
 
 
 def step_once(
@@ -364,3 +366,52 @@ class SamplePool:
 
     def clear(self) -> None:
         self._entries.clear()
+
+    def state_dict(self) -> dict:
+        """Everything needed to resume, including this pool's own RNG.
+
+        The pool is part of the training state, not a cache: a resumed run that
+        started with an empty pool would train for a while on fresh damage
+        only, which is exactly the half of the objective the pool exists to
+        supply. Tensors go in as they are and are moved on load.
+        """
+        return {
+            "capacity": self.capacity,
+            "rng": self._rng.getstate(),
+            "entries": [
+                {
+                    "structure_id": sid,
+                    "coords": state.coords,
+                    "hidden": state.hidden,
+                    "step": state.step,
+                }
+                for sid, state in self._entries
+            ],
+        }
+
+    def load_state_dict(self, state: dict) -> None:
+        if int(state["capacity"]) != self.capacity:
+            raise ValueError(
+                f"pool capacity changed: checkpoint has {state['capacity']}, "
+                f"this pool has {self.capacity}"
+            )
+        self._rng.setstate(_tuple_states(state["rng"]))
+        self._entries = [
+            (
+                int(entry["structure_id"]),
+                RolloutState(
+                    coords=entry["coords"],
+                    hidden=entry["hidden"],
+                    step=int(entry["step"]),
+                ),
+            )
+            for entry in state["entries"]
+        ]
+
+
+def _tuple_states(state):
+    """``random.setstate`` demands tuples; a round trip through torch.save
+    leaves the inner state as a list."""
+    if isinstance(state, (list, tuple)):
+        return tuple(_tuple_states(item) for item in state)
+    return state

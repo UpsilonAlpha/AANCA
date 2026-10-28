@@ -1,0 +1,4 @@
+# Cluster scripts are executed by bash on Linux, where a CR would make the
+# shebang unparseable ("bad interpreter"). Keep them LF whatever the checkout.
+*.sh text eol=lf
+*.slurm text eol=lf

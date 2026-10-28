@@ -354,6 +354,7 @@ def von_mises_deltas(
     if concentration <= _MIN_CONCENTRATION:
         return uniform_deltas(chi_mask, generator)
     noise = von_mises_sample(tuple(chi_mask.shape), concentration, generator)
+    noise = noise.to(chi_mask.device)
     return torch.where(chi_mask, noise, torch.zeros_like(noise))
 
 
@@ -361,8 +362,11 @@ def uniform_deltas(
     chi_mask: Tensor, generator: torch.Generator | None = None
 ) -> Tensor:
     """Maximal damage: the chis carry no information about the native state."""
+    # Drawn on the CPU whatever the device, so one CPU ``generator`` keeps the
+    # damage reproducible on a GPU run as well -- a device generator would make
+    # the stream depend on where the job happened to land.
     draws = torch.rand(chi_mask.shape, dtype=torch.float64, generator=generator)
-    noise = draws * 2 * torch.pi - torch.pi
+    noise = (draws * 2 * torch.pi - torch.pi).to(chi_mask.device)
     return torch.where(chi_mask, noise, torch.zeros_like(noise))
 
 

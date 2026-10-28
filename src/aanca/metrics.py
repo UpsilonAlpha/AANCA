@@ -465,7 +465,9 @@ def sidechain_rmsd_torch(
     them, but it is what the data says.
     """
     n_res = predicted.shape[0]
-    out = torch.full((n_res,), float("nan"), dtype=predicted.dtype)
+    out = torch.full(
+        (n_res,), float("nan"), dtype=predicted.dtype, device=predicted.device
+    )
 
     for r in range(n_res):
         resname = topo.torsion.resnames[r]

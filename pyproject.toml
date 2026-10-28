@@ -24,4 +24,5 @@ pythonpath = ["src"]
 addopts = "-q"
 markers = [
     "needs_data: requires a downloaded PDB entry in data/raw/",
+    "slow: runs the training script in a subprocess; tens of seconds",
 ]
