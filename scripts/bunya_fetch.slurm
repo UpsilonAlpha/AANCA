@@ -33,6 +33,19 @@ if [[ ! -x "${VENV}/bin/python" ]]; then
     echo "ERROR: no environment at ${VENV} -- run: bash scripts/bunya_stage.sh" >&2
     exit 1
 fi
+# The venv runs on a module interpreter, so load the module it was built
+# against before activating; stage.sh recorded which one.
+if [[ -r "${VENV}/module.txt" ]]; then
+    # ``module`` is a shell function, and a non-login batch shell may not have
+    # it. Source the initialisation rather than assume.
+    if ! command -v module >/dev/null 2>&1; then
+        for init in /etc/profile.d/lmod.sh /etc/profile.d/modules.sh                     "${LMOD_PKG:-/usr/share/lmod/lmod}/init/bash"; do
+            [[ -r "${init}" ]] && source "${init}" && break
+        done
+    fi
+    module purge 2>/dev/null || true
+    module load "$(cat "${VENV}/module.txt")" 2>/dev/null || true
+fi
 # shellcheck disable=SC1091
 source "${VENV}/bin/activate"
 export PYTHONPATH="${ROOT}/src:${PYTHONPATH:-}"

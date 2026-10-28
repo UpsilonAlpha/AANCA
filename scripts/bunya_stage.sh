@@ -25,7 +25,7 @@ ROCM="${AANCA_ROCM:-}"
 
 echo "root  : ${ROOT}"
 echo "venv  : ${VENV}"
-echo "wheels: ${ROCM:+ROCm ${ROCM}}${ROCM:-CPU}"
+echo "wheels: ${ROCM:+ROCm ${ROCM}}${ROCM:-CPU-only}"
 
 module purge 2>/dev/null || true
 PYTHON=""
@@ -52,6 +52,11 @@ echo "module: ${PYTHON} ($(python3 -V))"
 if [[ ! -x "${VENV}/bin/python" ]]; then
     python3 -m venv "${VENV}"
 fi
+# A venv built on a module's interpreter needs that module loaded to run: the
+# shared library it links against lives in the module tree, not in the venv.
+# Record which one, so the batch scripts load the same one rather than
+# guessing, and so a rebuild against a different module is visible.
+echo "${PYTHON}" > "${VENV}/module.txt"
 # shellcheck disable=SC1091
 source "${VENV}/bin/activate"
 python -m pip install --quiet --upgrade pip wheel
