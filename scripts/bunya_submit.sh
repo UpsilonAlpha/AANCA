@@ -80,8 +80,16 @@ fi
 IFS=: read -r h m s <<< "${WALL}"
 WALL_SECONDS=$(( 10#${h:-0} * 3600 + 10#${m:-0} * 60 + 10#${s:-0} ))
 
+# Pin the CPU generation the environment was built for; see bunya_stage.sh.
+# For the GPU profile this costs nothing -- the MI355X nodes are epyc5 anyway.
+ARCH_FILE="${AANCA_VENV:-${ROOT}/.venv_bunya}/arch.txt"
+CONSTRAINT=()
+if [[ -s "${ARCH_FILE}" ]]; then
+    CONSTRAINT=(--constraint="$(cat "${ARCH_FILE}")")
+fi
+
 mkdir -p "${ROOT}/logs"
-CMD=(sbatch --account="${ACCOUNT}" "${RESOURCES[@]}"
+CMD=(sbatch --account="${ACCOUNT}" "${RESOURCES[@]}" "${CONSTRAINT[@]}"
      --job-name="aanca-${PROFILE}" --signal=B:USR1@300
      --output="${ROOT}/logs/%x-%j.out" --error="${ROOT}/logs/%x-%j.err"
      --export="ALL,AANCA_PROFILE=${PROFILE},AANCA_CHAIN=${CHAIN},AANCA_WALL_SECONDS=${WALL_SECONDS}"

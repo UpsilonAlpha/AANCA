@@ -1,8 +1,12 @@
 #!/bin/bash
 # Download the coordinates named in the manifest, on a CPU node.
 #
-#   sbatch scripts/bunya_fetch.slurm --split train
-#   sbatch scripts/bunya_fetch.slurm --split validation
+#   sbatch --constraint=$(cat .venv_bunya/arch.txt) scripts/bunya_fetch.slurm --split train
+#   sbatch --constraint=$(cat .venv_bunya/arch.txt) scripts/bunya_fetch.slurm --split validation
+#
+# The constraint pins the CPU generation the environment was built for; the
+# script refuses a node of any other generation rather than dying on an illegal
+# instruction, but SLURM has to be told before it picks the node.
 #
 # **Cancellable and resumable by construction**, with no checkpoint to keep:
 # ``scripts/fetch_structures.py`` lists what is already on disk and fetches only
@@ -32,6 +36,18 @@ VENV="${AANCA_VENV:-${ROOT}/.venv_bunya}"
 if [[ ! -x "${VENV}/bin/python" ]]; then
     echo "ERROR: no environment at ${VENV} -- run: bash scripts/bunya_stage.sh" >&2
     exit 1
+fi
+# Refuse a node of the wrong CPU generation rather than dying on an illegal
+# instruction three seconds later with a core dump and no explanation.
+if [[ -r "${VENV}/arch.txt" ]]; then
+    WANT="$(cat "${VENV}/arch.txt")"
+    HAVE="$(sinfo -h -n "$(hostname -s)" -o '%f' 2>/dev/null | tr ',' '\n' | grep -m1 '^epyc' || true)"
+    if [[ -n "${WANT}" && -n "${HAVE}" && "${WANT}" != "${HAVE}" ]]; then
+        echo "ERROR: ${VENV} was built for ${WANT}, this node is ${HAVE}." >&2
+        echo "       Submit with --constraint=${WANT}, or stage a second venv:" >&2
+        echo "       AANCA_VENV=${ROOT}/.venv_bunya_${HAVE} bash scripts/bunya_stage.sh" >&2
+        exit 1
+    fi
 fi
 # The venv runs on a module interpreter, so load the module it was built
 # against before activating; stage.sh recorded which one.

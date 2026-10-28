@@ -57,6 +57,15 @@ fi
 # Record which one, so the batch scripts load the same one rather than
 # guessing, and so a rebuild against a different module is visible.
 echo "${PYTHON}" > "${VENV}/module.txt"
+# And the microarchitecture. Bunya keeps a separate software tree per CPU
+# generation (/sw/auto/rocky9a/epyc5/...), so a venv over a module interpreter
+# is built for one of them: measured here, a job that landed on an epyc3 node
+# died instantly with "Illegal instruction (core dumped)" before running a line
+# of this project's code. Jobs are constrained to this feature, and a second
+# architecture means a second venv (AANCA_VENV=.venv_bunya_epyc3).
+ARCH="$(sinfo -h -n "$(hostname -s)" -o '%f' 2>/dev/null | tr ',' '\n' | grep -m1 '^epyc' || true)"
+echo "${ARCH}" > "${VENV}/arch.txt"
+echo "arch  : ${ARCH:-unknown}"
 # shellcheck disable=SC1091
 source "${VENV}/bin/activate"
 python -m pip install --quiet --upgrade pip wheel

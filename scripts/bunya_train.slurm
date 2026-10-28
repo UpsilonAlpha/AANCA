@@ -63,6 +63,18 @@ if [[ ! -x "${VENV}/bin/python" ]]; then
     echo "ERROR: no environment at ${VENV} -- run: bash scripts/bunya_stage.sh" >&2
     exit 1
 fi
+# Refuse a node of the wrong CPU generation rather than dying on an illegal
+# instruction three seconds later with a core dump and no explanation.
+if [[ -r "${VENV}/arch.txt" ]]; then
+    WANT="$(cat "${VENV}/arch.txt")"
+    HAVE="$(sinfo -h -n "$(hostname -s)" -o '%f' 2>/dev/null | tr ',' '\n' | grep -m1 '^epyc' || true)"
+    if [[ -n "${WANT}" && -n "${HAVE}" && "${WANT}" != "${HAVE}" ]]; then
+        echo "ERROR: ${VENV} was built for ${WANT}, this node is ${HAVE}." >&2
+        echo "       Submit with --constraint=${WANT}, or stage a second venv:" >&2
+        echo "       AANCA_VENV=${ROOT}/.venv_bunya_${HAVE} bash scripts/bunya_stage.sh" >&2
+        exit 1
+    fi
+fi
 # The venv runs on a module interpreter, so load the module it was built
 # against before activating; stage.sh recorded which one.
 if [[ -r "${VENV}/module.txt" ]]; then
