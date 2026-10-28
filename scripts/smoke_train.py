@@ -61,6 +61,25 @@ def usable(specs, limit: int):
     return out
 
 
+def _failure_class(why: str) -> str:
+    """Collapse a failure message to its class, so counts per class are visible.
+
+    Deliberately crude: the point is that every failure lands in some named
+    bucket with a count beside it, not that the buckets are elegant. An
+    unrecognised message keeps its exception type, which is enough to notice
+    that something new is happening.
+    """
+    for marker, label in (
+        ("under the min_residues limit", "too few amino acids (min_residues)"),
+        ("over the max_residues limit", "too large (max_residues)"),
+        ("more than MAX_ATOMS", "residue wider than the atom padding"),
+        ("is not a bond", "bad side-chain topology"),
+    ):
+        if marker in why:
+            return label
+    return why.split(":", 1)[0]
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--structures", type=int, default=40)
@@ -103,8 +122,16 @@ def main() -> int:
         cropped += indices is not None
 
     print(f"\nparsed {len(loaded)}/{len(specs)}; {len(failures)} failed")
-    for pdb_id, why in failures[:5]:
-        print(f"   {pdb_id}: {why}")
+    # Grouped by class, not the first five. Printing a sample is how a whole
+    # failure class hides: an earlier run reported its 154 failures as "all the
+    # size guards" because the five shown happened to be size guards, while
+    # eight were really a padding-width bug that silently dropped every
+    # structure whose chain ended in TRP.
+    classes: dict[str, list[str]] = {}
+    for pdb_id, why in failures:
+        classes.setdefault(_failure_class(why), []).append(pdb_id)
+    for label, ids in sorted(classes.items(), key=lambda kv: -len(kv[1])):
+        print(f"   {len(ids):>4}  {label}  e.g. {', '.join(ids[:3])}")
     if oversized:
         print(f"  PADDING EXCEEDED on {len(oversized)}: {oversized[:5]}")
     if sizes:
@@ -174,11 +201,12 @@ def main() -> int:
             return 1
 
         pool.insert(index, result.state)
-        history.append((sample.concentration, float(terms.total)))
+        total = float(terms.total.detach())
+        history.append((sample.concentration, total))
         print(
             f"  {update:<4}{sample.pdb_id:<7}{sample.topology.n_residues:>5}"
             f"{sample.supervised_fraction:>6.0%}"
-            f"{sample.concentration:>7.0f}{float(terms.total):>10.3f}"
+            f"{sample.concentration:>7.0f}{total:>10.3f}"
             f"{float(terms.reconstruction):>9.3f}{float(terms.noop):>9.3f}"
             f"{elapsed:>8.2f}"
         )

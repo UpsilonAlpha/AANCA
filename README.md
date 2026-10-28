@@ -218,7 +218,7 @@ python scripts/graph_report.py
 python scripts/measure_rollout_memory.py
 ```
 
-442 tests, ~25 s. The real-structure tests skip cleanly when `data/raw/` is empty, so the suite runs
+443 tests, ~25 s. The real-structure tests skip cleanly when `data/raw/` is empty, so the suite runs
 without network access — synthetic residues built by forward kinematics cover the maths, and the
 downloaded entries cover PDB atom naming, altlocs and disordered side chains.
 

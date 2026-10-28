@@ -613,10 +613,26 @@ geometric damage operators, the per-step perception graph with invariant feature
 `k=64` default, a differentiable Torch path pinned against that NumPy reference, the rule itself at
 200,268 parameters, the von Mises loss with symmetry mixtures, the rollout with truncated BPTT and a
 sample pool, the dataset pipeline with spatial cropping, and the published-metric conventions
-reverse-engineered and reproduced against four packers. 442 tests.
+reverse-engineered and reproduced against four packers. 443 tests.
 
 The whole path from a downloaded coordinate file to a parameter update has been run end to end on
-real structures (`scripts/smoke_train.py`), and loss is monotone in damage severity.
+real structures (`scripts/smoke_train.py`). On all 949 validation entries, 926 parse (97.6%); the 23
+failures are one class, nucleic-acid complexes that pass RCSB's polymer-monomer filter and yield
+almost no protein, and they are rejected loudly. Entries run to 6,168 residues and crop to 512; 331
+of 926 are large enough to crop, mean supervised fraction 87.7%. Loss is monotone in damage
+severity: 1.13 at κ=100, 1.20 at κ=20, 1.34 at κ=5, 3.61 under uniform damage.
+
+Two of my own diagnostics were wrong in the same direction and are worth recording, because both
+would have been consulted exactly when they mattered. The smoke test summarised "loss first → last",
+which compared a mild-noise sample against a uniform-damage one and read as a 3× regression when
+nothing had regressed; loss is not comparable across damage levels, so it now groups by level. And
+it printed the first five parse failures rather than counts per class, which let a whole class hide:
+the 154 failures of an earlier run were reported as "all the size guards" because the five shown
+were, while eight were a padding-width bug. `MAX_ATOMS` was hand-counted as 14, TRP's heavy-atom
+count — correct except at a chain's C-terminus, which carries an extra `OXT`. Every structure whose
+chain ended in TRP overflowed by one atom and vanished from the pool as a parse failure. The width is
+now derived from the tables, and the rate of that bug rose with the multi-chain assemblies cropping
+brought in, since every chain has its own terminus.
 
 **What v1 still needs is a training run.** Every component works and the plumbing is verified, but
 nothing has been trained, so whether the fixed-point objective produces a converging rule is

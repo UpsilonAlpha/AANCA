@@ -195,6 +195,18 @@ def _adjacency(resname: str) -> dict[str, set[str]]:
 
 BACKBONE_ATOMS = frozenset({"N", "CA", "C", "O"})
 
+#: Extra backbone atoms that appear only at a chain terminus. ``OXT`` is the
+#: second carboxyl oxygen on the C-terminal residue, bonded to ``C``.
+#:
+#: Kept separate from :data:`BACKBONE_ATOMS` rather than merged into it, because
+#: the two are used for different things: ``BACKBONE_ATOMS`` defines what a
+#: side chain is *not* and what a torsion walk may not cross, and OXT belongs to
+#: neither question -- it hangs off ``C``, so it is never downstream of a chi.
+#: It matters for exactly one thing, the atom-axis padding width, which is why
+#: it is defined here rather than left implicit. A hand-counted width of 14 (TRP
+#: without OXT) silently rejected every structure whose chain ends in TRP.
+TERMINAL_ATOMS = frozenset({"OXT"})
+
 
 def downstream_atoms(resname: str, b: str, c: str) -> frozenset[str]:
     """Side-chain atoms that move when the ``b-c`` bond is driven.

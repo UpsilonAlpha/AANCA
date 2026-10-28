@@ -33,9 +33,26 @@ from .structure import Protein
 
 EPS = 1e-8
 
-#: Heavy-atom count of the largest residue (TRP: N CA C O CB CG CD1 CD2 NE1
-#: CE2 CE3 CZ2 CZ3 CH2). Padding width for the atom axis.
-MAX_ATOMS = 14
+#: Padding width for the atom axis: heavy atoms of the largest residue, taken
+#: from the tables rather than counted by hand.
+#:
+#: Hand-counting got this wrong and the way it was wrong is instructive. The
+#: width was 14, which is TRP's heavy-atom count (N CA C O CB CG CD1 CD2 NE1
+#: CE2 CE3 CZ2 CZ3 CH2) -- correct for every residue except the one at a chain's
+#: C-terminus, which carries an extra ``OXT``. So a structure whose chain ended
+#: in TRP overflowed by one atom and was rejected at load time. Nothing was
+#: miscomputed; the entries simply vanished from the pool, counted as parse
+#: failures. The smoke test found three in 918 validation entries, and the rate
+#: rises with the multi-chain assemblies cropping brought in, since every chain
+#: has its own terminus.
+#:
+#: Deriving it costs one atom of padding on an axis the edge features dwarf --
+#: 15 * 3 floats against 64 * 575 per residue -- and cannot go stale when a
+#: table changes.
+MAX_ATOMS = max(
+    len(rc.BACKBONE_ATOMS | rc.TERMINAL_ATOMS | rc.sidechain_atoms(name))
+    for name in rc.AA3
+)
 
 
 @dataclass(frozen=True)

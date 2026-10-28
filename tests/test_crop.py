@@ -431,3 +431,24 @@ def test_burial_is_exact_for_supervised_residues(haemoglobin):
     for position, original in enumerate(taken.indices):
         if taken.supervised[position]:
             assert int(crop_counts[position]) == int(whole_counts[original])
+
+
+def test_padding_width_covers_a_c_terminal_tryptophan():
+    """The widest real residue is a C-terminal TRP: 14 heavy atoms plus OXT.
+
+    A hand-counted width of 14 rejected every structure whose chain ended in
+    TRP -- three of 918 validation entries, silently counted as parse failures.
+    Deriving the width from the tables is what stops that recurring.
+    """
+    from aanca.torch_geometry import MAX_ATOMS
+
+    widest = len(
+        rc.BACKBONE_ATOMS | rc.TERMINAL_ATOMS | rc.sidechain_atoms("TRP")
+    )
+    assert widest == 15
+    assert MAX_ATOMS >= widest
+    assert "OXT" not in rc.BACKBONE_ATOMS, (
+        "OXT must stay out of BACKBONE_ATOMS: that set defines what a side "
+        "chain is not and what a torsion walk may not cross, and OXT hangs "
+        "off C where it is never downstream of a chi"
+    )
