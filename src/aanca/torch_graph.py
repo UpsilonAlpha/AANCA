@@ -61,16 +61,41 @@ class FeatureTopology:
     owner: np.ndarray
     chain_ids: list[str]
     res_id_list: list[int]
+    #: ``(n_res,)`` bool: residues whose perception is complete and which the
+    #: loss may therefore touch. All true for an intact structure; false on the
+    #: boundary shell of a spatial crop, where neighbours were deleted and the
+    #: native torsion depends on contacts the rule cannot see (see ``crop.py``).
+    #:
+    #: It rides on the topology rather than being passed alongside it because
+    #: the failure mode is one-sided: forgetting the mask supervises unlearnable
+    #: targets and quietly degrades training, while carrying it costs nothing.
+    #: Defaults to all-true so every existing caller keeps its behaviour.
+    supervised: Tensor | None = None
 
     @property
     def n_residues(self) -> int:
         return self.atom_mask.shape[0]
 
+    @property
+    def supervised_mask(self) -> Tensor:
+        """``supervised``, materialised as all-true when unset."""
+        if self.supervised is not None:
+            return self.supervised
+        return torch.ones(
+            self.n_residues, dtype=torch.bool, device=self.atom_mask.device
+        )
+
 
 def feature_topology(
-    protein: Protein, device: torch.device | str = "cpu"
+    protein: Protein,
+    device: torch.device | str = "cpu",
+    supervised: np.ndarray | Tensor | None = None,
 ) -> tuple[FeatureTopology, Tensor]:
-    """Resolve ``protein`` into a featurisation topology plus padded coordinates."""
+    """Resolve ``protein`` into a featurisation topology plus padded coordinates.
+
+    ``supervised`` is the crop mask from :func:`crop.crop`; ``None`` means an
+    intact structure, where every residue may be supervised.
+    """
     torsion, coords = topology_from_protein(protein, device=device)
     n_res = len(protein)
 
@@ -139,8 +164,24 @@ def feature_topology(
         owner=owner,
         chain_ids=list(protein.chain_ids),
         res_id_list=list(protein.res_ids),
+        supervised=_supervised_tensor(supervised, n_res, device),
     )
     return topo, coords
+
+
+def _supervised_tensor(
+    supervised: np.ndarray | Tensor | None, n_res: int, device
+) -> Tensor | None:
+    if supervised is None:
+        return None
+    mask = torch.as_tensor(np.asarray(supervised, dtype=bool))
+    if mask.shape != (n_res,):
+        raise ValueError(
+            f"supervised mask must be ({n_res},), got {tuple(mask.shape)} -- a "
+            "mask built for the uncropped structure would silently supervise "
+            "the wrong residues"
+        )
+    return mask.to(device)
 
 
 # -- geometry blocks -------------------------------------------------------

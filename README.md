@@ -32,7 +32,9 @@ conditions, over a step count it was never told.
 | Published benchmark metrics | `metrics.py` | done, partially validated |
 | Bond/angle degrees of freedom | `torch_geometry.py` | built, disabled by default |
 | Dataset assembly and splitting | `data.py` | done |
-| Training data acquisition | — | **next** |
+| Spatial cropping with a boundary mask | `crop.py` | done |
+| Training data acquisition and leak audit | `scripts/` | done |
+| A training run | — | **next** |
 | Nonbonded fields as perception | — | next |
 
 The design, with reasoning, is in [`docs/PLAN_V1.md`](docs/PLAN_V1.md). Read that before adding
@@ -117,6 +119,41 @@ exact, not approximate: the backbone never moves, so that block's gradient is id
 Detaching it *afterwards* saves nothing, which was measured — by then the tensor is already built
 inside the graph.
 
+### Cropping is lossless where it counts, and that is checkable
+
+Memory is linear in residue count, so a sample has to be bounded. The usual move is to filter large
+structures out of the training pool — but that discards the multi-chain assemblies, which are the
+interface-rich ones. So the *sample* is bounded instead: a large entry contributes a ball of
+`crop_size` residues around a randomly chosen seed, and a different region each time it is drawn.
+
+A strictly local rule tolerates this unusually well, and that is the one place locality buys
+something a global model could not have. Perception reaches one graph hop bounded by the interaction
+cutoff, so a residue whose contacts are all present sees *exactly* what it would have seen in the
+intact assembly. A residue near the boundary does not: its neighbours were deleted, its perception
+is wrong rather than noisy, and the native torsion it would be asked to predict depends on contacts
+it cannot see. Supervising it would teach the rule to guess packing from absent evidence — a real
+gradient carrying no signal. So each crop carries a mask of the residues whose perception is
+complete, computed exactly rather than by a tuned margin, and only those are scored. The boundary
+shell stays in the graph as context and contributes nothing to the loss.
+
+That claim is a test rather than an argument. On 4HHB cropped to 300 residues, the residues whose
+features differ between crop and intact structure are **exactly** the 137 unsupervised ones; all 163
+supervised residues are bit-identical, edge by edge.
+
+The cost is measured over 40 validation entries above 700 residues:
+
+| crop size | supervised | effective residues | MB per 12-step window |
+|---|---|---|---|
+| 192 | 29.3% | 56 | 945 |
+| 384 | 46.2% | 177 | 1,889 |
+| 512 | 56.6% | 290 | 2,519 |
+| 768 | 73.7% | 566 | 3,779 |
+| 1024 | 85.2% | 872 | 5,038 |
+
+The shell is one cutoff deep whatever the crop size, so supervised residues per MB *rises* with crop
+size throughout — 0.059 at 192 against 0.173 at 1024. There is no efficiency optimum to find: crop
+size is a memory budget, and bigger is strictly better.
+
 ## Benchmark reproduction — partial
 
 `metrics.py` implements the metrics AttnPacker, DiffPack and FlowPacker all report: χ MAE per chi
@@ -181,7 +218,7 @@ python scripts/graph_report.py
 python scripts/measure_rollout_memory.py
 ```
 
-401 tests, ~20 s. The real-structure tests skip cleanly when `data/raw/` is empty, so the suite runs
+440 tests, ~25 s. The real-structure tests skip cleanly when `data/raw/` is empty, so the suite runs
 without network access — synthetic residues built by forward kinematics cover the maths, and the
 downloaded entries cover PDB atom naming, altlocs and disordered side chains.
 
@@ -204,6 +241,7 @@ src/aanca/
   rollout.py             async mask, truncated BPTT, sample pool, objective
   metrics.py             the published packing benchmark
   data.py                dataset assembly, cluster splitting, damage sampling
+  crop.py                spatial cropping; the mask of complete perception
 ```
 
 Importing `aanca` does **not** import Torch — the data layer stays usable without it.

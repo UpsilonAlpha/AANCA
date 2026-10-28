@@ -330,12 +330,73 @@ Include multi-chain entries so interfaces are in distribution (§1).
 | largest cluster group | 2,143 |
 | CASP target sequences queried | 210, 0 failures |
 | entries within 40% of a target | 2,227, spanning 646 clusters |
-| representatives removed | 592 |
-| **train / validation** | **23,723 / 988** |
+| representatives removed | 593 |
+| **train / validation** | **23,761 / 949** |
 
-The published split is 37,266 training *chains*; ours is 23,723 *entries*, and entries hold several
+The published split is 37,266 training *chains*; ours is 23,761 *entries*, and entries hold several
 chains, so the volume is comparable or larger — but not comparably composed, which is a divergence to
 state rather than gloss.
+
+**No size bound on the pool; samples are cropped instead.** Retained activations are linear in
+residue count, so something has to bound a sample, and the obvious move is to filter the pool —
+which was the plan, at 40–1000 residues. It was dropped. The filter removes 14% of entries and it
+removes the *largest* ones, which are the multi-chain assemblies: exactly the interface-rich
+structures this project cares about. `src/aanca/crop.py` bounds the sample rather than the entry,
+taking a ball of `crop_size` residues around a random seed, so a 2,400-residue assembly contributes
+a different region each time it is drawn. The nearest published precedent for a cap is AttnPacker's
+600 residues, which applies to their non-native-backbone *test* set rather than to training, so
+there is nothing here to reproduce either way.
+
+**The boundary shell is excluded from the loss, and that exclusion is the whole correctness
+argument.** A residue near the edge of a crop has had its neighbours deleted, so its perception is
+wrong — not noisy, wrong — and the native torsion it would be asked to predict depends on contacts
+it cannot see. Supervising it teaches the rule to guess packing from absent evidence: the gradient
+is real and the signal is not. So every crop carries a mask of the residues whose perception is
+*complete*, computed exactly rather than by a tuned margin — a residue is supervised iff every
+residue within `cutoff` of it in the intact structure is still present, by minimum heavy-atom
+distance, which is the same quantity the featuriser builds edges from. The shell stays in the graph
+as context for the interior and is scored on nothing.
+
+That cropping is lossless in the interior is testable, not arguable, and
+`tests/test_crop.py::test_the_mask_is_exactly_the_set_whose_perception_changed` tests it: on 4HHB at
+crop size 300, the residues whose features differ between crop and intact structure are **exactly**
+the 137 unsupervised ones, and all 163 supervised residues are bit-identical. This is the one place
+strict locality buys something a global model could not have.
+
+**The cost is measured, and it says crop size is a memory budget rather than an optimum.** Over 40
+validation entries above 700 residues (`scripts/crop_report.py`):
+
+| crop size | supervised | effective residues | MB per 12-step window |
+|---|---|---|---|
+| 192 | 29.3% | 56 | 945 |
+| 384 | 46.2% | 177 | 1,889 |
+| 512 | 56.6% | 290 | 2,519 |
+| 768 | 73.7% | 566 | 3,779 |
+| 1024 | 85.2% | 872 | 5,038 |
+
+The shell is one interaction cutoff deep whatever the crop size, so supervised residues per MB rises
+monotonically — 0.059 at 192 against 0.173 at 1024. There is no sweet spot to find: bigger is
+strictly better and only memory stops it. The 512 default should be raised to whatever the training
+hardware holds.
+
+### The split is stable under changes to the pool
+
+Each *group* is assigned a side by hashing its id, not by a draw from a shuffle. This was paid for.
+The first version took `randperm` over the sorted group list, which makes every group's side depend
+on how many groups exist — so when the leakage filter was corrected and **one** group moved to
+`excluded`, the permutation shifted and **945 of 988 validation entries changed**, requiring the
+whole validation set to be downloaded again to evaluate against the same split. Hashing makes
+membership depend only on `(group, seed)`, so the pool can grow, shrink or have its filter corrected
+without disturbing an unrelated group. The price is that the realised fraction is binomial around
+the target rather than exact: at 25,303 groups and 4% that is roughly ±31 groups.
+
+A related failure in the same build is worth recording because it was nearly invisible. One of the
+210 MMseqs2 queries hit a transient `RequestError`; the script logged a line and carried on, and the
+holdout came back **one entry smaller** — a cluster that should have been banned was not, and the
+only trace was console output nobody would diff. That one entry *was* a representative, so an entry
+within 40% identity of a CASP target would have entered training. Queries now retry with backoff,
+and a build whose search was incomplete unions in the stored list rather than writing a manifest
+that looks clean without being clean.
 
 Most CASP targets returned very few identity hits, which is the right signal: CASP targets are chosen
 partly because they lack close PDB homologs, so thousands of hits per target would have meant the
@@ -343,7 +404,7 @@ filter was broken rather than working.
 
 **The audit is part of the artifact.** The leakage guarantee costs 210 MMseqs2 queries to re-derive,
 so the build persists the matched entries and banned clusters and `audit_manifest.py` checks them,
-exiting non-zero on violation. Current state: 24,711 survivors, **0 touching a banned cluster**.
+exiting non-zero on violation. Current state: 24,710 survivors, **0 touching a banned cluster**.
 
 Getting that check right took two attempts, and the wrong version is the tempting one. An excluded
 entry may touch *two* clusters — one banned, because it holds a chain homologous to a test target,
@@ -548,8 +609,16 @@ let a reader assume otherwise.
 
 See `README.md` for the numbers. In short: chi extraction and exact modification for all 20 residue
 types (round trip to 3.6e-14 Å against a 0.01 Å bar, cross-checked against rotamer statistics), the
-geometric damage operators, and the per-step perception graph with invariant features and a measured
-`k=64` default. 183 tests.
+geometric damage operators, the per-step perception graph with invariant features and a measured
+`k=64` default, a differentiable Torch path pinned against that NumPy reference, the rule itself at
+200,268 parameters, the von Mises loss with symmetry mixtures, the rollout with truncated BPTT and a
+sample pool, the dataset pipeline with spatial cropping, and the published-metric conventions
+reverse-engineered and reproduced against four packers. 440 tests.
 
-What v1 still needs: a differentiable torsion path in Torch, a Torch port of the featuriser, the
-rule itself, the von Mises loss, the rollout with the sample pool, and the dataset pipeline.
+The whole path from a downloaded coordinate file to a parameter update has been run end to end on
+real structures (`scripts/smoke_train.py`), and loss is monotone in damage severity.
+
+**What v1 still needs is a training run.** Every component works and the plumbing is verified, but
+nothing has been trained, so whether the fixed-point objective produces a converging rule is
+entirely unknown. After that: nonbonded fields as perception (§2b), which needs partial-charge and
+Lennard-Jones tables, and the characterisation in §6a, which needs a trained model to characterise.

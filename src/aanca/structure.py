@@ -93,6 +93,46 @@ class Protein:
                 out.setdefault(self.chain_ids[index], []).append(code)
         return {chain: "".join(codes) for chain, codes in out.items()}
 
+    # -- selection ----------------------------------------------------------
+
+    def subset(self, indices: list[int] | np.ndarray) -> "Protein":
+        """A new Protein holding only ``indices``, in the order given.
+
+        This is what spatial cropping is built on. ``atoms`` is rebuilt rather
+        than masked, and ``atom_indices`` is renumbered against the *new* array:
+        keeping the old numbering would leave every coordinate write landing on
+        the wrong atom, silently and without an error.
+
+        Residue order is the caller's. Passing them ascending preserves which
+        pairs are sequence-adjacent, which matters because
+        :func:`graph.sequence_neighbour_sets` forces an edge between residues
+        whose ``res_id`` differs by one -- it reads ``res_ids``, so a dropped
+        residue breaks the adjacency honestly rather than inventing a bond.
+        """
+        order = [int(i) for i in indices]
+        if not order:
+            raise ValueError("cannot subset to no residues")
+        if any(i < 0 or i >= len(self) for i in order):
+            raise IndexError(f"residue index out of range for {len(self)} residues")
+        if len(set(order)) != len(order):
+            raise ValueError("duplicate residue index in subset")
+
+        rows = np.concatenate([self.atom_indices[i] for i in order])
+        atom_indices: list[np.ndarray] = []
+        start = 0
+        for i in order:
+            width = len(self.atom_indices[i])
+            atom_indices.append(np.arange(start, start + width))
+            start += width
+
+        return Protein(
+            atoms=self.atoms[rows],
+            residues=[self.residues[i] for i in order],
+            atom_indices=atom_indices,
+            chain_ids=[self.chain_ids[i] for i in order],
+            res_ids=[self.res_ids[i] for i in order],
+        )
+
     # -- rigid motion -------------------------------------------------------
 
     def transformed(

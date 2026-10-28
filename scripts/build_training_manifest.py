@@ -75,25 +75,30 @@ def cluster_file() -> Path:
 def candidate_entries(
     resolution: float, min_residues: int, max_residues: int
 ) -> list[str]:
-    """X-ray protein entries within the resolution and size bounds.
+    """X-ray protein entries within the resolution and any size bounds.
 
-    **All three bounds are ours, not theirs.** No packing paper documents a
-    resolution cutoff or a size range for the training pool, so they are
-    parameters rather than buried constants.
+    **The bounds are ours, not theirs.** No packing paper documents a resolution
+    cutoff or a size range for the training pool, so they are parameters rather
+    than buried constants.
 
-    The size bounds exist for concrete reasons found by measurement, not taste.
-    Without them the pool runs from 12-residue peptides -- not packing targets in
-    any useful sense -- to 3,570-residue assemblies, which at the measured
-    ~124 MB of retained activations per 300 residues per step would need ~13 GB
-    for a single 30-step rollout. Counts at 2.5 A: no bounds 161,997; 30+ loses
-    only 428 entries; 40-1000 keeps 138,765 (86%); 40-600 keeps 109,637 (68%).
-    1,000 bounds a sample at roughly 12 GB while keeping most of the data.
+    **Both size bounds default to off, because cropping replaced them.** An
+    earlier version capped the pool at 40-1000 residues, for a real reason:
+    retained activations are linear in residue count -- measured ~0.41 MB per
+    residue per rollout step -- so a 3,570-residue assembly needs several GB for
+    one truncation window. But the cap removes whole entries, and it removes the
+    largest ones, which are the multi-chain assemblies: the interface-rich
+    structures most worth having. ``src/aanca/crop.py`` bounds the *sample*
+    instead, so a large entry contributes a ball of residues around a random
+    seed and the rest of it stays available for another sample. Counts at 2.5 A
+    for reference: no bounds 161,997; 30+ loses only 428 entries; 40-1000 keeps
+    138,765 (86%); 40-600 keeps 109,637 (68%).
 
-    The nearest published precedent is AttnPacker's 600-residue cap, which
-    applies to their non-native-backbone *test* set rather than to training.
-    Spatial cropping would let large assemblies back in -- a local rule tolerates
-    it, since interior residues keep correct context -- and is the better fix
-    later.
+    A floor is still defensible -- a 12-residue peptide is not a packing target
+    in any useful sense -- but it is left off here too, because
+    ``RepackingDataset`` has to guard the floor at load time regardless: RCSB's
+    ``deposited_polymer_monomer_count`` counts nucleotides, so a nucleic-acid
+    complex passes any residue filter and still yields almost no protein. Two
+    mechanisms for one job would only disagree.
     """
     query = (
         rcsb.FieldQuery(
@@ -103,19 +108,26 @@ def candidate_entries(
             "rcsb_entry_info.polymer_entity_count_protein", greater_or_equal=1
         )
         & rcsb.FieldQuery("exptl.method", exact_match="X-RAY DIFFRACTION")
-        & rcsb.FieldQuery(
+    )
+    if min_residues:
+        query = query & rcsb.FieldQuery(
             "rcsb_entry_info.deposited_polymer_monomer_count",
             greater_or_equal=min_residues,
         )
-        & rcsb.FieldQuery(
+    if max_residues:
+        query = query & rcsb.FieldQuery(
             "rcsb_entry_info.deposited_polymer_monomer_count",
             less_or_equal=max_residues,
         )
-    )
     ids = rcsb.search(query, return_type="entry")
+    bounds = (
+        f"{min_residues or 'any'}-{max_residues or 'any'} residues"
+        if (min_residues or max_residues)
+        else "no size bound (samples are cropped instead)"
+    )
     print(
         f"candidates: {len(ids)} X-ray protein entries at <= {resolution} A, "
-        f"{min_residues}-{max_residues} residues"
+        f"{bounds}"
     )
     return [i.upper() for i in ids]
 
@@ -147,9 +159,20 @@ def test_target_sequences() -> dict[str, str]:
 
 
 def leaking_entries(
-    sequences: dict[str, str], pause: float = 0.2
+    sequences: dict[str, str], pause: float = 0.2, attempts: int = 4
 ) -> tuple[set[str], list[str]]:
-    """Entries within 40% identity of any test target, via RCSB's MMseqs2."""
+    """Entries within 40% identity of any test target, via RCSB's MMseqs2.
+
+    **A failed query is retried, and one that keeps failing is handed back to
+    the caller rather than absorbed.** This was found the hard way. On a
+    rebuild, one of the 210 queries hit a transient ``RequestError``; the
+    original version logged a line and carried on, and the holdout came back
+    one entry smaller than the previous run -- which is to say the leakage
+    guarantee quietly weakened, leaving no trace except console output nobody
+    would diff. A network blip must not get to decide what is in the training
+    set, so failures now retry with backoff and the caller refuses to write a
+    manifest built on an incomplete search.
+    """
     hits: set[str] = set()
     failed: list[str] = []
     long_enough = {
@@ -160,29 +183,84 @@ def leaking_entries(
         f"(skipping {len(sequences) - len(long_enough)} under {MIN_QUERY_LENGTH} residues)"
     )
     for index, (name, sequence) in enumerate(sorted(long_enough.items()), start=1):
-        try:
-            query = rcsb.SequenceQuery(sequence, "protein", min_identity=0.4)
-            found = rcsb.search(query, return_type="entry")
-            hits.update(i.upper() for i in found)
-        except Exception as exc:
-            failed.append(f"{name}: {type(exc).__name__}")
+        last: Exception | None = None
+        for attempt in range(attempts):
+            try:
+                query = rcsb.SequenceQuery(sequence, "protein", min_identity=0.4)
+                hits.update(i.upper() for i in rcsb.search(query, return_type="entry"))
+                last = None
+                break
+            except Exception as exc:
+                last = exc
+                # Back off: a transient failure here is usually rate limiting.
+                time.sleep(pause * (2**attempt))
+        if last is not None:
+            failed.append(f"{name}: {type(last).__name__}")
+            print(f"  {name} failed after {attempts} attempts: {type(last).__name__}")
         if index % 25 == 0:
             print(f"  {index}/{len(long_enough)} queried, {len(hits)} entries so far")
         time.sleep(pause)
     print(f"leakage filter: {len(hits)} entries within 40% of a test target")
     if failed:
-        print(f"  {len(failed)} queries failed, e.g. {failed[:3]}")
+        print(f"  {len(failed)} queries failed after retries: {failed}")
     return hits, failed
+
+
+def stored_leakage() -> set[str]:
+    """The leaking-entry list from a previous build.
+
+    Persisted precisely so the guarantee is auditable rather than taken on
+    trust; reading it back is the same artifact an auditor would read. Refuses
+    a meta file written without the filter, since that list is empty for a
+    reason that must not propagate silently.
+    """
+    path = ROOT / "data" / "manifest_meta.json"
+    if not path.exists():
+        raise SystemExit(f"{path} missing -- nothing to reuse, drop --reuse-leakage")
+    meta = json.loads(path.read_text(encoding="utf-8"))
+    if not meta.get("leakage_filter_applied"):
+        raise SystemExit(
+            f"{path} was written with the leakage filter skipped, so its entry "
+            "list is empty by construction. Re-run without --reuse-leakage."
+        )
+    entries = {str(e).upper() for e in meta.get("leaking_entries", ())}
+    if not entries:
+        raise SystemExit(f"{path} records no leaking entries; refusing to reuse it")
+    print(f"leakage filter: reusing {len(entries)} entries from {path.name}")
+    return entries
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--resolution", type=float, default=2.5)
-    parser.add_argument("--min-residues", type=int, default=40)
-    parser.add_argument("--max-residues", type=int, default=1000)
+    parser.add_argument(
+        "--min-residues", type=int, default=0, help="0 for no lower bound"
+    )
+    parser.add_argument(
+        "--max-residues",
+        type=int,
+        default=0,
+        help="0 for no upper bound; large entries are cropped per sample instead",
+    )
     parser.add_argument("--validation-fraction", type=float, default=0.04)
     parser.add_argument("--limit", type=int, default=0, help="cap candidates (testing)")
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument(
+        "--reuse-leakage",
+        action="store_true",
+        help="read the leaking-entry list from data/manifest_meta.json instead "
+             "of re-querying. The list depends only on the test targets, not on "
+             "the candidate pool, so it is valid for a rebuild that changes the "
+             "pool -- and re-running 210 MMseqs2 queries to get the same answer "
+             "is not a check of anything.",
+    )
+    parser.add_argument(
+        "--allow-failed-queries",
+        action="store_true",
+        help="write the manifest even if an identity query failed after retries "
+             "and no stored list is available to union in. Weakens the leakage "
+             "guarantee, so it has to be asked for.",
+    )
     parser.add_argument(
         "--skip-leakage",
         action="store_true",
@@ -225,8 +303,27 @@ def main() -> int:
         print("\nWARNING: leakage filter SKIPPED -- this manifest is not usable "
               "for any reported number")
         holdout: set[str] = set()
+    elif args.reuse_leakage:
+        holdout = stored_leakage()
     else:
-        holdout, _failed = leaking_entries(test_target_sequences())
+        holdout, failed = leaking_entries(test_target_sequences())
+        # A query that failed is a target whose homologs were never looked for,
+        # so the split would look clean without being clean. Union the stored
+        # list in, which is the cheap way to recover a blip, and refuse outright
+        # if there is nothing to fall back on.
+        if failed:
+            if args.allow_failed_queries:
+                print(
+                    f"  WARNING: {len(failed)} queries failed and were allowed. "
+                    "The leakage guarantee is weaker than the manifest implies."
+                )
+            else:
+                before = len(holdout)
+                holdout |= stored_leakage()
+                print(
+                    f"  {len(failed)} queries failed; unioned the stored list in "
+                    f"({before} -> {len(holdout)} entries)"
+                )
 
     specs = [
         StructureSpec(

@@ -198,6 +198,48 @@ def test_split_is_reproducible(clusters):
     assert [s.pdb_id for s in a["validation"]] == [s.pdb_id for s in b["validation"]]
 
 
+def test_split_survives_a_change_to_the_pool(clusters):
+    """Adding or removing entries must not reassign unrelated groups.
+
+    This is a regression test for a measured failure, not a hypothetical. The
+    split used to be a ``randperm`` over the sorted group list, so every
+    group's side depended on how many groups existed. Correcting the leakage
+    filter moved **one** group into ``excluded``, the permutation shifted, and
+    945 of 988 validation entries changed -- meaning the whole validation set
+    had to be re-downloaded to evaluate the same model against the same split.
+    """
+    many = ClusterIndex([f"Z{i:03d}A_1\n" for i in range(200)])
+    ids = [f"Z{i:03d}A" for i in range(200)]
+    full = split_by_cluster(
+        _specs(many, ids), {"Z000A"}, many, validation_fraction=0.2, seed=3
+    )
+    # Drop one entry from the middle of the pool, as a filter correction would.
+    fewer = split_by_cluster(
+        _specs(many, [i for i in ids if i != "Z100A"]),
+        {"Z000A"},
+        many,
+        validation_fraction=0.2,
+        seed=3,
+    )
+    before = {s.pdb_id for s in full["validation"]}
+    after = {s.pdb_id for s in fewer["validation"]}
+    assert before - after <= {"Z100A"}
+    assert not after - before
+    assert len(after) > 10, "too few validation entries for this to mean anything"
+
+
+def test_the_split_fraction_is_roughly_the_one_asked_for(clusters):
+    """Hashing makes the realised fraction binomial rather than exact. At this
+    pool size the tolerance below is about four standard deviations."""
+    many = ClusterIndex([f"W{i:04d}A_1\n" for i in range(4000)])
+    ids = [f"W{i:04d}A" for i in range(4000)]
+    splits = split_by_cluster(
+        _specs(many, ids), {"W0000A"}, many, validation_fraction=0.1, seed=0
+    )
+    share = len(splits["validation"]) / len(ids)
+    assert 0.08 < share < 0.12, share
+
+
 def test_rejects_a_nonsense_fraction(clusters):
     specs = _specs(clusters, ["1ABC"])
     with pytest.raises(ValueError):
@@ -346,3 +388,60 @@ def test_rejects_empty_inputs():
         RepackingDataset(
             [StructureSpec("X", DATA / "x.pdb", "X")], concentrations=()
         )
+
+
+def test_the_parse_cache_is_bounded(dataset):
+    """An unbounded cache over 23,761 entries, some of them 4,000-residue
+    assemblies, would grow until training died of it."""
+    dataset.cache_limit = 2
+    for index in range(min(len(dataset), 4)):
+        dataset.protein(index)
+    assert len(dataset._proteins) <= 2
+
+
+# -- cropping, at the dataset level ----------------------------------------
+
+
+@pytest.fixture
+def big_dataset():
+    """4HHB: 574 residues across four chains, so a 512 crop really crops."""
+    path = DATA / "4HHB.pdb"
+    if not path.exists():
+        pytest.skip("run scripts/fetch_test_structures.py")
+    return RepackingDataset(
+        [StructureSpec("4HHB", path, "4HHB")],
+        concentrations=(50.0,),
+        crop_size=512,
+    )
+
+
+def test_a_large_entry_is_cropped_and_partly_supervised(big_dataset):
+    topo, _coords, indices = big_dataset.load_crop(0)
+    assert topo.n_residues == 512
+    assert indices is not None and len(indices) == 512
+    assert 0.0 < float(topo.supervised_mask.double().mean()) < 1.0
+
+
+def test_a_crop_is_not_cached_so_the_region_can_vary(big_dataset):
+    """Caching the topology would freeze one region per entry and turn the
+    crop back into truncation."""
+    import random as _random
+
+    first = big_dataset.load_crop(0, rng=_random.Random(1))[2]
+    second = big_dataset.load_crop(0, rng=_random.Random(2))[2]
+    assert first != second
+    assert not big_dataset._cache
+
+
+def test_a_small_entry_is_taken_whole_and_fully_supervised(dataset):
+    topo, _coords, indices = dataset.load_crop(0)
+    assert indices is None
+    assert topo.supervised is None
+    assert topo.supervised_mask.all()
+
+
+def test_cropping_can_be_disabled(big_dataset):
+    big_dataset.crop_size = None
+    topo, _coords, indices = big_dataset.load_crop(0)
+    assert indices is None
+    assert topo.n_residues > 512

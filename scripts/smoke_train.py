@@ -18,6 +18,8 @@ What it checks that a unit test cannot:
 
 * real entries parse, including the awkward ones, and failures are counted rather
   than fatal;
+* large entries crop, and the supervised fraction of a crop is what the
+  standalone measurement said it would be;
 * no residue exceeds the padding width;
 * the objective is finite on real geometry at several damage levels;
 * every parameter receives a gradient;
@@ -65,6 +67,7 @@ def main() -> int:
     parser.add_argument("--steps", type=int, default=8)
     parser.add_argument("--updates", type=int, default=12)
     parser.add_argument("--lr", type=float, default=1e-3)
+    parser.add_argument("--crop-size", type=int, default=512)
     args = parser.parse_args()
 
     if not MANIFEST.exists():
@@ -78,12 +81,15 @@ def main() -> int:
     print(f"{len(specs)} structures with coordinates on disk")
 
     # Stage 1: can we parse them at all, and does the padding width hold?
-    dataset = RepackingDataset(specs, concentrations=(100.0, 20.0, 5.0, 0.0))
+    dataset = RepackingDataset(
+        specs, concentrations=(100.0, 20.0, 5.0, 0.0), crop_size=args.crop_size
+    )
     loaded, failures, oversized = [], [], []
-    sizes = []
+    sizes, entry_sizes, supervised = [], [], []
+    cropped = 0
     for index in range(len(dataset)):
         try:
-            topo, _coords = dataset.load(index)
+            topo, _coords, indices = dataset.load_crop(index)
         except Exception as exc:
             failures.append((specs[index].pdb_id, f"{type(exc).__name__}: {exc}"))
             continue
@@ -92,6 +98,9 @@ def main() -> int:
             oversized.append((specs[index].pdb_id, widest))
         loaded.append(index)
         sizes.append(topo.n_residues)
+        entry_sizes.append(len(dataset.protein(index)))
+        supervised.append(float(topo.supervised_mask.to(torch.float64).mean()))
+        cropped += indices is not None
 
     print(f"\nparsed {len(loaded)}/{len(specs)}; {len(failures)} failed")
     for pdb_id, why in failures[:5]:
@@ -99,10 +108,21 @@ def main() -> int:
     if oversized:
         print(f"  PADDING EXCEEDED on {len(oversized)}: {oversized[:5]}")
     if sizes:
-        sizes.sort()
+        ordered = sorted(sizes)
+        whole = sorted(entry_sizes)
         print(
-            f"  residues: min {sizes[0]}, median {sizes[len(sizes) // 2]}, "
-            f"max {sizes[-1]}"
+            f"  entries: min {whole[0]}, median {whole[len(whole) // 2]}, "
+            f"max {whole[-1]} residues"
+        )
+        print(
+            f"  samples: min {ordered[0]}, median {ordered[len(ordered) // 2]}, "
+            f"max {ordered[-1]} residues after cropping"
+        )
+        # The cost of cropping, stated rather than assumed: the boundary shell
+        # is in the graph as context for the interior but carries no gradient.
+        print(
+            f"  cropped {cropped}/{len(loaded)} entries; mean supervised "
+            f"fraction {sum(supervised) / len(supervised):.1%}"
         )
     if not loaded:
         return 1
@@ -116,13 +136,15 @@ def main() -> int:
     generator = torch.Generator().manual_seed(0)
 
     print(f"\n{args.updates} updates, {args.steps} steps each")
-    print(f"  {'#':<4}{'pdb':<7}{'res':>5}{'kappa':>7}{'loss':>10}{'recon':>9}"
-          f"{'noop':>9}{'s/step':>8}")
+    print(f"  {'#':<4}{'pdb':<7}{'res':>5}{'sup':>6}{'kappa':>7}{'loss':>10}"
+          f"{'recon':>9}{'noop':>9}{'s/step':>8}")
 
     history = []
     for update in range(args.updates):
         index = rng.choice(loaded)
-        sample = dataset.sample(index, generator=generator)
+        # Pass the rng so a large entry gives a different crop each time, which
+        # is what makes cropping augmentation rather than truncation.
+        sample = dataset.sample(index, generator=generator, rng=rng)
         start = time.perf_counter()
         try:
             terms, result = training_objective(
@@ -155,6 +177,7 @@ def main() -> int:
         history.append((sample.concentration, float(terms.total)))
         print(
             f"  {update:<4}{sample.pdb_id:<7}{sample.topology.n_residues:>5}"
+            f"{sample.supervised_fraction:>6.0%}"
             f"{sample.concentration:>7.0f}{float(terms.total):>10.3f}"
             f"{float(terms.reconstruction):>9.3f}{float(terms.noop):>9.3f}"
             f"{elapsed:>8.2f}"

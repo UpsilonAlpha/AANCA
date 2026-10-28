@@ -26,6 +26,20 @@ everything because a file was absent is exactly the failure that produces a
 good-looking number nobody can defend, so :func:`split_by_cluster` refuses
 rather than defaults.
 
+**Size is bounded per sample, not per entry.** Retained activations are linear
+in residue count, so something must bound a sample. Filtering large entries out
+of the pool is the obvious answer and the wrong one: it discards the multi-chain
+assemblies, which are the interface-rich structures. Instead a large entry
+contributes a ball of residues around a random seed (``crop.py``), with the
+boundary shell masked out of the loss because its perception is incomplete.
+
+**The train/validation side of a group is a hash of its id, not a shuffle.**
+Measured the hard way: with ``randperm`` over the sorted group list, every
+group's side depends on how many groups exist, so correcting the leakage filter
+by one group reassigned 945 of 988 validation entries and required the whole
+validation set to be downloaded again. Hashing makes the split stable under any
+change to the pool.
+
 Batching note: each structure has its own topology, so a batch would need
 padding across structures. v1 does not bother -- at the measured ~124 MB of
 retained activations per step for a 300-residue target, single structures with
@@ -34,7 +48,9 @@ gradient accumulation is what fits anyway.
 
 from __future__ import annotations
 
+import hashlib
 import json
+import random
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -42,7 +58,8 @@ import torch
 from torch import Tensor
 
 from . import residue_constants as rc
-from .structure import load_protein
+from .crop import crop
+from .structure import Protein, load_protein
 from .torch_geometry import apply_chi_deltas
 from .torch_graph import FeatureTopology, feature_topology
 
@@ -192,22 +209,38 @@ def split_by_cluster(
         else:
             by_group.setdefault(spec.group, []).append(spec)
 
-    # Shuffle groups, not structures: assigning structures independently would
-    # put sequence-similar entries on both sides of the boundary.
-    generator = torch.Generator().manual_seed(seed)
+    # Assign each GROUP a side, never a structure: assigning structures
+    # independently would put sequence-similar entries on both sides.
+    #
+    # The side is a hash of the group id, not a draw from a shuffle, and that
+    # choice was paid for. The first version took ``randperm`` over the sorted
+    # group list, which makes every group's side depend on how many groups there
+    # are: when a rebuild moved one single group into ``excluded``, the
+    # permutation shifted and **945 of 988 validation entries changed**, which
+    # meant re-downloading the whole validation set to evaluate the same model.
+    # Hashing the id makes membership depend only on ``(group, seed)``, so the
+    # pool can grow, shrink, or have its leakage filter corrected without
+    # disturbing a single unrelated group.
+    #
+    # The price is that the realised fraction is binomial around the target
+    # rather than exact -- at 25,000 groups and 4% that is about +/- 31 groups,
+    # which buys a great deal of stability for nothing that matters.
     groups = sorted(by_group)
-    order = torch.randperm(len(groups), generator=generator).tolist()
-
-    n_validation = int(round(len(groups) * validation_fraction))
-    validation_groups = {groups[i] for i in order[:n_validation]}
-
     train: list[StructureSpec] = []
     validation: list[StructureSpec] = []
     for group in groups:
-        target = validation if group in validation_groups else train
-        target.extend(by_group[group])
+        side = validation if _is_validation(group, validation_fraction, seed) else train
+        side.extend(by_group[group])
 
     return {"train": train, "validation": validation, "excluded": excluded}
+
+
+def _is_validation(group: str, fraction: float, seed: int) -> bool:
+    """Deterministic side for one group, independent of every other group."""
+    if fraction <= 0.0:
+        return False
+    digest = hashlib.sha256(f"{seed}:{group}".encode("utf-8")).digest()
+    return int.from_bytes(digest[:8], "big") / 2.0**64 < fraction
 
 
 def write_manifest(path: str | Path, splits: dict[str, list[StructureSpec]]) -> None:
@@ -267,13 +300,35 @@ class Sample:
     #: exactly, which makes the damage auditable rather than merely applied.
     deltas: Tensor
     concentration: float
+    #: Residues in this sample, as indices into the full entry. ``None`` when
+    #: the entry was taken whole.
+    crop_indices: list[int] | None = None
+
+    @property
+    def supervised_fraction(self) -> float:
+        """Fraction of residues the loss may touch. Below 1 only for a crop."""
+        mask = self.topology.supervised_mask
+        return float(mask.to(torch.float64).mean())
 
 
 class RepackingDataset:
-    """Loads structures and yields damaged/native pairs.
+    """Loads structures, crops the large ones, and yields damaged/native pairs.
 
-    Topologies are cached because building one parses the structure and resolves
-    every index table, which is far more expensive than sampling the damage.
+    **Size is handled by cropping, not by exclusion.** Retained activations are
+    linear in residue count -- measured ~124 MB per step per 300 residues -- so
+    something has to bound the sample, and the obvious move is a size filter on
+    the pool. That filter throws away the biggest entries, which are the
+    multi-chain assemblies: exactly the interface-rich structures worth keeping.
+    So instead a large entry contributes a ball of ``crop_size`` residues around
+    a randomly chosen seed, and ``crop.py`` masks the boundary shell out of the
+    loss because its perception is incomplete. A different seed each epoch makes
+    the crop augmentation rather than a one-off truncation.
+
+    Topologies are cached for entries taken whole, since building one parses the
+    structure and resolves every index table. A cropped entry cannot use that
+    cache -- the crop differs per sample, which is the point -- so it pays the
+    index-table cost each time, on ``crop_size`` residues rather than on the
+    whole assembly.
     """
 
     def __init__(
@@ -282,21 +337,44 @@ class RepackingDataset:
         concentrations: tuple[float, ...] = (100.0, 20.0, 5.0, 0.0),
         cache_topologies: bool = True,
         device: torch.device | str = "cpu",
+        crop_size: int | None = 512,
+        cutoff: float = 10.0,
         max_residues: int | None = 1000,
         min_residues: int | None = 40,
+        cache_limit: int = 256,
     ) -> None:
         if not specs:
             raise ValueError("no structures given")
         if not concentrations:
             raise ValueError("no damage levels given")
+        if crop_size is not None and crop_size < 1:
+            raise ValueError(f"crop_size must be positive or None, got {crop_size}")
         self.specs = specs
         self.concentrations = concentrations
         self.device = device
-        #: A second line of defence behind the manifest's size filter. Retained
-        #: activations are linear in residue count -- measured ~124 MB per step
-        #: per 300 residues -- so a 3,500-residue assembly slipping through
-        #: would need ~13 GB for one 30-step rollout and fail as an opaque OOM
-        #: in the middle of training. Failing loudly at load time is cheaper.
+        #: Residues per sample for entries larger than this. ``None`` disables
+        #: cropping, in which case ``max_residues`` is the only thing standing
+        #: between a 3,500-residue assembly and a ~13 GB rollout.
+        #:
+        #: 512 is a memory budget, not an optimum, and that is the finding
+        #: rather than a hedge. Measured over 40 validation entries above 700
+        #: residues (``scripts/crop_report.py``), the share of a crop that is
+        #: supervised -- the rest being the boundary shell that only provides
+        #: context -- runs 29% at 192, 46% at 384, 57% at 512, 74% at 768 and
+        #: 85% at 1024. The shell is one interaction cutoff deep whatever the
+        #: crop size, so supervised residues per MB of retained activations
+        #: *rises monotonically* with crop size: 0.059 at 192 against 0.173 at
+        #: 1024. There is no efficiency sweet spot to find. Bigger is strictly
+        #: better and the only thing stopping it is memory, so this number
+        #: should be raised to whatever the training hardware will hold.
+        self.crop_size = crop_size
+        #: Interaction cutoff used to decide which cropped residues have
+        #: complete perception. Must match the rollout's, or the mask is
+        #: computed for a graph that is not the one being built.
+        self.cutoff = cutoff
+        #: A guard on what actually enters the rollout, checked *after* any
+        #: crop. With cropping on it should never fire; with cropping off it is
+        #: the only protection against an opaque mid-training OOM.
         #: ``None`` disables the check.
         self.max_residues = max_residues
         #: And a floor, which the manifest filter cannot provide on its own.
@@ -304,44 +382,116 @@ class RepackingDataset:
         #: monomers, nucleotides included, so a DNA-protein complex passes a
         #: 40-residue filter and then yields almost no amino acids once the
         #: loader keeps only the standard twenty. The smoke test found entries
-        #: down to 2 residues this way.
+        #: down to 2 residues this way. Applied to the entry, before cropping:
+        #: a crop of a large entry is never short.
         self.min_residues = min_residues
+        #: How many parsed entries and built topologies to keep. See
+        #: :meth:`protein` for why this is bounded at all.
+        self.cache_limit = cache_limit
         self._cache: dict[str, tuple[FeatureTopology, Tensor]] = {}
+        self._proteins: dict[str, Protein] = {}
         self._cache_topologies = cache_topologies
 
     def __len__(self) -> int:
         return len(self.specs)
 
-    def load(self, index: int) -> tuple[FeatureTopology, Tensor]:
+    def protein(self, index: int) -> Protein:
+        """The parsed entry, uncropped. Cached; this is the expensive part.
+
+        The cache is **bounded**, which it has to be: parsing is expensive
+        enough to be worth avoiding, but a pool of 23,761 entries that includes
+        4,000-residue assemblies cannot be held in memory, and an unbounded
+        cache would simply grow until training died of it. Eviction is
+        insertion-order and crude, which is the right amount of machinery for
+        something whose only job is to stop an epoch re-parsing the same entry.
+        """
         spec = self.specs[index]
-        if spec.pdb_id in self._cache:
-            return self._cache[spec.pdb_id]
-        topo, coords = feature_topology(load_protein(spec.path), device=self.device)
-        if self.max_residues is not None and topo.n_residues > self.max_residues:
+        if spec.pdb_id in self._proteins:
+            return self._proteins[spec.pdb_id]
+        protein = load_protein(spec.path)
+        if self.min_residues is not None and len(protein) < self.min_residues:
             raise ValueError(
-                f"{spec.pdb_id} has {topo.n_residues} residues, over the "
-                f"max_residues limit of {self.max_residues}. Retained "
-                f"activations are linear in residue count, so this would need "
-                f"roughly {topo.n_residues * 0.41:.0f} MB per rollout step. "
-                f"Filter the manifest, raise the limit deliberately, or crop."
-            )
-        if self.min_residues is not None and topo.n_residues < self.min_residues:
-            raise ValueError(
-                f"{spec.pdb_id} yields only {topo.n_residues} standard amino "
+                f"{spec.pdb_id} yields only {len(protein)} standard amino "
                 f"acids, under the min_residues limit of {self.min_residues}. "
                 f"RCSB's polymer-monomer count includes nucleotides, so a "
                 f"nucleic-acid complex can pass the manifest filter and still "
                 f"have almost no protein."
             )
         if self._cache_topologies:
-            self._cache[spec.pdb_id] = (topo, coords)
+            while len(self._proteins) >= self.cache_limit:
+                self._proteins.pop(next(iter(self._proteins)))
+            self._proteins[spec.pdb_id] = protein
+        return protein
+
+    def load(
+        self,
+        index: int,
+        seed_residue: int | None = None,
+        rng: random.Random | None = None,
+    ) -> tuple[FeatureTopology, Tensor]:
+        """Topology and native coordinates, cropped if the entry is large.
+
+        The crop seed defaults to ``random.Random(index)``, so a bare
+        ``load(index)`` is reproducible -- evaluation and the smoke test need
+        the same crop twice. Pass ``rng`` to vary it, which is what training
+        does.
+        """
+        topo, coords, _indices = self.load_crop(index, seed_residue, rng)
         return topo, coords
+
+    def load_crop(
+        self,
+        index: int,
+        seed_residue: int | None = None,
+        rng: random.Random | None = None,
+    ) -> tuple[FeatureTopology, Tensor, list[int] | None]:
+        """As :meth:`load`, also returning which residues of the entry were kept.
+
+        ``None`` means the entry was taken whole. Separate from :meth:`load` so
+        the common call site stays two-valued and nothing has to carry the crop
+        around in mutable state on the dataset.
+        """
+        spec = self.specs[index]
+        if spec.pdb_id in self._cache:
+            topo, coords = self._cache[spec.pdb_id]
+            return topo, coords, None
+
+        protein = self.protein(index)
+        indices: list[int] | None = None
+        supervised = None
+        if self.crop_size is not None and len(protein) > self.crop_size:
+            taken = crop(
+                protein,
+                self.crop_size,
+                cutoff=self.cutoff,
+                seed_residue=seed_residue,
+                rng=rng or random.Random(index),
+            )
+            protein, indices, supervised = taken.protein, taken.indices, taken.supervised
+
+        topo, coords = feature_topology(
+            protein, device=self.device, supervised=supervised
+        )
+        if self.max_residues is not None and topo.n_residues > self.max_residues:
+            raise ValueError(
+                f"{spec.pdb_id} has {topo.n_residues} residues after cropping, "
+                f"over the max_residues limit of {self.max_residues}. Retained "
+                f"activations are linear in residue count, so this would need "
+                f"roughly {topo.n_residues * 0.41:.0f} MB per rollout step. "
+                f"Lower crop_size or raise the limit deliberately."
+            )
+        if self._cache_topologies and indices is None:
+            while len(self._cache) >= self.cache_limit:
+                self._cache.pop(next(iter(self._cache)))
+            self._cache[spec.pdb_id] = (topo, coords)
+        return topo, coords, indices
 
     def sample(
         self,
         index: int,
         concentration: float | None = None,
         generator: torch.Generator | None = None,
+        rng: random.Random | None = None,
     ) -> Sample:
         """Damage structure ``index``. ``concentration=None`` picks a level at random.
 
@@ -349,8 +499,11 @@ class RepackingDataset:
         recover from mild and severe damage alike, and it is never told which it
         got. Telling it would be noise-level conditioning, which is precisely
         what DiffPack has and this deliberately does not.
+
+        ``rng`` draws the crop seed as well, so successive samples of a large
+        entry see different regions of it.
         """
-        topo, native = self.load(index)
+        topo, native, crop_indices = self.load_crop(index, rng=rng)
         if concentration is None:
             pick = torch.randint(
                 len(self.concentrations), (1,), generator=generator
@@ -371,10 +524,14 @@ class RepackingDataset:
             damaged=damaged,
             deltas=deltas,
             concentration=float(concentration),
+            crop_indices=crop_indices,
         )
 
     def iter_epoch(
-        self, generator: torch.Generator | None = None, shuffle: bool = True
+        self,
+        generator: torch.Generator | None = None,
+        shuffle: bool = True,
+        rng: random.Random | None = None,
     ):
         order = (
             torch.randperm(len(self), generator=generator).tolist()
@@ -382,4 +539,4 @@ class RepackingDataset:
             else range(len(self))
         )
         for index in order:
-            yield self.sample(index, generator=generator)
+            yield self.sample(index, generator=generator, rng=rng)

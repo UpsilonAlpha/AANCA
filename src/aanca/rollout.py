@@ -254,6 +254,19 @@ def training_objective(
     torsion: TorsionTopology = topo.torsion
     native_chis = measure_chis(native_coords, torsion)
 
+    # Every loss term is restricted to residues with complete perception. On an
+    # intact structure that is all of them; on a spatial crop the boundary shell
+    # is excluded, because its native torsions depend on contacts that were
+    # cropped away and asking for them is unlearnable rather than merely hard.
+    # The shell stays in the graph as context for the interior.
+    supervised = topo.supervised_mask
+    if not bool(supervised.any()):
+        raise ValueError(
+            "no residue has complete perception, so there is nothing to "
+            "supervise -- the crop is smaller than one interaction cutoff"
+        )
+    chi_loss_mask = torsion.chi_mask & supervised.unsqueeze(-1)
+
     supervise_step = sample_loss_step(config, rng)
     result = rollout(
         rule,
@@ -270,7 +283,7 @@ def training_objective(
     # at that step -- not from the final ones.
     target = wrap_to_pi(native_chis - measure_chis(seen_coords, torsion))
     reconstruction = chi_nll(
-        mu, log_kappa, target, torsion.chi_mask, torsion.periodic
+        mu, log_kappa, target, chi_loss_mask, torsion.periodic
     )
 
     native_state = initial_state(native_coords, rule)
@@ -281,7 +294,7 @@ def training_objective(
         rule, native_state, topo, config, native_mask
     )
     noop = noop_nll(
-        native_mu, native_log_kappa, torsion.chi_mask, torsion.periodic
+        native_mu, native_log_kappa, chi_loss_mask, torsion.periodic
     )
 
     restraint = torch.zeros((), dtype=reconstruction.dtype, device=mu.device)
@@ -289,12 +302,12 @@ def training_objective(
         restraint = harmonic_restraint(
             measure_bonds(result.state.coords, torsion),
             measure_bonds(native_coords, torsion),
-            torsion.bond_mask,
+            torsion.bond_mask & supervised.unsqueeze(-1),
             config.bond_stiffness,
         ) + harmonic_restraint(
             measure_angles(result.state.coords, torsion),
             measure_angles(native_coords, torsion),
-            torsion.angle_mask,
+            torsion.angle_mask & supervised.unsqueeze(-1),
             config.angle_stiffness,
         )
 
