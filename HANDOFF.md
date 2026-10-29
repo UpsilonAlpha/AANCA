@@ -368,6 +368,38 @@ binding constraint and v3's plateau was not a property of the objective.
 Too early to separate the arms: 22.44 against 22.61 at one evaluation is noise, and the no-op arm's
 slightly lower drift is the right direction and nothing more yet.
 
+### Nine thousand updates in — accuracy improves, persistence does not
+
+Both arms are still inside segment 1 (`30976061`, `30976062`, bun161, 7.5 h, 2.88–2.92 s/update
+holding). Nineteen evaluations each. The two halves of the objective have come apart:
+
+| update | 0 | 1000 | 3000 | 5500 | 7500 | 8500 | 9000 |
+|---|---|---|---|---|---|---|---|
+| pooled chi1, v4_gpu | 23.17 | 22.17 | 21.90 | 21.34 | **20.07** | 21.72 | 22.13 |
+| pooled chi1, v4_noop4 | 23.17 | 22.17 | 22.02 | 21.61 | 20.79 | **20.37** | 21.05 |
+| drift (Å), v4_gpu | 1.697 | 1.193 | 1.364 | 0.995 | 1.497 | 1.302 | 1.728 |
+| drift (Å), v4_noop4 | 1.697 | 1.173 | **0.805** | 1.173 | 1.647 | 2.213 | 2.859 |
+
+**Pooled accuracy is still coming down**, roughly 3° over 9,000 updates, which is the prior art's
+prediction holding. κ=100 fell from 5.01 to ~4.2 inside the first 1,000 updates and has been flat
+and noisy since (4.1–4.7, with isolated spikes to 5.1–5.6) — the v3 regression is undone, and
+nothing further has been bought there.
+
+**Drift is going the wrong way, and the no-op arm is worse at it.** Both arms reached their best
+hold near update 3,000–4,000 (0.81 Å noop4, 0.89 Å gpu) and have been climbing since; the noop4 arm
+is now at 2.86 Å against the control's 1.73. That is the arm whose extra term exists to prevent
+exactly this. The per-step motion says why: `noop_nll` pins the *first* step from native near zero
+(both arms now start at 0.0–0.1°/step) and the rollout answers with a hump in the middle — the noop4
+arm peaks at 6.2°/step around step 9 where the control peaks at 2.7. Weighting a single `step_once`
+at the native structure buys step 1 and nothing after it, which is the one-step-against-thirty-step
+mismatch flagged in §10, now with a number on it.
+
+So the arms are no longer indistinguishable, but not in the direction the arm was motivated by:
+pooled chi1 is a wash (20.07 vs 20.37 best, inside the oscillation), and on persistence the extra
+term costs about a hundred per cent. Nothing to change mid-run — both arms go to 60,000 as planned,
+the first learning-rate drop is at 30,000 (≈17 h away), and whether the drift climb survives the
+drop is worth more than another weight sweep.
+
 ### Two more traps, both paid for on 2026-10-29
 
 1. **`AANCA_CHAIN=0` does not disable chaining.** It is the segment *counter*, not a switch, so a
