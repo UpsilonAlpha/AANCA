@@ -108,7 +108,7 @@ def main() -> int:
     cropped = 0
     for index in range(len(dataset)):
         try:
-            topo, _coords, indices = dataset.load_crop(index)
+            topo, _coords, indices, _seed = dataset.load_crop(index)
         except Exception as exc:
             failures.append((specs[index].pdb_id, f"{type(exc).__name__}: {exc}"))
             continue
@@ -200,7 +200,7 @@ def main() -> int:
             print(f"  non-finite loss at update {update}")
             return 1
 
-        pool.insert(index, result.state)
+        pool.insert(index, result.state, crop_seed=sample.crop_seed)
         total = float(terms.total.detach())
         history.append((sample.concentration, total))
         print(

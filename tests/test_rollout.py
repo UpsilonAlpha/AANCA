@@ -293,13 +293,15 @@ def test_pool_round_trips_a_state(setup):
     rule = _trained_ish()
     pool = SamplePool(capacity=4, seed=0)
     state = initial_state(damaged, rule)
-    pool.insert(7, state)
+    pool.insert(7, state, crop_seed=41)
 
     assert len(pool) == 1
     got = pool.sample(7)
     assert got is not None
-    assert torch.equal(got.coords, damaged)
-    assert not got.coords.requires_grad, "pooled states must be detached"
+    crop_seed, stored = got
+    assert crop_seed == 41, "the crop the state belongs to comes back with it"
+    assert torch.equal(stored.coords, damaged)
+    assert not stored.coords.requires_grad, "pooled states must be detached"
 
 
 def test_pool_refuses_a_non_finite_state(setup):
@@ -324,6 +326,22 @@ def test_pool_refuses_a_non_finite_state(setup):
     state = initial_state(damaged, rule)
     state.hidden[0, 0] = float("inf")
     assert pool.insert(3, state) is False, "the hidden state poisons just as well"
+
+
+def test_pool_returns_the_crop_its_state_belongs_to(setup):
+    """The bug this exists to prevent: two crops of one entry have the same
+    shape and different residues, so a state keyed by structure alone pairs
+    coordinates with somebody else's topology and nothing catches it."""
+    _protein, _topo, _coords, damaged = setup
+    rule = _trained_ish()
+    pool = SamplePool(capacity=8, seed=0)
+    for seed_residue in (3, 90, 211):
+        pool.insert(5, initial_state(damaged, rule), crop_seed=seed_residue)
+
+    for _ in range(20):
+        drawn = pool.sample(5)
+        assert drawn is not None
+        assert drawn[0] in (3, 90, 211), "a state must arrive with its own crop"
 
 
 def test_pool_is_keyed_by_structure(setup):

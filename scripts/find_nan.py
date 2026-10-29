@@ -238,17 +238,21 @@ def main() -> int:
         for update in range(1, args.updates + 1):
             context["update"] = update
             index = rng.choice(indices)
-            sample = dataset.sample(index, generator=generator, rng=rng)
-
-            seed_state = None
-            if rng.random() < args.pool_probability:
-                seed_state = pool.sample(index)
+            # Same ordering as train.py, and for the same reason: the pooled
+            # state fixes which crop this update is about.
+            pooled = pool.sample(index) if rng.random() < args.pool_probability else None
+            sample = dataset.sample(
+                index,
+                generator=generator,
+                rng=rng,
+                crop_seed=pooled[0] if pooled is not None else None,
+            )
             from_pool = (
-                seed_state is not None
-                and seed_state.coords.shape == sample.damaged.shape
+                pooled is not None
+                and pooled[1].coords.shape == sample.damaged.shape
             )
             context["from_pool"] = from_pool
-            start = seed_state.coords if from_pool else sample.damaged
+            start = pooled[1].coords if from_pool else sample.damaged
 
             if not torch.isfinite(start).all():
                 print(f"\nupdate {update}: the START state is already non-finite")
@@ -296,7 +300,7 @@ def main() -> int:
                 print(f"  grad norm {float(grad_norm):.4g}, worst so far: {worst}")
                 return 5
 
-            pool.insert(index, result.state)
+            pool.insert(index, result.state, crop_seed=sample.crop_seed)
 
             if update % args.report_every == 0:
                 print(

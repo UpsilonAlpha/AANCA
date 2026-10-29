@@ -417,7 +417,7 @@ def big_dataset():
 
 
 def test_a_large_entry_is_cropped_and_partly_supervised(big_dataset):
-    topo, _coords, indices = big_dataset.load_crop(0)
+    topo, _coords, indices, _seed = big_dataset.load_crop(0)
     assert topo.n_residues == 512
     assert indices is not None and len(indices) == 512
     assert 0.0 < float(topo.supervised_mask.double().mean()) < 1.0
@@ -434,8 +434,46 @@ def test_a_crop_is_not_cached_so_the_region_can_vary(big_dataset):
     assert not big_dataset._cache
 
 
+def test_the_crop_seed_reproduces_the_crop_exactly(big_dataset):
+    """What makes a pooled state reusable at all.
+
+    The pool stores a seed rather than a topology because a crop is a
+    deterministic function of its seed. If that stopped being true, a pooled
+    state would be paired with the wrong residues again -- and silently, since
+    every crop of an entry has the same shape.
+    """
+    import random as _random
+
+    _topo, coords, indices, seed = big_dataset.load_crop(0, rng=_random.Random(7))
+    assert seed is not None
+    again_topo, again_coords, again_indices, again_seed = big_dataset.load_crop(
+        0, seed_residue=seed
+    )
+    assert again_seed == seed
+    assert again_indices == indices
+    assert torch.equal(again_coords, coords)
+    assert again_topo.n_residues == _topo.n_residues
+
+
+def test_two_samples_of_one_large_entry_are_different_problems(big_dataset):
+    """The reason a pooled state cannot be keyed by structure id alone: the
+    shapes agree and the residues do not, so nothing downstream can tell."""
+    import random as _random
+
+    rng = _random.Random(0)
+    first = big_dataset.sample(0, rng=rng)
+    second = big_dataset.sample(0, rng=rng)
+    assert first.damaged.shape == second.damaged.shape
+    assert first.crop_indices != second.crop_indices
+    assert first.crop_seed != second.crop_seed
+
+    repeat = big_dataset.sample(0, rng=rng, crop_seed=first.crop_seed)
+    assert repeat.crop_indices == first.crop_indices
+    assert torch.equal(repeat.native, first.native)
+
+
 def test_a_small_entry_is_taken_whole_and_fully_supervised(dataset):
-    topo, _coords, indices = dataset.load_crop(0)
+    topo, _coords, indices, _seed = dataset.load_crop(0)
     assert indices is None
     assert topo.supervised is None
     assert topo.supervised_mask.all()
@@ -443,7 +481,7 @@ def test_a_small_entry_is_taken_whole_and_fully_supervised(dataset):
 
 def test_cropping_can_be_disabled(big_dataset):
     big_dataset.crop_size = None
-    topo, _coords, indices = big_dataset.load_crop(0)
+    topo, _coords, indices, _seed = big_dataset.load_crop(0)
     assert indices is None
     assert topo.n_residues > 512
 

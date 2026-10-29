@@ -339,13 +339,17 @@ class SamplePool:
         if capacity < 1:
             raise ValueError(f"capacity must be at least 1, got {capacity}")
         self.capacity = capacity
-        self._entries: list[tuple[int, RolloutState]] = []
+        #: ``(structure_id, crop_seed, state)``. The crop seed is part of the
+        #: key, not decoration: see :meth:`sample`.
+        self._entries: list[tuple[int, int | None, RolloutState]] = []
         self._rng = random.Random(seed)
 
     def __len__(self) -> int:
         return len(self._entries)
 
-    def insert(self, structure_id: int, state: RolloutState) -> bool:
+    def insert(
+        self, structure_id: int, state: RolloutState, crop_seed: int | None = None
+    ) -> bool:
         """Store a detached copy, evicting at random once full.
 
         **A non-finite state is refused**, and that is the whole reason this
@@ -363,20 +367,34 @@ class SamplePool:
         """
         if not (torch.isfinite(state.coords).all() and torch.isfinite(state.hidden).all()):
             return False
-        entry = (structure_id, state.detached())
+        entry = (structure_id, crop_seed, state.detached())
         if len(self._entries) < self.capacity:
             self._entries.append(entry)
         else:
             self._entries[self._rng.randrange(self.capacity)] = entry
         return True
 
-    def sample(self, structure_id: int) -> RolloutState | None:
-        """A stored state for this structure, or ``None`` to start from damage.
+    def sample(self, structure_id: int) -> tuple[int | None, RolloutState] | None:
+        """``(crop_seed, state)`` for this structure, or ``None`` for fresh damage.
 
-        Keyed by structure because a pooled state is only a valid seed for the
-        structure it came from -- the topology and the native target differ.
+        **The crop seed is returned, not just the state, and the caller must
+        rebuild the sample from it.** Keying by structure alone is not enough
+        and was wrong: successive samples of a large entry are deliberately
+        *different regions* of it, so a state stored under the bare structure
+        id pairs coordinates for one set of residues with a topology and a
+        native target for another. The shapes agree -- both crops are
+        ``crop_size`` residues -- so nothing catches it, and the chi atom
+        indices then address atoms that are not bonded. Measured on the
+        validation split, 52% of entries are larger than the 384-residue crop,
+        so this was half the pool re-seeds.
+
+        The seed is enough because a crop is a deterministic function of it;
+        storing it costs an integer, where storing the topology would put
+        hundreds of megabytes into every checkpoint.
         """
-        matching = [s for sid, s in self._entries if sid == structure_id]
+        matching = [
+            (seed, state) for sid, seed, state in self._entries if sid == structure_id
+        ]
         if not matching:
             return None
         return self._rng.choice(matching)
@@ -398,11 +416,12 @@ class SamplePool:
             "entries": [
                 {
                     "structure_id": sid,
+                    "crop_seed": seed,
                     "coords": state.coords,
                     "hidden": state.hidden,
                     "step": state.step,
                 }
-                for sid, state in self._entries
+                for sid, seed, state in self._entries
             ],
         }
 
@@ -413,9 +432,15 @@ class SamplePool:
                 f"this pool has {self.capacity}"
             )
         self._rng.setstate(_tuple_states(state["rng"]))
+        # A checkpoint written before the crop seed was stored cannot say
+        # which crop each state belongs to, and "no seed" is indistinguishable
+        # from "the entry was taken whole". Those states are exactly the ones
+        # that caused the mismatch, so they are dropped rather than guessed
+        # at; the pool refills within a few hundred updates.
         self._entries = [
             (
                 int(entry["structure_id"]),
+                (None if entry["crop_seed"] is None else int(entry["crop_seed"])),
                 RolloutState(
                     coords=entry["coords"],
                     hidden=entry["hidden"],
@@ -423,6 +448,7 @@ class SamplePool:
                 ),
             )
             for entry in state["entries"]
+            if "crop_seed" in entry
         ]
 
 

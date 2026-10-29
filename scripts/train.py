@@ -407,24 +407,34 @@ def main() -> int:
     update = start_update
     for update in range(start_update + 1, args.updates + 1):
         index = rng.choice(train_indices)
-        sample = dataset.sample(index, generator=generator, rng=rng)
 
         # Growing-NCA re-seeding: sometimes start from a state the rule
         # produced itself rather than from fresh damage, which is what asks it
         # to *stay* converged rather than merely arrive once.
-        seed_state = None
-        if rng.random() < args.pool_probability:
-            seed_state = pool.sample(index)
+        #
+        # **The pool is consulted before the sample is drawn**, because a
+        # pooled state belongs to one particular crop and the sample has to be
+        # rebuilt on that same crop. Drawing the sample first and then
+        # overriding its coordinates pairs one set of residues with another's
+        # topology and native target; the shapes match, so nothing complains.
+        pooled = pool.sample(index) if rng.random() < args.pool_probability else None
+        crop_seed = pooled[0] if pooled is not None else None
+        sample = dataset.sample(
+            index, generator=generator, rng=rng, crop_seed=crop_seed
+        )
+
         # The finiteness test is belt to the pool's own braces: the pool
         # refuses to store a non-finite state, but a checkpoint written
         # before it did so can still carry one, and a resume must not
-        # reinstate a poisoned seed.
+        # reinstate a poisoned seed. The shape test should now be redundant --
+        # the same crop seed gives the same number of residues -- and is kept
+        # as an assertion that it is.
         reusable = (
-            seed_state is not None
-            and seed_state.coords.shape == sample.damaged.shape
-            and bool(torch.isfinite(seed_state.coords).all())
+            pooled is not None
+            and pooled[1].coords.shape == sample.damaged.shape
+            and bool(torch.isfinite(pooled[1].coords).all())
         )
-        start = seed_state.coords if reusable else sample.damaged
+        start = pooled[1].coords if reusable else sample.damaged
 
         terms, result = training_objective(
             rule,
@@ -451,7 +461,7 @@ def main() -> int:
         healthy = bool(torch.isfinite(terms.total) and torch.isfinite(grad_norm))
         if healthy:
             optimiser.step()
-            if not pool.insert(index, result.state):
+            if not pool.insert(index, result.state, crop_seed=sample.crop_seed):
                 skipped["state"] += 1
         else:
             optimiser.zero_grad(set_to_none=True)

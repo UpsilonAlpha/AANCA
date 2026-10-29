@@ -383,6 +383,13 @@ class Sample:
     #: Residues in this sample, as indices into the full entry. ``None`` when
     #: the entry was taken whole.
     crop_indices: list[int] | None = None
+    #: The residue the crop grew from, or ``None`` when nothing was cropped.
+    #: A crop is a deterministic function of this, so it is the smallest thing
+    #: that identifies *which problem instance* a sample is -- which matters
+    #: because successive samples of one entry are deliberately different
+    #: regions of it, and anything that stores a state for later reuse has to
+    #: store this with it or it will pair coordinates with the wrong topology.
+    crop_seed: int | None = None
 
     @property
     def supervised_fraction(self) -> float:
@@ -516,7 +523,7 @@ class RepackingDataset:
         the same crop twice. Pass ``rng`` to vary it, which is what training
         does.
         """
-        topo, coords, _indices = self.load_crop(index, seed_residue, rng)
+        topo, coords, _indices, _seed = self.load_crop(index, seed_residue, rng)
         return topo, coords
 
     def load_crop(
@@ -524,20 +531,26 @@ class RepackingDataset:
         index: int,
         seed_residue: int | None = None,
         rng: random.Random | None = None,
-    ) -> tuple[FeatureTopology, Tensor, list[int] | None]:
-        """As :meth:`load`, also returning which residues of the entry were kept.
+    ) -> tuple[FeatureTopology, Tensor, list[int] | None, int | None]:
+        """As :meth:`load`, also returning which residues were kept and the seed.
 
-        ``None`` means the entry was taken whole. Separate from :meth:`load` so
-        the common call site stays two-valued and nothing has to carry the crop
-        around in mutable state on the dataset.
+        Both are ``None`` when the entry was taken whole. Separate from
+        :meth:`load` so the common call site stays two-valued and nothing has
+        to carry the crop around in mutable state on the dataset.
+
+        The seed is returned because it is what makes a crop *repeatable*:
+        passing it back as ``seed_residue`` reproduces this exact instance,
+        which is the only way a caller holding a state from an earlier sample
+        can pair it with the topology it belongs to.
         """
         spec = self.specs[index]
         if spec.pdb_id in self._cache:
             topo, coords = self._cache[spec.pdb_id]
-            return topo, coords, None
+            return topo, coords, None, None
 
         protein = self.protein(index)
         indices: list[int] | None = None
+        used_seed: int | None = None
         supervised = None
         if self.crop_size is not None and len(protein) > self.crop_size:
             taken = crop(
@@ -548,6 +561,7 @@ class RepackingDataset:
                 rng=rng or random.Random(index),
             )
             protein, indices, supervised = taken.protein, taken.indices, taken.supervised
+            used_seed = taken.seed_residue
 
         topo, coords = feature_topology(
             protein, device=self.device, supervised=supervised
@@ -564,7 +578,7 @@ class RepackingDataset:
             while len(self._cache) >= self.cache_limit:
                 self._cache.pop(next(iter(self._cache)))
             self._cache[spec.pdb_id] = (topo, coords)
-        return topo, coords, indices
+        return topo, coords, indices, used_seed
 
     def sample(
         self,
@@ -572,6 +586,7 @@ class RepackingDataset:
         concentration: float | None = None,
         generator: torch.Generator | None = None,
         rng: random.Random | None = None,
+        crop_seed: int | None = None,
     ) -> Sample:
         """Damage structure ``index``. ``concentration=None`` picks a level at random.
 
@@ -581,9 +596,14 @@ class RepackingDataset:
         what DiffPack has and this deliberately does not.
 
         ``rng`` draws the crop seed as well, so successive samples of a large
-        entry see different regions of it.
+        entry see different regions of it. ``crop_seed`` overrides that and
+        reproduces one particular region -- needed whenever the caller already
+        holds coordinates for a specific crop, because the topology and the
+        native target must describe the same residues as those coordinates.
         """
-        topo, native, crop_indices = self.load_crop(index, rng=rng)
+        topo, native, crop_indices, used_seed = self.load_crop(
+            index, seed_residue=crop_seed, rng=rng
+        )
         if concentration is None:
             pick = torch.randint(
                 len(self.concentrations), (1,), generator=generator
@@ -605,6 +625,7 @@ class RepackingDataset:
             deltas=deltas,
             concentration=float(concentration),
             crop_indices=crop_indices,
+            crop_seed=used_seed,
         )
 
     def iter_epoch(

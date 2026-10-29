@@ -112,15 +112,17 @@ def test_pool_round_trips_with_its_rng(tmp_path):
         pool.insert(
             i % 2,
             RolloutState(coords=torch.full((2, 3), float(i)), hidden=torch.zeros(2, 4)),
+            crop_seed=i,
         )
     # Saved *before* the draws, since the draws advance the pool's own RNG and
     # the question is whether a resume continues the same sequence.
     ckpt.save(tmp_path / "p.pt", pool.state_dict())
-    expected = [pool.sample(0).coords[0, 0].item() for _ in range(5)]
+    expected = [pool.sample(0)[1].coords[0, 0].item() for _ in range(5)]
     restored = SamplePool(capacity=4, seed=0)
     restored.load_state_dict(ckpt.load(tmp_path / "p.pt"))
     assert len(restored) == len(pool)
-    assert [restored.sample(0).coords[0, 0].item() for _ in range(5)] == expected
+    assert [restored.sample(0)[1].coords[0, 0].item() for _ in range(5)] == expected
+    assert restored.sample(0)[0] in (0, 2, 4), "the crop seed survives the round trip"
 
 
 def test_pool_refuses_a_changed_capacity():
@@ -148,13 +150,17 @@ def test_a_stopped_and_resumed_run_matches_an_uninterrupted_one(tmp_path):
             index = rng.choice([0, 1, 2])
             noise = torch.rand(4, generator=generator)
             pooled = pool.sample(index)
-            seed = pooled.coords.sum() if pooled is not None else torch.zeros(())
+            seed = pooled[1].coords.sum() if pooled is not None else torch.zeros(())
             weight = next(iter(rule.parameters()))
             loss = ((weight * noise.sum()) ** 2).sum() + seed * 0.0
             optimiser.zero_grad()
             loss.backward()
             optimiser.step()
-            pool.insert(index, RolloutState(coords=torch.rand(2, 3), hidden=torch.zeros(2, 2)))
+            pool.insert(
+                index,
+                RolloutState(coords=torch.rand(2, 3), hidden=torch.zeros(2, 2)),
+                crop_seed=index * 7,
+            )
 
     def fresh():
         torch.manual_seed(0)
