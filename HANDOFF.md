@@ -306,17 +306,56 @@ Environment: `.venv_bunya`, torch **2.10.0+rocm7.0** over `python/3.12.3-gcccore
 Diagnostics written for the browser bridge: `/scratch/user/uquadhik/.cc_aanca/`.
 Job logs: `/scratch/user/uquadhik/AANCA/logs/<name>-<jobid>.{out,err}`.
 
-### What is live now (2026-10-29, ~15:40 AEST)
+### What is live now (2026-10-29, ~16:45 AEST)
 
 | job | what |
 |---|---|
-| 30944453 | `v3_gpu` chain, `--split train`, MI355X bun160, segment 1, **running** |
-| 30970465 | `v3_noop4` chain, `--split train --noop-weight 4`, MI355X bun159, segment 1, **running** |
+| 30976061 | `v4_gpu` chain, MI355X bun161, segment 1, **running** |
+| 30976062 | `v4_noop4` chain, same plus `--noop-weight 4`, MI355X bun161, segment 1, **running** |
+
+Both: `--split train --updates 60000 --eval-every 500 --steps 64 --steps-max 96 --lr-drop 30000
+45000 --lr-gamma 0.3 --init-from runs/v3_gpu/last.pt`.
 
 Every generation has been the same two arms, differing in `--noop-weight` alone: `v1` on the
 validation split (both died overnight, 30880356 / 30880357), `v2` on train (abandoned at update
 2162 as crop-contaminated, 30926053 / 30926033, resubmitted once by the `scancel` trap as
-30944359 / 30944360), `v3` on train with the fix in (live).
+30944359 / 30944360), `v3` on train with the crop fix in (stopped at 14,750 updates with STOP
+files, kept at `runs/v3_*`), `v4` with the learning-rate schedule and the longer rollout.
+
+### Why v4 looks the way it does
+
+Three settings changed at once, which is usually bad practice and is right here: all three came
+from the same reading of the Neural Cubes trainer (see `docs/PLAN_V1.md`), all three are
+differences from prior art that works rather than guesses, and v3's curve is kept as the control
+that any of them can be read against.
+
+- **A decaying learning rate**, which this project had never had. Drops at 30,000 and 45,000, ×0.3
+  each, mirroring the prior art's halves-and-three-quarters. v3's flat stretch from update 9,000
+  is at least as consistent with a rate that had become too large as with a model that had
+  finished learning, and there was no way to tell the two apart without a schedule.
+- **A 64–96 step rollout**, resampled per update, against v3's fixed 20. Truncated BPTT keeps the
+  memory flat, so this costs time and not memory.
+- **Both arms warm-started from the same `runs/v3_gpu/last.pt`.** Not from their own v3
+  counterparts: an identical starting point makes `--noop-weight` the only difference between the
+  two arms at update 0, and v3_noop4 had barely started anyway. The warm start carries the weights,
+  the optimiser moments and — the part worth having — the sample pool, which is the long-horizon
+  memory the prior art says persistence comes from.
+
+**60,000 updates, not 200,000.** At roughly 2.4 s/update (estimated; read the real figure from the
+logs) that is about 40 hours, or two chained segments per arm. Extending is allowed and will not
+move the drops, which is exactly why they are absolute update numbers.
+
+### Two more traps, both paid for on 2026-10-29
+
+1. **`AANCA_CHAIN=0` does not disable chaining.** It is the segment *counter*, not a switch, so a
+   one-off job submitted that way still resubmits itself when cancelled. A short probe cancelled
+   without a STOP file came straight back as a new job. For a genuinely one-off run pass
+   **`AANCA_CHAIN_LIMIT=0`**, which makes the resubmission guard fire immediately.
+2. **A file created during the session can 404 through `vscode-remote-resource` while existing
+   perfectly well on disk.** `cat` showed the content; the fetch did not. Overwriting a file that
+   had already been fetched once worked every time. So: keep one scratch file per session and
+   write into it repeatedly, rather than a new name per command. This looks exactly like mangled
+   typing and wasted several round trips before `rquota` ruled out the obvious explanation.
 
 Both splits are downloaded (24,710 entries). **The GPU works**: torch 2.10.0+rocm7.0 reports
 `gpu : True AMD Radeon Graphics` and the live chain holds **0.91 s/update**, so 200k updates is
