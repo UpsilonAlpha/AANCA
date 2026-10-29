@@ -400,6 +400,50 @@ term costs about a hundred per cent. Nothing to change mid-run — both arms go 
 the first learning-rate drop is at 30,000 (≈17 h away), and whether the drift climb survives the
 drop is worth more than another weight sweep.
 
+### The no-op term is supervising a step the rule is silent at — measured 2026-10-30
+
+`scripts/noop_probe.py runs/v4_gpu/last.pt`, at update 9,700:
+
+| | from native | from kappa 0 damage |
+|---|---|---|
+| mean &#124;mu&#124; at step 0 (°) | 0.041 | 0.091 |
+
+Step 0 is the only step `noop_nll` ever sees — `training_objective` builds
+`initial_state(native_coords, rule)` and takes one `step_once`. At that step the
+hidden state is all zeros, and the measurement above says the rule proposes
+nothing **whatever it is shown**: a structure 56° from native gets the same 0.09°
+shrug as the native one. The term cannot tell the two apart, so it is not
+supervising the fixed point; it is supervising a constant. That is why
+`--noop-weight 4` changes nothing that matters, and why no other value would.
+
+**And the fixed point is held anyway.** Over a 30-step rollout from native, mean
+displacement is 0.016 Å and 0.013 Å on the two structures probed, with a
+worst-atom excursion of 0.37 Å and 0.41 Å. The rule stays where it is put.
+
+**So the previous entry's reading of the drift number was wrong.**
+`EvalResult.native_drift` is a max over atoms of a max over the 12 held-out
+structures of the per-component displacement — the single most extreme
+coordinate in the set. Two structures sit at 0.37–0.41 Å while the reported
+figure is 1.7–2.9 Å, so the number is set by a tail of one or two residues,
+almost certainly a long side chain flipping a terminal chi. It is a legitimate
+worst-case guard and it is not a trend: the climb from 0.8 Å to 2.9 Å, and the
+gap between the arms, are both within what one flipped arginine does. The
+mid-rollout hump read off the convergence curve belongs to the *damaged*
+rollouts, which is where motion is supposed to be, so it does not say what the
+previous entry said either.
+
+What the probe leaves standing: pooled chi1 is still improving, and the real
+deficit is not persistence but kappa 0 — 49–56° against a damaged input of
+89.7°, with 20% accuracy. That is the number v1 has to move.
+
+Two changes follow, neither of them a weight sweep. `native_drift` needs a mean
+reported beside the max, and a per-structure breakdown, or it will keep being
+read as a trend. And the no-op term needs to be evaluated where the rule can
+actually speak — at a random step of a native-start rollout, the way
+`sample_loss_step` already does it for reconstruction — or dropped in favour of
+putting native states in the sample pool, which is how the prior art gets
+persistence and costs no extra term at all.
+
 ### Two more traps, both paid for on 2026-10-29
 
 1. **`AANCA_CHAIN=0` does not disable chaining.** It is the segment *counter*, not a switch, so a
