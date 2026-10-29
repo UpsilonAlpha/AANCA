@@ -317,6 +317,13 @@ Both splits are downloaded (24,710 entries). **The GPU works**: torch 2.10.0+roc
 `gpu : True AMD Radeon Graphics` on bun161 and ran at **1.0 s/update** against 3.56 on 16 CPU
 cores, so 200k updates is about 2.3 days of chained segments on the GPU and 8 days on the CPU.
 
+The pair still differs only in the no-op weight, but not for the reason v1's pair did. The drift
+signal that originally pointed at that knob (0.000 -> 0.473 Å in 40 updates) came out of the
+corrupted pool, and the pool is the "does it stay" half of the objective, which is precisely what
+drift measures — so that number says nothing about `--noop-weight`. The arm is kept as a bracket on
+a knob that has never been measured at any value: it either bounds something that does not matter,
+or names the cause if drift reappears on the fixed code.
+
 v2 was abandoned at update 2162 — it was training (best pooled chi1 30.47° against 34.68°
 untrained) but on the mismatched crops described below, so its weights are not evidence of
 anything. `runs/v2_*` still exist with STOP files in them; delete the directories when the disk

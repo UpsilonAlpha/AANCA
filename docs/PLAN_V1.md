@@ -676,10 +676,12 @@ why the shakedown's flat `|delta|` and rising drift should be re-read on the fix
 being treated as findings about the objective.
 
 Nothing has been trained to convergence, so whether the fixed-point objective produces a
-converging rule is still unknown. The shakedown's two
-early signals are the ones to read first: mean `|delta|` was **flat** across the rollout rather than
-decaying, and drift from a native start rose 0.000 -> 0.473 A in 40 updates, which is the
-reconstruction term beating the no-op term. `--noop-weight` exists for exactly that, and the first
-pair of runs differs in it. After that: nonbonded fields as perception (§2b), which needs
+converging rule is still unknown. The shakedown's two early signals — mean `|delta|` **flat** across
+the rollout rather than decaying, and drift from a native start rising 0.000 -> 0.473 A in 40
+updates — were both measured through the corrupted pool, so they are measurements to repeat rather
+than findings to explain. The `--noop-weight 4` arm is kept anyway, on a different argument: the
+balance between the reconstruction term and the no-op term has never been measured at any value, so
+one arm either brackets a knob that turns out not to matter or names the cause if drift reappears.
+Reading it as a response to the 0.473 A observation would be reading the bug. After that: nonbonded fields as perception (§2b), which needs
 partial-charge and Lennard-Jones tables, and the characterisation in §6a, which needs a trained
 model to characterise.
