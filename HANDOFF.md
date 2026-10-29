@@ -306,23 +306,73 @@ Environment: `.venv_bunya`, torch **2.10.0+rocm7.0** over `python/3.12.3-gcccore
 Diagnostics written for the browser bridge: `/scratch/user/uquadhik/.cc_aanca/`.
 Job logs: `/scratch/user/uquadhik/AANCA/logs/<name>-<jobid>.{out,err}`.
 
-### What is live now (2026-10-29, ~11:05 AEST)
+### What is live now (2026-10-29, ~15:05 AEST)
 
 | job | what |
 |---|---|
-| 30944453 | `v3_gpu` chain, `--split train`, MI355X | 
-| 30944456 | `v3_noop4` chain, CPU, `--split train --noop-weight 4` |
+| 30944453 | `v3_gpu` chain, `--split train`, MI355X bun160, segment 1, **running** |
+| 30966837 | `v3_noop4` chain, `--split train --noop-weight 4`, MI355X, segment 1, pending |
 
 Both splits are downloaded (24,710 entries). **The GPU works**: torch 2.10.0+rocm7.0 reports
-`gpu : True AMD Radeon Graphics` on bun161 and ran at **1.0 s/update** against 3.56 on 16 CPU
-cores, so 200k updates is about 2.3 days of chained segments on the GPU and 8 days on the CPU.
+`gpu : True AMD Radeon Graphics` and the live chain holds **0.91 s/update**, so 200k updates is
+about 2.1 days over three chained segments. Both arms are on the ROCm partition and the account's
+GPU QOS allows four jobs, so the pair costs half the allowance.
 
-The pair still differs only in the no-op weight, but not for the reason v1's pair did. The drift
-signal that originally pointed at that knob (0.000 -> 0.473 Å in 40 updates) came out of the
-corrupted pool, and the pool is the "does it stay" half of the objective, which is precisely what
-drift measures — so that number says nothing about `--noop-weight`. The arm is kept as a bracket on
-a knob that has never been measured at any value: it either bounds something that does not matter,
-or names the cause if drift reappears on the fixed code.
+**Both arms run the fixed code**: the cluster checkout is at `5764899`, the crop/pool fix.
+
+The no-op arm was submitted to `-p general` first and moved. On 16 CPU cores the train split runs
+at **11 s/update**, not the 3.56 measured on validation, which puts 200k updates at 25 days — the
+two arms would never have been comparable at a matched update count, which is the only way an arm
+means anything. Its 1,250 CPU updates are kept at `runs/v3_noop4_cpu` (STOP file in place) and the
+arm restarted from zero on a card; losing 1,250 of 200,000 updates was the cheaper side of that
+trade.
+
+### First real training curve — 2026-10-29, v3_gpu at 14,750 updates
+
+The first numbers in this project produced by code without the crop/pool bug in it. **Zero skipped
+updates**: the non-finite guard has not fired once in 14,750 updates on the train split, against a
+crash within a few hundred before the fix.
+
+Held-out pooled chi1 MAE (36 cases over 12 structures, disjoint from training):
+
+| updates | 0 | 500 | 1500 | 3500 | 5500 | 7500 | 9000 | 11000 | 13000 | 14500 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| pooled chi1 MAE (°) | 34.68 | 36.60 | 33.44 | 31.71 | 27.59 | 25.72 | **24.73** | 24.94 | 25.22 | 24.67 |
+
+**It learns, and then it stops.** The curve falls from 34.68° to 24.7° by update 9,000 and is flat
+for the 5,500 updates since — the last ten evaluations sit between 24.65 and 25.32 with no trend.
+Whatever this architecture and objective can do, most of it is done by 9k updates, which is 2.5
+hours on a card. That is worth knowing before anyone budgets 200k.
+
+Split by damage level, untrained against update 14,500:
+
+| start | chi1 MAE (°) | rotamer accuracy (%) |
+|---|---|---|
+| κ=0 (uniform random chi) | 88.90 → **59.25** | 4.7 → 13.8 |
+| κ=20 (moderate) | 10.67 → 9.42 | 74.2 → 77.4 |
+| κ=100 (near native) | 4.46 → **5.34** | 99.8 → 98.8 |
+
+So the rule has learned to repack a destroyed side chain and has **got worse at leaving a good one
+alone**. That is the fixed-point half of the objective failing, stated in the cleanest available
+form. chi3 barely moves at all (30.77 → 29.7) while chi1 and chi2 improve by 10°, which is the
+expected ordering — chi3 is the least determined by local environment — but it is not improving.
+
+Two diagnostics say the same thing from the dynamics rather than the metrics.
+
+- **Drift from a native start** (how far the rule moves a structure it should leave alone) is 0.000 Å
+  untrained and then wanders between **1.08 and 5.61 Å with no downward trend** across 29
+  evaluations; the last six are 1.076, 4.667, 3.047, 2.210, 1.161, 1.677. The shakedown's 0.473 Å
+  came out of the corrupted pool and was not evidence, but the effect it pointed at is real, and
+  larger, on fixed code. **This is now a measured justification for the `--noop-weight` arm**, which
+  the earlier one was not.
+- **Mean |delta| per step** is no longer flat, which the shakedown's was. It rises to a peak of
+  ~10°/step around step 7 and decays monotonically to ~3.1°/step by step 30. The rollout is
+  partially contractive but **settles on a floor rather than a fixed point** — it is still moving
+  3° per step when the budget runs out.
+
+Read together: the rule is behaving like a denoiser with a nonzero noise floor rather than a map
+with an attractive fixed point. The no-op weight is the first knob to try, which is why the arm
+exists; if 4× does not flatten drift, the next question is structural rather than a weight.
 
 v2 was abandoned at update 2162 — it was training (best pooled chi1 30.47° against 34.68°
 untrained) but on the mismatched crops described below, so its weights are not evidence of

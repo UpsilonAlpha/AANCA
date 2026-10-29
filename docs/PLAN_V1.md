@@ -675,13 +675,21 @@ described different residues. §4's "does it stay" half was the part being corru
 why the shakedown's flat `|delta|` and rising drift should be re-read on the fixed code before
 being treated as findings about the objective.
 
-Nothing has been trained to convergence, so whether the fixed-point objective produces a
-converging rule is still unknown. The shakedown's two early signals — mean `|delta|` **flat** across
-the rollout rather than decaying, and drift from a native start rising 0.000 -> 0.473 A in 40
-updates — were both measured through the corrupted pool, so they are measurements to repeat rather
-than findings to explain. The `--noop-weight 4` arm is kept anyway, on a different argument: the
-balance between the reconstruction term and the no-op term has never been measured at any value, so
-one arm either brackets a knob that turns out not to matter or names the cause if drift reappears.
-Reading it as a response to the 0.473 A observation would be reading the bug. After that: nonbonded fields as perception (§2b), which needs
-partial-charge and Lennard-Jones tables, and the characterisation in §6a, which needs a trained
-model to characterise.
+The shakedown's two early signals have now been re-measured on fixed code, 14,750 updates into
+`v3_gpu`, and they did not survive unchanged. Mean `|delta|` is **no longer flat**: it peaks near
+10°/step around step 7 and decays to about 3.1°/step by step 30, so the rollout is partially
+contractive. Drift from a native start, on the other hand, is **worse than the signal that first
+raised it** — between 1.08 and 5.61 A across 29 evaluations with no downward trend, against the
+0.473 A that came out of the corrupted pool. The κ=100 column says it in the metric too: chi1 MAE
+from a near-native start goes 4.46° untrained to 5.34° trained. The rule has learned to repack a
+destroyed side chain and has got worse at leaving a good one alone.
+
+So the answer to §4's question is, so far, **no**: the objective is producing a denoiser with a
+nonzero noise floor rather than a map with an attractive fixed point. Held-out pooled chi1 MAE
+falls 34.68° -> 24.7° by update 9,000 and is then flat for 5,500 updates, so the ceiling of this
+architecture under this objective is reached in about 2.5 GPU-hours, not in the 200k-update budget.
+The `--noop-weight 4` arm now has a measured justification rather than the contaminated one, and is
+the first thing to read. If weighting the no-op term does not flatten drift, the problem is
+structural and §4 needs rewriting rather than retuning. After that: nonbonded fields as perception
+(§2b), which needs partial-charge and Lennard-Jones tables, and the characterisation in §6a, which
+needs a trained model to characterise.
