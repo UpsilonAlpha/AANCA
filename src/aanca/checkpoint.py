@@ -54,8 +54,14 @@ import torch
 #: directory claimed otherwise. That is a wrong answer with no symptom, which
 #: is worse than a refusal. ``cache`` is deliberately absent: it changes how
 #: often an entry is re-parsed and nothing else.
+#: ``lr``, ``lr_drop`` and ``lr_gamma`` are pinned because the schedule is a
+#: function of the update number: a resume that changed any of them would
+#: continue the same curve at a rate the earlier half never saw, and nothing
+#: in the log would say so. ``steps_max`` joins ``steps`` for the same reason
+#: the rollout length is pinned at all.
 PINNED = (
-    "crop_size", "steps", "truncate", "seed", "pool_probability", "k", "noop_weight",
+    "crop_size", "steps", "steps_max", "truncate", "seed", "pool_probability", "k",
+    "noop_weight", "lr", "lr_drop", "lr_gamma",
     "split", "structures", "eval_structures",
 )
 

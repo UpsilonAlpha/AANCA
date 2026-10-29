@@ -47,7 +47,10 @@ def clean_runs():
     """Clear the tags first: a ``last.pt`` left by an earlier session would
     turn the "straight through" run into a resume and the test would pass for
     the wrong reason."""
-    for tag in ("pytest_straight", "pytest_halves", "pytest_pinned"):
+    for tag in (
+        "pytest_straight", "pytest_halves", "pytest_pinned",
+        "pytest_sched", "pytest_sched_halves", "pytest_warm", "pytest_warm_bad",
+    ):
         shutil.rmtree(ROOT / "runs" / tag, ignore_errors=True)
     yield
 
@@ -90,6 +93,89 @@ def test_two_halves_match_one_straight_run():
     assert straight_update == resumed_update == 4
     for key, value in straight_weights.items():
         assert torch.equal(value, resumed_weights[key]), f"{key} diverged across a resume"
+
+
+@pytest.mark.needs_data
+@pytest.mark.slow
+def test_a_schedule_and_a_variable_rollout_survive_a_resume():
+    """The two settings added for v4, under the one test that can catch them.
+
+    Both are new ways for a segment boundary to go wrong: the learning rate
+    now depends on the update number, and the rollout length now consumes a
+    draw from the run's RNG. Either would show up here as weights that differ
+    after a stop and restart, and nowhere else until a two-day run had already
+    produced a curve with a seam in it.
+    """
+    if not MANIFEST.exists() or not any(PDB.glob("*.bcif")):
+        pytest.skip("needs data/manifest.json and downloaded coordinates")
+
+    varying = ("--lr-drop", "3", "--lr-gamma", "0.5", "--steps-max", "4")
+    straight = run("pytest_sched", 4, *varying)
+    assert straight.returncode == 0, straight.stdout[-3000:] + straight.stderr[-3000:]
+
+    first = run("pytest_sched_halves", 2, *varying)
+    assert first.returncode == 0, first.stdout[-3000:] + first.stderr[-3000:]
+    # Stopping at 2 and resuming crosses the drop at update 3.
+    second = run("pytest_sched_halves", 4, *varying)
+    assert second.returncode == 0, second.stdout[-3000:] + second.stderr[-3000:]
+
+    straight_weights, _ = weights("pytest_sched")
+    resumed_weights, _ = weights("pytest_sched_halves")
+    for key, value in straight_weights.items():
+        assert torch.equal(value, resumed_weights[key]), f"{key} diverged across a resume"
+
+
+@pytest.mark.needs_data
+@pytest.mark.slow
+def test_a_warm_start_keeps_the_training_and_begins_a_new_curve():
+    """``--init-from`` is how a pinned setting changes without discarding work.
+
+    What it must do: carry the weights and the pool over, and still start at
+    update 0 under the new settings. What it must not do is look like a
+    resume, which would hide a changed rollout length inside one curve.
+    """
+    if not MANIFEST.exists() or not any(PDB.glob("*.bcif")):
+        pytest.skip("needs data/manifest.json and downloaded coordinates")
+
+    source = run("pytest_pinned", 2)
+    assert source.returncode == 0, source.stdout[-3000:] + source.stderr[-3000:]
+    before, before_update = weights("pytest_pinned")
+    assert before_update == 2
+
+    checkpoint = ROOT / "runs" / "pytest_pinned" / "last.pt"
+    # A rollout length the fingerprint would refuse on a resume.
+    warm = run("pytest_warm", 2, "--steps", "5", "--init-from", str(checkpoint))
+    assert warm.returncode == 0, warm.stdout[-3000:] + warm.stderr[-3000:]
+    assert "warm start" in warm.stdout
+
+    state = torch.load(
+        ROOT / "runs" / "pytest_warm" / "last.pt", map_location="cpu", weights_only=False
+    )
+    assert state["update"] == 2, "a warm start counts its own updates from zero"
+    assert state["init_from"]["update"] == 2, "provenance is not recorded"
+    assert state["fingerprint"]["steps"] == 5, "the new setting did not take"
+    assert len(state["pool"]["entries"]) > 0, "the pool was not carried over"
+
+
+@pytest.mark.needs_data
+@pytest.mark.slow
+def test_a_warm_start_over_different_structures_is_refused():
+    """The pool and the split come with the weights, so the structures must
+    match. A bigger ``--structures`` would restore the old split and train on
+    it while the log claimed otherwise -- the crop/pool failure again, one
+    level up."""
+    if not MANIFEST.exists() or not any(PDB.glob("*.bcif")):
+        pytest.skip("needs data/manifest.json and downloaded coordinates")
+
+    source = run("pytest_pinned", 2)
+    assert source.returncode == 0, source.stdout[-3000:] + source.stderr[-3000:]
+    checkpoint = ROOT / "runs" / "pytest_pinned" / "last.pt"
+
+    bad = run(
+        "pytest_warm_bad", 2, "--structures", "6", "--init-from", str(checkpoint)
+    )
+    assert bad.returncode != 0
+    assert "same structures" in (bad.stdout + bad.stderr)
 
 
 @pytest.mark.needs_data

@@ -44,6 +44,7 @@ import json
 import random
 import signal
 import time
+from dataclasses import replace
 from pathlib import Path
 
 import torch
@@ -53,6 +54,7 @@ from aanca.data import RepackingDataset, read_manifest
 from aanca.evaluate import build_eval_set, evaluate
 from aanca.model import AANCARule
 from aanca.rollout import RolloutConfig, SamplePool, training_objective
+from aanca.schedule import learning_rate
 
 ROOT = Path(__file__).resolve().parent.parent
 MANIFEST = ROOT / "data" / "manifest.json"
@@ -112,6 +114,39 @@ def usable(dataset, limit: int, rng: random.Random) -> list[int]:
     return good
 
 
+#: What a warm start may not differ on. Shorter than ``checkpoint.PINNED``
+#: on purpose: a warm start exists to change the rollout length or the
+#: learning rate, so those are exactly what it must be free to change. These
+#: are the settings that decide *which problem* the restored pool and the
+#: restored split describe. Get one of them wrong and the pool hands the new
+#: run states belonging to structures it is not training on -- the same class
+#: of silent mismatch that the crop/pool bug was.
+WARM_START_MUST_MATCH = (
+    "split", "structures", "eval_structures", "seed", "crop_size", "k",
+)
+
+
+def check_warm_start(source: dict, args) -> None:
+    """Refuse a warm start whose pool and split describe another problem."""
+    stored = source.get("args") or {}
+    current = vars(args)
+    changed = {
+        key: (stored.get(key), current.get(key))
+        for key in WARM_START_MUST_MATCH
+        if stored.get(key) != current.get(key)
+    }
+    if changed:
+        detail = ", ".join(
+            f"{key}: checkpoint {was!r}, now {now!r}"
+            for key, (was, now) in sorted(changed.items())
+        )
+        raise ValueError(
+            "--init-from needs a checkpoint over the same structures, because "
+            "its sample pool and its train/eval split are restored with the "
+            f"weights ({detail}). Drop --init-from to start from scratch."
+        )
+
+
 def resolve_device(choice: str) -> torch.device:
     if choice != "auto":
         return torch.device(choice)
@@ -131,11 +166,41 @@ def main() -> int:
         help="parsed entries to keep (0: enough for the whole training pool)",
     )
     parser.add_argument("--steps", type=int, default=20)
+    parser.add_argument(
+        "--steps-max",
+        type=int,
+        default=0,
+        help="if set, each update draws its rollout length uniformly from "
+        "[--steps, --steps-max]. A fixed horizon lets the rule learn where "
+        "the horizon is; the 3D NCA prior art samples 64-96 per iteration. "
+        "Truncated backpropagation keeps the memory cost flat, so a longer "
+        "rollout costs time and not memory.",
+    )
     parser.add_argument("--eval-steps", type=int, default=30)
     parser.add_argument("--truncate", type=int, default=8)
     parser.add_argument("--crop-size", type=int, default=384)
     parser.add_argument("--k", type=int, default=64)
     parser.add_argument("--lr", type=float, default=3e-4)
+    parser.add_argument(
+        "--lr-drop",
+        type=int,
+        nargs="*",
+        default=[],
+        help="update numbers at which the learning rate is multiplied by "
+        "--lr-gamma. Absolute, not fractions of --updates, so extending a run "
+        "cannot move the schedule it already trained under.",
+    )
+    parser.add_argument("--lr-gamma", type=float, default=0.3)
+    parser.add_argument(
+        "--init-from",
+        default="",
+        help="start a NEW run from the weights, optimiser and sample pool of "
+        "this checkpoint, at update 0. For changing a setting the fingerprint "
+        "pins -- rollout length, learning rate -- without discarding the "
+        "training already done. The settings that define the data (split, "
+        "structures, seed, crop size, k) must match, or the restored pool and "
+        "split would describe a different problem.",
+    )
     parser.add_argument("--clip", type=float, default=10.0)
     parser.add_argument(
         "--max-skipped",
@@ -261,9 +326,32 @@ def main() -> int:
         if not args.force_resume:
             ckpt.check_fingerprint(state["fingerprint"], ckpt.fingerprint(args))
 
-    if state is not None:
-        train_indices = list(state["train_indices"])
-        eval_indices = list(state["eval_indices"])
+    #: A warm start is not a resume, and the difference is the point. A resume
+    #: continues one curve and must match on everything pinned; a warm start
+    #: deliberately changes something pinned -- the rollout length, the
+    #: learning rate -- and so begins a new curve at update 0, keeping only
+    #: what is still true under the new settings: the weights, the optimiser
+    #: moments, and the sample pool. The pool is the valuable part. It is the
+    #: long-horizon memory the prior art says persistence comes from, and
+    #: throwing it away would restart the part of the objective that takes
+    #: longest to mean anything.
+    warm = None
+    if state is None and args.init_from:
+        warm = ckpt.load(Path(args.init_from), map_location=device)
+        check_warm_start(warm, args)
+
+    #: Carried forward on resume, so a chained run's later segments still say
+    #: where the weights originally came from.
+    init_record = (
+        {"path": str(args.init_from), "update": int(warm["update"])}
+        if warm is not None
+        else (state or {}).get("init_from")
+    )
+
+    source = state if state is not None else warm
+    if source is not None:
+        train_indices = list(source["train_indices"])
+        eval_indices = list(source["eval_indices"])
     else:
         wanted = args.structures + args.eval_structures
         indices = usable(dataset, wanted, rng)
@@ -289,6 +377,21 @@ def main() -> int:
     print("building the held-out set (fixed crops, fixed damage)...")
     cases = build_eval_set(dataset, eval_indices, concentrations=(100.0, 20.0, 0.0))
     print(f"{len(cases)} cases over {len(eval_indices)} structures; {n_params} parameters")
+
+    if warm is not None:
+        # Weights, moments and pool, and nothing else: the RNGs, the update
+        # count, the history and the best score all belong to the run that
+        # wrote this checkpoint, not to the one starting here.
+        rule.load_state_dict(warm["rule"])
+        optimiser.load_state_dict(warm["optimiser"])
+        pool.load_state_dict(warm["pool"])
+        for group in optimiser.param_groups:
+            group["lr"] = args.lr
+        print(
+            f"warm start: {len(pool)} pooled states and the weights from "
+            f"{args.init_from} at its update {warm['update']}, continuing at "
+            "update 0 under this run's settings"
+        )
 
     if state is not None:
         # Order matters: the RNGs are restored *after* the deterministic setup
@@ -337,7 +440,12 @@ def main() -> int:
     def write_history() -> None:
         (out_dir / "history.json").write_text(
             json.dumps(
-                {"args": vars(args), "input_mae": baseline_input_mae, "history": history},
+                {
+                    "args": vars(args),
+                    "init_from": init_record,
+                    "input_mae": baseline_input_mae,
+                    "history": history,
+                },
                 indent=2,
             ),
             encoding="utf-8",
@@ -362,6 +470,10 @@ def main() -> int:
                 "best": best,
                 "fingerprint": ckpt.fingerprint(args),
                 "args": vars(args),
+                # Where the weights came from, if not from scratch. Without
+                # this a warm-started run looks like one that learned
+                # unusually fast in its first thousand updates.
+                "init_from": init_record,
                 "rule": rule.state_dict(),
                 "optimiser": optimiser.state_dict(),
                 "pool": pool.state_dict(),
@@ -406,7 +518,23 @@ def main() -> int:
     recent: list[float] = []
     update = start_update
     for update in range(start_update + 1, args.updates + 1):
+        # Set from the update number rather than stepped, so a resume lands on
+        # the right rate without a scheduler to restore. Costs one float per
+        # update; buys one fewer thing that can be wrong at a segment boundary.
+        lr_now = learning_rate(args.lr, update, args.lr_drop, args.lr_gamma)
+        for group in optimiser.param_groups:
+            group["lr"] = lr_now
+
         index = rng.choice(train_indices)
+
+        # Drawn from ``rng`` and drawn here, before anything else consumes it,
+        # so the sequence is a property of the run and survives a resume.
+        if args.steps_max > args.steps:
+            step_config = replace(
+                train_config, steps=rng.randint(args.steps, args.steps_max)
+            )
+        else:
+            step_config = train_config
 
         # Growing-NCA re-seeding: sometimes start from a state the rule
         # produced itself rather than from fresh damage, which is what asks it
@@ -441,7 +569,7 @@ def main() -> int:
             start,
             sample.native,
             sample.topology,
-            train_config,
+            step_config,
             generator=generator,
             rng=rng,
             noop_weight=args.noop_weight,
