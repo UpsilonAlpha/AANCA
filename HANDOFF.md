@@ -520,6 +520,18 @@ not reproduce DiffPack's published numbers, and DiffPack's prose quotes 0.793 Å
 for CASP14 all-residue RMSD where its Table 2 says 0.770. Nothing at the third
 decimal is worth arguing about across papers.
 
+**One column that does not reproduce, and must not be quoted.** The check above
+agrees on the `all` columns to three decimals and does *not* agree on the
+core/surface split: FASPR core RMSD comes out 0.658 Å against a published
+0.502, surface 1.104 against 1.002, while `all` is 0.907 against 0.910. The
+aggregate is right and the *partition* is wrong, which points at the burial
+definition — counting CB neighbours within 10 Å — rather than at the metric.
+Worst chi MAE gap is 3.61°, also larger than the `all` agreement suggests.
+Until that is chased down, only the `all` columns and the chi MAEs are
+auditable, and any claim about core versus surface is ours alone rather than a
+comparison. This is the same class of error as the crop/pool bug: a number that
+looks like everyone else's and is not measuring what theirs measures.
+
 **Where we stand going in.** v4_gpu at update 20,700, on the training split's
 held-out crops rather than CASP: kappa 0 chi1 40.3°, pooled 17.6°. DiffPack is
 at 15.35° on CASP13 and AttnPacker at 18.92°. Those are different target sets
