@@ -33,12 +33,22 @@ RESULTS = ROOT / "data" / "external" / "attnpacker" / "extracted" / "standard_re
 def align_prediction(native, predicted):
     """Put ``predicted``'s coordinates into ``native``'s atom layout.
 
-    Matching by *position* in the two files is wrong and silently so: the two
-    were written by different programs, and any difference in chain order,
-    residue numbering or atom ordering misaligns the comparison while still
-    producing numbers. Residues are matched on ``(chain, res_id, ins_code)``
-    with the residue name required to agree, and atoms by name within the
-    residue.
+    Matching by *position* alone is wrong and silently so: the two files were
+    written by different programs, and any difference in chain order, residue
+    numbering or atom ordering misaligns the comparison while still producing
+    numbers. So residues are matched on ``(chain, res_id, resname)`` first, and
+    atoms by name within the residue.
+
+    **Two fallbacks, and the order between them matters.** AttnPacker rewrites
+    the chain id *and* renumbers from 1 while keeping the sequence and its
+    order: against a native numbered 43-181 the keyed match finds nothing, and
+    matching on residue number alone then pairs native residue 43 with their
+    residue 43 -- a residue 42 positions away that happens to share a name.
+    That produced 7,035 scored residues where every other method gives 24,000,
+    and an RMSD of 3.693 A against a published 0.669: not a failure, a wrong
+    answer. So when the keyed match comes up short, an exact sequence match in
+    order is tried *before* the number-only fallback. It cannot misalign,
+    because it requires every residue name to agree along the whole chain.
 
     Returns ``(coords, scored)`` where ``coords`` is in the native topology's
     layout and ``scored`` marks the residues that matched.
@@ -58,17 +68,31 @@ def align_prediction(native, predicted):
             out[key] = index
         return out
 
-    # Prefer the chain-qualified match. Some packers rewrite or blank the chain
-    # id, so fall back to residue number alone -- but only for single-chain
-    # structures, where that is unambiguous.
+    def same_sequence() -> bool:
+        return len(native) == len(predicted) and all(
+            a.resname == b.resname
+            for a, b in zip(native.residues, predicted.residues)
+        )
+
+    # Prefer the chain-qualified match.
+    by_index: list[int] | None = None
     with_chain = True
     lookup = keys(predicted, True)
     native_keys = keys(native, True)
     if not (set(lookup) & set(native_keys)):
-        single = len(set(native.chain_ids)) == 1 and len(set(predicted.chain_ids)) == 1
-        if single:
-            with_chain = False
-            lookup = keys(predicted, False)
+        if same_sequence():
+            by_index = list(range(len(native)))
+        else:
+            # Only for single-chain structures, where a residue number is
+            # unambiguous -- and only once the sequence check above has failed,
+            # since this one can pair residues that merely share a number.
+            single = (
+                len(set(native.chain_ids)) == 1
+                and len(set(predicted.chain_ids)) == 1
+            )
+            if single:
+                with_chain = False
+                lookup = keys(predicted, False)
 
     coords = torch.zeros(len(native), MAX_ATOMS, 3, dtype=torch.float64)
     scored = torch.zeros(len(native), dtype=torch.bool)
@@ -79,7 +103,7 @@ def align_prediction(native, predicted):
             if with_chain
             else (native.res_ids[index], res.resname)
         )
-        other = lookup.get(key)
+        other = by_index[index] if by_index is not None else lookup.get(key)
         if other is None:
             continue
         source = predicted.residues[other]

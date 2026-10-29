@@ -545,13 +545,40 @@ Note what this costs — DiffPack's headline gain over AttnPacker is on surface
 residues, and the surface *accuracy* column is auditable, so the claim can
 still be engaged with, just not through RMSD.
 
-**A real bug, found by the same run: AttnPacker's structures do not align.**
-`AttnPacker_PP` scores 3.693 Å against a published 0.669, over 7,035 residues
-where every other method gives ~24,000 — about 79 residues per structure
-instead of 260. `align_prediction` is rejecting most residues as incomplete, so
-this is our reader, not their files. It matters more than the RMSD caveat
-above, because AttnPacker is the nearest comparable method and the one whose
-predictions we have. Unfixed.
+**The AttnPacker alignment, fixed 2026-10-30 — and it was worse than a
+failure.** AttnPacker rewrites the chain id (blank → `A`) *and* renumbers from
+1, while keeping the sequence and its order. Against a native numbered 43–181
+the keyed match found nothing, and the old fallback on residue number alone
+then paired native residue 43 with their residue 43 — a residue 42 positions
+away that happened to share a name. That is not a failure, it is a wrong
+answer: 7,035 scored residues where every other method gives ~24,000, and
+3.693 Å against a published 0.669.
+
+`align_prediction` now tries an exact sequence match in order *before* the
+number-only fallback. It cannot misalign, because it requires every residue
+name to agree along the whole chain. AttnPacker now scores 89/89 structures and
+23,842 residues at 0.858 Å, and no other method's numbers move.
+
+**What that exposed next: the released AttnPacker structures label equivalent
+methyls arbitrarily.** Their chi2 MAE is 35.18 against a published 23.17, and
+it is one residue type:
+
+| | as written | methyls resolved per residue |
+|---|---|---|
+| AttnPacker LEU chi2 | 85.6° | **12.9°** |
+| AttnPacker VAL chi1 | 41.9° | **8.3°** |
+| FASPR LEU chi2 | 19.7° | 16.0° |
+| FASPR VAL chi1 | 18.7° | 10.6° |
+
+LEU's CD1/CD2 and VAL's CG1/CG2 are chemically identical, so which is which
+carries no information — and AttnPacker's files pick arbitrarily where every
+other packer follows the native. 85.6° is not an error the method made. But
+resolving the ambiguity is a change to the *convention*, not to the reader: it
+also moves FASPR, and the four classical methods currently agree with their
+published rows **without** it. So either the published AttnPacker row was
+computed on structures that still carried the labelling, or their evaluation
+resolves what ours does not. Left as written, with AttnPacker's chi2 and its
+RMSD not comparable, pending that decision.
 
 **Where we stand going in.** v4_gpu at update 20,700, on the training split's
 held-out crops rather than CASP: kappa 0 chi1 40.3°, pooled 17.6°. DiffPack is
