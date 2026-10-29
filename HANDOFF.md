@@ -485,6 +485,48 @@ that was broken. v5 is worth running because the no-op term is measurably
 harmful and the pool mechanism is what the prior art uses, not because it is
 expected to move the headline.
 
+### The tier-1 comparison, set up 2026-10-30
+
+To run when `v5_native` finishes, and runnable on any checkpoint before then:
+
+```bash
+python scripts/validate_benchmark.py --casp 13     # our metrics vs their table
+python scripts/benchmark.py runs/v5_native/best.pt --casp 13 --steps 100
+```
+
+The first is the check that makes the second mean anything: it scores the
+baselines' *own* predicted structures from AttnPacker's Zenodo release with our
+metrics and recovers their published table. FASPR comes out at 0.907 Å against
+a published 0.910 over 93 CASP13 targets. The second randomises every chi —
+the packing problem as the literature poses it — rolls the rule out, and prints
+the row beside the published ones.
+
+**What is comparable to what.** `aanca.casp.REFERENCE` is DiffPack (NeurIPS
+2023) Tables 1 and 2: SCWRL4, FASPR, RosettaPacker, DLPacker, AttnPacker and
+DiffPack, on the CASP13/CASP14 target sets in AttnPacker's release, with
+accuracy defined per *residue* (every chi within 20°) and the core/surface split
+at ≥20 / ≤15 CB neighbours within 10 Å. Our run uses the same targets — the
+intersection over every baseline's directory, so nobody is averaged over a
+different set — and the same `Convention`.
+
+**FlowPacker is not in that table, on purpose.** Its accuracy columns are per
+*chi*, not per residue, which reads about ten points high, and its test set is
+20 / 34 / 45 targets for CASP13 / 14 / 15 pulled from the Prediction Center
+rather than from AttnPacker's release. Its rows sit in
+`aanca.casp.OTHER_PROTOCOLS` with the protocol attached and a test keeps them
+out of the comparison. Two further warnings from the same source: FlowPacker's
+own re-run of DiffPack ("DiffPack-fix", idealised bond geometry as input) does
+not reproduce DiffPack's published numbers, and DiffPack's prose quotes 0.793 Å
+for CASP14 all-residue RMSD where its Table 2 says 0.770. Nothing at the third
+decimal is worth arguing about across papers.
+
+**Where we stand going in.** v4_gpu at update 20,700, on the training split's
+held-out crops rather than CASP: kappa 0 chi1 40.3°, pooled 17.6°. DiffPack is
+at 15.35° on CASP13 and AttnPacker at 18.92°. Those are different target sets
+and not yet comparable, which is the whole reason for the harness — but the gap
+on the from-scratch case is the thing to watch, and it is still closing fast
+(kappa 0 chi1 was 56.4° untrained, 49.1° at 8,000, 40.3° at 20,700).
+
 ### Two more traps, both paid for on 2026-10-29
 
 1. **`AANCA_CHAIN=0` does not disable chaining.** It is the segment *counter*, not a switch, so a
