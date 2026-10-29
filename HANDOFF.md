@@ -306,21 +306,28 @@ Environment: `.venv_bunya`, torch **2.10.0+rocm7.0** over `python/3.12.3-gcccore
 Diagnostics written for the browser bridge: `/scratch/user/uquadhik/.cc_aanca/`.
 Job logs: `/scratch/user/uquadhik/AANCA/logs/<name>-<jobid>.{out,err}`.
 
-### What is live now (2026-10-29, ~16:45 AEST)
+### What is live now (2026-10-30, ~01:30 AEST)
 
 | job | what |
 |---|---|
-| 30976061 | `v4_gpu` chain, MI355X bun161, segment 1, **running** |
-| 30976062 | `v4_noop4` chain, same plus `--noop-weight 4`, MI355X bun161, segment 1, **running** |
+| 30976061 | `v4_gpu` chain, MI355X bun161, segment 1, **running** — now the control |
+| 31052749 | `v5_native` chain, **queued**, warm-started from `runs/v4_gpu/last.pt` |
 
-Both: `--split train --updates 60000 --eval-every 500 --steps 64 --steps-max 96 --lr-drop 30000
-45000 --lr-gamma 0.3 --init-from runs/v3_gpu/last.pt`.
+`v4_gpu`: `--split train --updates 60000 --eval-every 500 --steps 64 --steps-max 96 --lr-drop
+30000 45000 --lr-gamma 0.3 --init-from runs/v3_gpu/last.pt`.
+`v5_native`: the same, plus `--native-probability 0.2 --noop-weight 0`, from `v4_gpu`.
 
-Every generation has been the same two arms, differing in `--noop-weight` alone: `v1` on the
-validation split (both died overnight, 30880356 / 30880357), `v2` on train (abandoned at update
-2162 as crop-contaminated, 30926053 / 30926033, resubmitted once by the `scancel` trap as
-30944359 / 30944360), `v3` on train with the crop fix in (stopped at 14,750 updates with STOP
-files, kept at `runs/v3_*`), `v4` with the learning-rate schedule and the longer rollout.
+`v4_noop4` (30976062) was **stopped** at ~9,900 updates with a STOP file, once the probe showed
+its extra term is vacuous as supervision and harmful as a gradient. Kept on disk at
+`runs/v4_noop4` as the evidence.
+
+Every generation until now has been the same two arms, differing in `--noop-weight` alone: `v1` on
+the validation split (both died overnight, 30880356 / 30880357), `v2` on train (abandoned at
+update 2162 as crop-contaminated, 30926053 / 30926033, resubmitted once by the `scancel` trap as
+30944359 / 30944360), `v3` on train with the crop fix in (stopped at 20,000 updates with STOP
+files, kept at `runs/v3_*`), `v4` with the learning-rate schedule and the longer rollout. **v5 is
+the first generation where the arms differ in something other than that weight**, and the first
+where the control is a run already in flight rather than a second submission.
 
 ### Why v4 looks the way it does
 
