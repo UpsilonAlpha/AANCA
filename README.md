@@ -285,12 +285,29 @@ multithreaded reductions sum in whatever order the threads finish, so the resume
 `--threads 1`, where an inequality can only mean a bookkeeping bug.) Writes are atomic, so a kill
 during the save costs the new checkpoint rather than the old one.
 
-Resuming is refused if a pinned setting changed — crop size, rollout length, truncation, seed, k,
-no-op weight, and the three that choose the structures (`--split`, `--structures`,
+Resuming is refused if a pinned setting changed — crop size, rollout length (`--steps`,
+`--steps-max`), truncation, seed, k, no-op weight, the learning rate and its schedule (`--lr`,
+`--lr-drop`, `--lr-gamma`), and the three that choose the structures (`--split`, `--structures`,
 `--eval-structures`). Those last three matter for a sharper reason than the rest: the indices are
 *in* the checkpoint, so a resume asking for a different split would restore the old indices and
 train on them while the log claimed otherwise. A wrong answer with no symptom is worse than a
-refusal. Extending `--updates` is allowed, because a longer run is the same run.
+refusal. Extending `--updates` is allowed, because a longer run is the same run — which is also
+why the learning-rate drops are absolute update numbers rather than fractions of the budget:
+extending a run must not move the schedule it already trained under.
+
+### Changing a pinned setting without throwing the training away
+
+`--init-from <checkpoint>` starts a **new** run at update 0 from another run's weights, optimiser
+moments and sample pool. It is the answer to "the rollout is too short, and I do not want to spend
+another day relearning what I already have". It is deliberately not a resume: the new run keeps
+its own update count, history and best score, so a changed rollout length can never hide inside
+one curve. What it does carry is the part that is expensive to rebuild — the sample pool, which is
+the long-horizon memory that teaches the rule to *stay* converged rather than merely arrive.
+
+Because the pool and the train/eval split come with the weights, a warm start refuses a source
+checkpoint taken over different structures (`--split`, `--structures`, `--eval-structures`,
+`--seed`, `--crop-size`, `--k`). Everything else — rollout length, learning rate, no-op weight —
+is exactly what it exists to let you change.
 
 ### A non-finite update is skipped, not applied
 
