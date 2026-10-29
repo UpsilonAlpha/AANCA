@@ -661,9 +661,19 @@ card (a ROCm 6.4 wheel on a gfx950 MI355X) and the CPU arm died after 22 minutes
 search on non-finite coordinates. The second is the one that matters scientifically. A non-finite
 update is now skipped rather than applied — `clip_grad_norm_` turns one NaN gradient into NaN
 weights, permanently — and the sample pool refuses a non-finite state, since a state stored there
-is drawn as a seed later and makes the failure outlive the update that caused it. **That is
-containment, not an explanation.** What produces the first NaN is unknown, and the next run's
-`skipped` counters and the update number it first reports are the measurement that will say.
+is drawn as a seed later and makes the failure outlive the update that caused it.
+
+**The cause, found the same day, was not numerical.** Successive samples of one entry are
+deliberately different crops of it, and the pool was keyed by structure id, so a state produced on
+one crop was drawn as the seed for another. Every crop has the same shape, so the shape check in
+the way could never fire, and the chi atom indices then addressed atoms that are not bonded. The
+quantity that shows it is the largest distance any atom moves in a rollout, against the 11.5 Å
+ceiling a π rotation on every chi of 4HHB produces: 45.8 Å before the fix, 3.46 Å after, same seed
+and same structures. 52% of validation entries exceed the 384-residue crop, so roughly half of
+every pool re-seed since the pool was written had been training on coordinates and a target that
+described different residues. §4's "does it stay" half was the part being corrupted, which is also
+why the shakedown's flat `|delta|` and rising drift should be re-read on the fixed code before
+being treated as findings about the objective.
 
 Nothing has been trained to convergence, so whether the fixed-point objective produces a
 converging rule is still unknown. The shakedown's two

@@ -300,7 +300,27 @@ sample pool then makes it durable, because a NaN state stored there is drawn as 
 so the update that fails is not the update that erred, and the run dies at a neighbour search
 ("data must be finite") pointing at scipy. Both are now closed: the update is skipped, the pool
 refuses the state, both are counted and printed, and `--max-skipped` stops a run that is only
-skipping. This is containment; it makes the first NaN reportable rather than explaining it.
+skipping. That is containment, and it is worth having on a cluster regardless. But the NaN that
+prompted it had a cause, and the cause was not numerical.
+
+### What the pool must be keyed by
+
+Successive samples of one entry are deliberately **different crops** of it — a 1,692-residue entry
+gives a different 384-residue region each time, which is cheap augmentation. The sample pool stored
+states under the structure id alone, so a state produced on one crop came back as the seed for
+another, and the only check in the way was a shape comparison, which cannot fail: every crop is
+`crop_size` residues. The chi atom indices then addressed atoms that are not bonded to each other.
+
+The measurement that shows it is the largest distance any atom moves during a rollout. A rotation
+of π on *every* chi of haemoglobin moves an atom 11.5 Å, so that is the ceiling for side-chain
+motion. Before the fix, the same 24 structures and the same seed gave **45.8 Å**; after, **3.46 Å**.
+On the validation split 52% of entries exceed the crop, so this was about half of all pool
+re-seeds, silently corrupting the half of the objective the pool exists to supply.
+
+A crop is a deterministic function of its seed residue, so the pool stores that integer and the
+caller rebuilds the sample on it — which is why the pool is consulted *before* the sample is drawn
+rather than after. `scripts/find_nan.py` is the probe that found it, and `--scan` there separates
+"one entry is toxic" from "the weights get there over time".
 
 ### On Bunya
 

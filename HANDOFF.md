@@ -306,17 +306,39 @@ Environment: `.venv_bunya`, torch **2.10.0+rocm7.0** over `python/3.12.3-gcccore
 Diagnostics written for the browser bridge: `/scratch/user/uquadhik/.cc_aanca/`.
 Job logs: `/scratch/user/uquadhik/AANCA/logs/<name>-<jobid>.{out,err}`.
 
-### What is live now (2026-10-29, ~08:30 AEST)
+### What is live now (2026-10-29, ~11:05 AEST)
 
-| job | what | depends on |
-|---|---|---|
-| 30879747 | fetch, train split — running, ~24.1k of 23.8k+949 entries on disk | — |
-| 30925556 | `bunya_gpu_check.slurm` on torch 2.10.0+rocm7.0 | — |
-| 30926033 | `v2_noop4` chain, CPU, `--split train --noop-weight 4` | afterok:30879747 |
-| 30926053 | `v2_gpu` chain, `--split train` | afterok:30879747:30925556 |
+| job | what |
+|---|---|
+| 30944453 | `v3_gpu` chain, `--split train`, MI355X | 
+| 30944456 | `v3_noop4` chain, CPU, `--split train --noop-weight 4` |
 
-New tags because the split is now pinned in the resume fingerprint, so these are new runs rather
-than continuations of the v1 ones — which is what they are scientifically too.
+Both splits are downloaded (24,710 entries). **The GPU works**: torch 2.10.0+rocm7.0 reports
+`gpu : True AMD Radeon Graphics` on bun161 and ran at **1.0 s/update** against 3.56 on 16 CPU
+cores, so 200k updates is about 2.3 days of chained segments on the GPU and 8 days on the CPU.
+
+v2 was abandoned at update 2162 — it was training (best pooled chi1 30.47° against 34.68°
+untrained) but on the mismatched crops described below, so its weights are not evidence of
+anything. `runs/v2_*` still exist with STOP files in them; delete the directories when the disk
+is wanted.
+
+### The crop/pool mismatch — the actual bug, found 2026-10-29
+
+Successive samples of one entry are deliberately different crops of it. The sample pool was keyed
+by structure id alone, so a state produced on crop A was drawn as the seed for crop B of the same
+entry; both are `crop_size` residues, so the shape check that was supposed to catch this could
+not. Coordinates for one set of residues were then paired with another set's chi atom indices,
+native target and topology.
+
+Measured as the largest distance any atom moves in a rollout, same seed and same 24 structures:
+**45.8 Å before, 3.46 Å after**. A π rotation on every chi of 4HHB moves an atom 11.5 Å, so 45.8
+was not side-chain motion at all. 52% of validation entries exceed the 384-residue crop, so this
+was about half of every pool re-seed since the pool was written.
+
+Two things to carry forward. The pool now stores the crop's **seed residue** (a crop is a
+deterministic function of it) and the caller rebuilds the sample on it, so the pool is consulted
+*before* `dataset.sample`. And checkpoints written before this carry no seeds, so their pool
+entries are dropped on load — a resume from an old checkpoint quietly starts with an empty pool.
 
 ### The first night: everything failed, and the two failures were unrelated
 
