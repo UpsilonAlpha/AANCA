@@ -341,9 +341,32 @@ that any of them can be read against.
   the optimiser moments and — the part worth having — the sample pool, which is the long-horizon
   memory the prior art says persistence comes from.
 
-**60,000 updates, not 200,000.** At roughly 2.4 s/update (estimated; read the real figure from the
-logs) that is about 40 hours, or two chained segments per arm. Extending is allowed and will not
-move the drops, which is exactly why they are absolute update numbers.
+**60,000 updates, not 200,000.** Measured at **2.80–2.96 s/update** against v3's 0.91 at 20 steps,
+so about 48 hours, or three chained segments per arm. Extending is allowed and will not move the
+drops, which is exactly why they are absolute update numbers.
+
+### The longer rollout paid off immediately — v4 at update 500
+
+v3_gpu was at **20,000** updates when it was stopped, and v4's own first evaluation measures those
+weights under v4's eval settings, so the two rows below are directly comparable. 500 updates at
+64–96 steps:
+
+| | v3 at 20,000 (v4's update 0) | v4_gpu at 500 | v4_noop4 at 500 |
+|---|---|---|---|
+| pooled chi1 MAE (°) | 23.17 | **22.44** | 22.61 |
+| κ=100 chi1 MAE (°) | 5.01 | **4.76** | **4.62** |
+| drift from native (Å) | 1.697 | 1.439 | 1.331 |
+| mean &#124;delta&#124; at step 30 (°) | 2.0 | 1.2 | 1.4 |
+
+**500 updates bought more than the previous 5,500 did.** The κ=100 row is the one that matters:
+the rule had been getting *worse* at leaving a native structure alone (4.46 untrained, 5.34 at
+14,500, 5.01 at 20,000) and is now going back the right way, and the per-step motion at the end of
+the rollout has nearly halved. None of this is the learning-rate schedule, which does not drop
+until update 30,000 — it is the rollout length alone, which says the fixed 20-step horizon was the
+binding constraint and v3's plateau was not a property of the objective.
+
+Too early to separate the arms: 22.44 against 22.61 at one evaluation is noise, and the no-op arm's
+slightly lower drift is the right direction and nothing more yet.
 
 ### Two more traps, both paid for on 2026-10-29
 

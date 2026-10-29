@@ -420,7 +420,15 @@ def main() -> int:
     else:
         baseline = evaluate(rule, cases, eval_config)
         baseline_input_mae = baseline.input_mae
-        print("\nuntrained:")
+        # Only an untrained model is untrained. After a warm start this row is
+        # the *source* run's result measured under this run's eval settings,
+        # which is the number every later row should be read against -- and
+        # calling it "untrained" would make the whole curve look like it began
+        # from nothing.
+        if warm is not None:
+            print(f"\nat update 0, warm-started from {args.init_from}:")
+        else:
+            print("\nuntrained:")
         print(baseline.report())
         print(
             "  damaged-input chi MAE: "
