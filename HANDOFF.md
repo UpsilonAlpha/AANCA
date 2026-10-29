@@ -306,12 +306,17 @@ Environment: `.venv_bunya`, torch **2.10.0+rocm7.0** over `python/3.12.3-gcccore
 Diagnostics written for the browser bridge: `/scratch/user/uquadhik/.cc_aanca/`.
 Job logs: `/scratch/user/uquadhik/AANCA/logs/<name>-<jobid>.{out,err}`.
 
-### What is live now (2026-10-29, ~15:05 AEST)
+### What is live now (2026-10-29, ~15:40 AEST)
 
 | job | what |
 |---|---|
 | 30944453 | `v3_gpu` chain, `--split train`, MI355X bun160, segment 1, **running** |
-| 30966837 | `v3_noop4` chain, `--split train --noop-weight 4`, MI355X, segment 1, pending |
+| 30970465 | `v3_noop4` chain, `--split train --noop-weight 4`, MI355X bun159, segment 1, **running** |
+
+Every generation has been the same two arms, differing in `--noop-weight` alone: `v1` on the
+validation split (both died overnight, 30880356 / 30880357), `v2` on train (abandoned at update
+2162 as crop-contaminated, 30926053 / 30926033, resubmitted once by the `scancel` trap as
+30944359 / 30944360), `v3` on train with the fix in (live).
 
 Both splits are downloaded (24,710 entries). **The GPU works**: torch 2.10.0+rocm7.0 reports
 `gpu : True AMD Radeon Graphics` and the live chain holds **0.91 s/update**, so 200k updates is
@@ -326,6 +331,15 @@ two arms would never have been comparable at a matched update count, which is th
 means anything. Its 1,250 CPU updates are kept at `runs/v3_noop4_cpu` (STOP file in place) and the
 arm restarted from zero on a card; losing 1,250 of 200,000 updates was the cheaper side of that
 trade.
+
+**A trap that cost two submissions (30966837).** The browser bridge wants short lines, so the
+arguments went into a shell variable to keep the command under the length that types reliably —
+and `--split train` was dropped in the rewrite. The arm ran for half an hour on the *validation*
+split against a train-split control, which is not a one-variable pair and would have been read as
+a no-op-weight effect. Nothing in SLURM or the training script can catch this: both argument lists
+are valid. **Read the `args` line out of the job's own banner after every submission** — it is
+printed for exactly this reason — rather than trusting the command you believe you typed. The
+wrongly-split run is at `runs/v3_noop4_wrongsplit`.
 
 ### First real training curve — 2026-10-29, v3_gpu at 14,750 updates
 
