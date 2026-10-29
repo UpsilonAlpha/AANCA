@@ -190,6 +190,13 @@ def main() -> int:
                 for stem, why in skipped[:10]:
                     print(f"     {stem}: {why}")
         print()
+
+    print(
+        "chi MAE, accuracy in all three bands and RMSD all reproduce. RMSD core\n"
+        "and surface do not, by +0.12 to +0.17 and +0.10 to +0.13 A, in the same\n"
+        "direction for every method -- see aanca.metrics for the sweep that rules\n"
+        "out the burial definition as the cause."
+    )
     return 0
 
 

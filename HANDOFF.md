@@ -520,17 +520,38 @@ not reproduce DiffPack's published numbers, and DiffPack's prose quotes 0.793 Å
 for CASP14 all-residue RMSD where its Table 2 says 0.770. Nothing at the third
 decimal is worth arguing about across papers.
 
-**One column that does not reproduce, and must not be quoted.** The check above
-agrees on the `all` columns to three decimals and does *not* agree on the
-core/surface split: FASPR core RMSD comes out 0.658 Å against a published
-0.502, surface 1.104 against 1.002, while `all` is 0.907 against 0.910. The
-aggregate is right and the *partition* is wrong, which points at the burial
-definition — counting CB neighbours within 10 Å — rather than at the metric.
-Worst chi MAE gap is 3.61°, also larger than the `all` agreement suggests.
-Until that is chased down, only the `all` columns and the chi MAEs are
-auditable, and any claim about core versus surface is ours alone rather than a
-comparison. This is the same class of error as the crop/pool bug: a number that
-looks like everyone else's and is not measuring what theirs measures.
+**Which columns are auditable — chased down 2026-10-30.** Scoring all four
+classical packers' own CASP13 structures with our metrics reproduces their
+chi MAEs (within 1.3–4.6°), their accuracy in all three bands (within about a
+point: FASPR core 69.6 against 70.3, surface 44.1 against 43.6, and the same
+for SCWRL, RosettaPacker and DLPacker), and RMSD **all** (within 0.003–0.015
+Å). It does not reproduce RMSD core or surface, which run +0.12 to +0.17 and
++0.10 to +0.13 Å high, the same direction for every method.
+
+My first guess — the burial definition — is wrong, and the evidence against it
+is that *accuracy* stratified by the very same masks reproduces. A sweep
+confirms it: no CB-neighbour threshold gets near the published core RMSD, ours
+bottoming out at 0.543 Å with a count of ≥30 over 174 residues against their
+0.502 over presumably thousands; per-structure instead of per-residue averaging
+moves core only to 0.607 and breaks `all`; CB inclusion and a minimum
+side-chain atom count do nothing. So their RMSD-by-burial columns rest on
+something other than the burial definition their own accuracy-by-burial columns
+use, and nothing here can recover it.
+
+**So the comparison quotes chi MAE, accuracy all/core/surface, and RMSD all.**
+Not RMSD core or surface: there, ours is a number of our own sitting in a
+column with their heading. Both scripts now print that caveat under the table.
+Note what this costs — DiffPack's headline gain over AttnPacker is on surface
+residues, and the surface *accuracy* column is auditable, so the claim can
+still be engaged with, just not through RMSD.
+
+**A real bug, found by the same run: AttnPacker's structures do not align.**
+`AttnPacker_PP` scores 3.693 Å against a published 0.669, over 7,035 residues
+where every other method gives ~24,000 — about 79 residues per structure
+instead of 260. `align_prediction` is rejecting most residues as incomplete, so
+this is our reader, not their files. It matters more than the RMSD caveat
+above, because AttnPacker is the nearest comparable method and the one whose
+predictions we have. Unfixed.
 
 **Where we stand going in.** v4_gpu at update 20,700, on the training split's
 held-out crops rather than CASP: kappa 0 chi1 40.3°, pooled 17.6°. DiffPack is

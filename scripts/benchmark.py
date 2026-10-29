@@ -155,6 +155,12 @@ def main() -> int:
     if skipped:
         print(f"\n{len(skipped)} targets skipped; first: {skipped[0]}")
 
+    print(
+        "\naudited columns: chi MAE, accuracy all/core/surface, RMSD all. The\n"
+        "  RMSD core and surface columns do not reproduce from the baselines' own\n"
+        "  structures (see aanca.metrics) -- ours there is not their measurement."
+    )
+
     other = OTHER_PROTOCOLS["flowpacker"]
     print(
         f"\nnot in the table above -- flowpacker chi MAE {other[args.casp][0]}, "

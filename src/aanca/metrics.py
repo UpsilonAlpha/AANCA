@@ -33,6 +33,31 @@ One judgement call: GLY has no CB, so the virtual CB from
 published descriptions do not say what they do with glycine; the count is
 dominated by the other residues either way, but it is a real ambiguity and
 ``include_glycine_cb`` exists so the alternative can be checked.
+
+**Which columns are auditable, measured 2026-10-30.** Running
+``scripts/validate_benchmark.py`` over all four classical packers on CASP13 --
+scoring *their* published structures with this module -- reproduces:
+
+* every chi MAE, within 1.3 to 4.6 degrees;
+* accuracy all / core / surface, within about one point (FASPR core 69.6
+  against 70.3, surface 44.1 against 43.6, and the same across SCWRL,
+  RosettaPacker and DLPacker);
+* RMSD **all**, within 0.003 to 0.015 A.
+
+It does **not** reproduce RMSD core / surface, which come out consistently
+high: +0.12 to +0.17 A on core and +0.10 to +0.13 on surface, in the same
+direction for every method. Since accuracy stratified by the *same* burial
+masks does reproduce, the masks are not the problem, and a sweep confirms it:
+no CB-neighbour threshold reaches the published core figure at all -- ours
+bottoms out near 0.54 A at a count of 30, over 174 residues, against a
+published 0.502 -- and neither per-structure averaging, CB inclusion, nor a
+minimum side-chain atom count moves it. The published RMSD-by-burial columns
+therefore rest on something other than the burial definition their own
+accuracy-by-burial columns use, and cannot be checked from here.
+
+Consequence for any comparison table: quote chi MAE, accuracy in all three
+bands, and RMSD **all**. Do not quote RMSD core or surface as a comparison --
+ours is a number of our own in a column with their heading.
 """
 
 from __future__ import annotations
