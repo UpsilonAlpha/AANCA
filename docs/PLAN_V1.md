@@ -675,6 +675,40 @@ described different residues. §4's "does it stay" half was the part being corru
 why the shakedown's flat `|delta|` and rising drift should be re-read on the fixed code before
 being treated as findings about the objective.
 
+### What the Neural Cubes runs say about persistence — read 2026-10-29
+
+Ulban's own 3D NCA project (`~/Downloads/neural-cubes`, Rust viewer plus a JAX trainer) has already
+solved the failure this project is currently showing, and its settings differ from ours in four
+ways that all point the same direction. It is the closest prior art available because it is the
+same objective on a different substrate, run to a working model.
+
+- **It has no no-op term at all.** The loss is one MSE against the target after a rollout. Staying
+  put is taught *entirely by the sample pool*: grown results go back into a pool of 256 and later
+  batches continue from them, so the rule is scored on shapes it grew long ago. Their own words:
+  "Long-horizon training (the pool) is what teaches the rule when to stop." That is evidence
+  against reading our drift failure as a no-op *weighting* problem, and for reading it as the pool
+  not yet having done its work — which in our case it demonstrably has not, since the pool was
+  pairing mismatched crops until today and `v3` is the first run in which it functions at all.
+- **Rollouts are long and variable: 64–96 steps, resampled each iteration.** Ours is a fixed 20
+  (`--steps`), evaluated at 30. A fixed horizon lets the rule learn where the horizon is.
+- **The learning rate decays.** `optax.piecewise_constant_schedule(2e-3, {half: 0.3, three
+  quarters: 0.3})`. Their logs show the consequence plainly: ~3e-3 loss at 4,000 iterations and
+  5e-5 to 1e-4 at 8,000 — one to two orders of magnitude, bought in the half of the run after the
+  first decay. **Ours uses a constant 3e-4 for all 200k updates** (`scripts/train.py:250`), so the
+  plateau from update 9,000 is at least as consistent with a learning rate that is now too large
+  as with a model that has finished learning.
+- **Persistence is checked far beyond the training horizon.** `longrun model.json 3000` grows the
+  shape, cuts a ball out halfway, and reports IoU against the step-150 shape over 3,000 steps;
+  well-trained models hold above 95%. We measure drift at 30 steps, the training horizon itself.
+  Their README states the diagnosis for a shape that will not hold: "it needs more iterations or
+  longer rollouts."
+
+So the prior art's answer to "it will not stay put" is longer training, longer rollouts and a pool
+that works — not a stronger penalty. Our `--noop-weight` arm is still worth its slot, because the
+term exists and its weight has never been measured, but it should no longer be expected to be the
+fix, and the budget should not be cut on the strength of a plateau that a learning-rate decay may
+remove.
+
 The shakedown's two early signals have now been re-measured on fixed code, 14,750 updates into
 `v3_gpu`, and they did not survive unchanged. Mean `|delta|` is **no longer flat**: it peaks near
 10°/step around step 7 and decays to about 3.1°/step by step 30, so the rollout is partially
@@ -684,12 +718,13 @@ raised it** — between 1.08 and 5.61 A across 29 evaluations with no downward t
 from a near-native start goes 4.46° untrained to 5.34° trained. The rule has learned to repack a
 destroyed side chain and has got worse at leaving a good one alone.
 
-So the answer to §4's question is, so far, **no**: the objective is producing a denoiser with a
-nonzero noise floor rather than a map with an attractive fixed point. Held-out pooled chi1 MAE
-falls 34.68° -> 24.7° by update 9,000 and is then flat for 5,500 updates, so the ceiling of this
-architecture under this objective is reached in about 2.5 GPU-hours, not in the 200k-update budget.
-The `--noop-weight 4` arm now has a measured justification rather than the contaminated one, and is
-the first thing to read. If weighting the no-op term does not flatten drift, the problem is
-structural and §4 needs rewriting rather than retuning. After that: nonbonded fields as perception
+So the answer to §4's question is, so far, **not yet** — and the Neural Cubes comparison above is
+the reason that is not the same as "no". Held-out pooled chi1 MAE falls 34.68° -> 24.7° by update
+9,000 and is then flat for 5,500 updates, which read on its own looks like a ceiling reached in
+2.5 GPU-hours. It should not be read on its own: the learning rate has not decayed, the pool has
+only been working since today, and the rollout is a fixed 20 steps where the prior art needed 64
+to 96. Every one of those is a known cause of exactly this shape of curve. The honest statement is
+that **nothing here has yet been trained under conditions the prior art says are necessary**, so a
+plateau at 14,500 updates is not evidence about the objective. After that: nonbonded fields as perception
 (§2b), which needs partial-charge and Lennard-Jones tables, and the characterisation in §6a, which
 needs a trained model to characterise.
