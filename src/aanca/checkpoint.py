@@ -61,7 +61,7 @@ import torch
 #: the rollout length is pinned at all.
 PINNED = (
     "crop_size", "steps", "steps_max", "truncate", "seed", "pool_probability", "k",
-    "noop_weight", "lr", "lr_drop", "lr_gamma",
+    "native_probability", "noop_weight", "lr", "lr_drop", "lr_gamma",
     "split", "structures", "eval_structures",
 )
 
@@ -77,12 +77,28 @@ def fingerprint(args: Any) -> dict:
     return {key: values[key] for key in PINNED if key in values}
 
 
-def check_fingerprint(stored: dict, current: dict) -> None:
-    """Refuse a resume that would splice two different experiments together."""
+def check_fingerprint(
+    stored: dict, current: dict, defaults: dict | None = None
+) -> None:
+    """Refuse a resume that would splice two different experiments together.
+
+    ``defaults`` makes adding a pinned setting safe for runs already in
+    flight. A key missing from ``stored`` is one that did not exist when the
+    checkpoint was written, so it describes no choice the old run made; if
+    this run is using the setting's default, nothing about the experiment has
+    changed and the resume stands. A new setting that has actually been *set*
+    is a different experiment and is still refused.
+
+    Without this, pinning a setting strands every checkpoint mid-chain --
+    which is worse than not pinning it, because the chain then fails at a
+    segment boundary hours later rather than at submission.
+    """
+    defaults = defaults or {}
     changed = {
         key: (stored.get(key), current.get(key))
         for key in set(stored) | set(current)
         if stored.get(key) != current.get(key)
+        and not (key not in stored and current.get(key) == defaults.get(key, object()))
     }
     if changed:
         detail = ", ".join(

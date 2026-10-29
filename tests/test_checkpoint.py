@@ -71,6 +71,29 @@ def test_fingerprint_allows_extending_the_run():
     ckpt.check_fingerprint(ckpt.fingerprint(args), ckpt.fingerprint(longer))
 
 
+def test_a_newly_pinned_setting_does_not_strand_a_running_chain():
+    """Pinning a setting must not break the checkpoints already written.
+
+    A key missing from the stored fingerprint describes no choice the old run
+    made. At the new setting's default the experiment is unchanged, so the
+    resume stands; the alternative is a chain that fails at a segment
+    boundary hours after the commit that caused it.
+    """
+    stored = {"crop_size": 384, "steps": 20, "seed": 0}
+    defaults = {**stored, "native_probability": 0.0}
+    ckpt.check_fingerprint(stored, {**stored, "native_probability": 0.0}, defaults)
+
+
+def test_a_newly_pinned_setting_that_was_actually_set_is_still_refused():
+    """The leniency is for the setting's absence, not for a changed run."""
+    stored = {"crop_size": 384, "steps": 20, "seed": 0}
+    defaults = {**stored, "native_probability": 0.0}
+    with pytest.raises(ValueError, match="native_probability"):
+        ckpt.check_fingerprint(
+            stored, {**stored, "native_probability": 0.2}, defaults
+        )
+
+
 def test_python_rng_restores_exactly():
     rng = random.Random(3)
     [rng.random() for _ in range(5)]

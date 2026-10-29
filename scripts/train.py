@@ -210,13 +210,26 @@ def main() -> int:
     )
     parser.add_argument("--pool-probability", type=float, default=0.5)
     parser.add_argument(
+        "--native-probability",
+        type=float,
+        default=0.0,
+        help="fraction of fresh samples started from the native structure "
+        "instead of a damaged one. This is how the fixed point is supervised: "
+        "the end state goes into the sample pool like any other, so near-native "
+        "states become future seeds and 'stay put' is trained over the whole "
+        "rollout rather than asserted at one step. Replaces --noop-weight; see "
+        "scripts/noop_probe.py for why that term could not do the job.",
+    )
+    parser.add_argument(
         "--noop-weight",
         type=float,
         default=1.0,
         help="weight on the no-op term, which asks for zero output at the "
-        "native structure. Raising it buys stability at a native start at the "
-        "cost of the reconstruction term; the two pull against each other and "
-        "which wins is visible as the drift number.",
+        "native structure. **Measured vacuous at its current placement**: it "
+        "is evaluated at step 0, where the hidden state is empty and the rule "
+        "proposes ~0.04 deg whatever it is shown, so it cannot tell a native "
+        "structure from a wrecked one. Kept at its old default so a v4 run "
+        "still resumes; set it to 0 and use --native-probability instead.",
     )
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--tag", default="run")
@@ -324,7 +337,14 @@ def main() -> int:
     if args.resume == "auto" and last_path.exists():
         state = ckpt.load(last_path, map_location=device)
         if not args.force_resume:
-            ckpt.check_fingerprint(state["fingerprint"], ckpt.fingerprint(args))
+            # The defaults go in so that pinning a *new* setting does not
+            # strand a run already chaining through its segments: see
+            # ``check_fingerprint``.
+            ckpt.check_fingerprint(
+                state["fingerprint"],
+                ckpt.fingerprint(args),
+                ckpt.fingerprint(parser.parse_args([])),
+            )
 
     #: A warm start is not a resume, and the difference is the point. A resume
     #: continues one curve and must match on everything pinned; a warm start
@@ -468,12 +488,20 @@ def main() -> int:
     #: property of the run rather than of the segment.
     skipped = {"update": 0, "state": 0, **resumed_skipped}
 
+    #: How many fresh samples were started from the native structure rather
+    #: than a damaged one. Cumulative across segments, like ``skipped``,
+    #: because the share that matters is the run's and not this segment's --
+    #: and because a pool whose seeds came from native starts is a different
+    #: pool, so the count belongs with the weights.
+    native_starts = int((source or {}).get("native_starts", 0))
+
     def write_checkpoint(update: int) -> None:
         ckpt.save(
             last_path,
             {
                 "update": update,
                 "skipped": dict(skipped),
+                "native_starts": native_starts,
                 "elapsed": elapsed(),
                 "best": best,
                 "fingerprint": ckpt.fingerprint(args),
@@ -509,6 +537,8 @@ def main() -> int:
                 "pooled_rmsd": result.rows["pooled"].rmsd,
                 "convergence": result.convergence,
                 "native_drift": result.native_drift,
+                "native_drift_mean": result.native_drift_mean,
+                "native_starts": native_starts,
                 "seconds": elapsed(),
             }
         )
@@ -570,7 +600,30 @@ def main() -> int:
             and pooled[1].coords.shape == sample.damaged.shape
             and bool(torch.isfinite(pooled[1].coords).all())
         )
-        start = pooled[1].coords if reusable else sample.damaged
+        # A fresh sample is sometimes the *native* structure rather than a
+        # damaged one. This is the fixed point as a training case instead of
+        # an assertion: the reconstruction loss at a random late step then
+        # asks the rule to still be at native after 64-96 steps, with a hidden
+        # state that has had time to say something -- which is exactly what
+        # the no-op term at step 0 cannot ask (scripts/noop_probe.py). The end
+        # state is pooled like any other, so near-native states become seeds
+        # and the horizon compounds across updates.
+        #
+        # The draw is skipped entirely at probability 0 so that a run started
+        # before this existed consumes the same random stream and resumes
+        # bit-identically; within a run the probability is pinned, so the
+        # stream is consistent across segments either way.
+        from_native = (
+            args.native_probability > 0.0
+            and rng.random() < args.native_probability
+        )
+        if reusable:
+            start = pooled[1].coords
+        elif from_native:
+            start = sample.native
+            native_starts += 1
+        else:
+            start = sample.damaged
 
         terms, result = training_objective(
             rule,

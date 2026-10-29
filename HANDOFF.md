@@ -420,29 +420,63 @@ supervising the fixed point; it is supervising a constant. That is why
 displacement is 0.016 Å and 0.013 Å on the two structures probed, with a
 worst-atom excursion of 0.37 Å and 0.41 Å. The rule stays where it is put.
 
-**So the previous entry's reading of the drift number was wrong.**
+**So the previous entry's reading of the drift number was half wrong.**
 `EvalResult.native_drift` is a max over atoms of a max over the 12 held-out
-structures of the per-component displacement — the single most extreme
-coordinate in the set. Two structures sit at 0.37–0.41 Å while the reported
-figure is 1.7–2.9 Å, so the number is set by a tail of one or two residues,
-almost certainly a long side chain flipping a terminal chi. It is a legitimate
-worst-case guard and it is not a trend: the climb from 0.8 Å to 2.9 Å, and the
-gap between the arms, are both within what one flipped arginine does. The
-mid-rollout hump read off the convergence curve belongs to the *damaged*
-rollouts, which is where motion is supposed to be, so it does not say what the
-previous entry said either.
+structures — the single most extreme coordinate in the set. Across all twelve,
+at 30 steps, the control's worst atom ranges from 0.24 Å to 0.99 Å, so the one
+number reported swings with whichever structure happens to flip a terminal chi.
+As a *trend over updates* it is not readable, and the climb from 0.8 Å to 2.9 Å
+should not have been read as one. The mid-rollout hump read off the convergence
+curve belongs to the *damaged* rollouts, which is where motion is supposed to
+be, so that was wrong too.
+
+**But the gap between the arms is real.** Probed over all twelve at matched
+updates (9,700 against 9,900), mean displacement at step 29:
+
+| | control | noop weight 4 |
+|---|---|---|
+| mean over structures (Å) | 0.0143 | 0.0198 |
+| worst structure (Å) | 0.990 | 1.609 |
+| structures where this arm drifts more | 0 | **12 of 12** |
+
+Twelve out of twelve is not a tail. The no-op term makes staying *worse*, and
+the probe says why it can do that while supervising nothing: it is vacuous as a
+statement about the fixed point, but it is not inert as a gradient. It still
+pushes `mu` toward zero and `log_kappa` upward at step 0, on weights shared with
+every other step, so what it actually buys is inflated confidence everywhere in
+exchange for nothing — four times as much of it at weight 4.
 
 What the probe leaves standing: pooled chi1 is still improving, and the real
 deficit is not persistence but kappa 0 — 49–56° against a damaged input of
 89.7°, with 20% accuracy. That is the number v1 has to move.
 
-Two changes follow, neither of them a weight sweep. `native_drift` needs a mean
-reported beside the max, and a per-structure breakdown, or it will keep being
-read as a trend. And the no-op term needs to be evaluated where the rule can
-actually speak — at a random step of a native-start rollout, the way
-`sample_loss_step` already does it for reconstruction — or dropped in favour of
-putting native states in the sample pool, which is how the prior art gets
-persistence and costs no extra term at all.
+### v5: the fixed point as a training case — `--native-probability`
+
+Decided 2026-10-30. The no-op term is dropped rather than relocated, and the
+fixed point becomes an ordinary training case instead of an assertion:
+
+* **`--native-probability`** (default 0.0). That fraction of fresh samples
+  starts the rollout from the native structure rather than a damaged one. The
+  reconstruction term then asks, at the same random late step it always uses,
+  for the rule to *still* be at native after 64–96 steps — with a hidden state
+  that has had time to say something, which is exactly what step 0 cannot
+  offer. The end state is pooled like any other, so near-native states become
+  future seeds and the horizon compounds. This is how the Neural Cubes runs get
+  persistence: from the pool, with no extra term and no weight to tune.
+* **`--noop-weight 0`** skips the term's forward pass entirely. The default
+  stays 1.0 so the v4 runs still resume mid-chain.
+* **`native_drift_mean`** and a per-structure breakdown are reported beside the
+  max, and `native_starts` is tallied in the checkpoint and the history.
+* `check_fingerprint` now takes the defaults. A key missing from a stored
+  fingerprint is a setting that did not exist when it was written, so at its
+  default the resume stands — otherwise pinning `native_probability` would have
+  killed both v4 chains at their next segment boundary, hours after the commit.
+
+What this does not address is the actual deficit, which is kappa 0: 49–56°
+against an 89.7° damaged input, 20% accuracy. Persistence was never the thing
+that was broken. v5 is worth running because the no-op term is measurably
+harmful and the pool mechanism is what the prior art uses, not because it is
+expected to move the headline.
 
 ### Two more traps, both paid for on 2026-10-29
 

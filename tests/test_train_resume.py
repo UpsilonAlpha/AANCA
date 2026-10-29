@@ -50,6 +50,7 @@ def clean_runs():
     for tag in (
         "pytest_straight", "pytest_halves", "pytest_pinned",
         "pytest_sched", "pytest_sched_halves", "pytest_warm", "pytest_warm_bad",
+        "pytest_native", "pytest_native_halves",
     ):
         shutil.rmtree(ROOT / "runs" / tag, ignore_errors=True)
     yield
@@ -123,6 +124,60 @@ def test_a_schedule_and_a_variable_rollout_survive_a_resume():
     resumed_weights, _ = weights("pytest_sched_halves")
     for key, value in straight_weights.items():
         assert torch.equal(value, resumed_weights[key]), f"{key} diverged across a resume"
+
+
+@pytest.mark.needs_data
+@pytest.mark.slow
+def test_native_starts_are_counted_and_survive_a_resume():
+    """``--native-probability`` is how the fixed point is supervised, and it
+    consumes a draw from the run's RNG on every update. A segment boundary
+    that lost the draw, or the tally, would show up as a seam in the curve
+    and nowhere else."""
+    if not MANIFEST.exists() or not any(PDB.glob("*.bcif")):
+        pytest.skip("needs data/manifest.json and downloaded coordinates")
+
+    native = ("--native-probability", "1.0", "--noop-weight", "0",
+              "--pool-probability", "0")
+    straight = run("pytest_native", 4, *native)
+    assert straight.returncode == 0, straight.stdout[-3000:] + straight.stderr[-3000:]
+
+    first = run("pytest_native_halves", 2, *native)
+    assert first.returncode == 0, first.stdout[-3000:] + first.stderr[-3000:]
+    second = run("pytest_native_halves", 4, *native)
+    assert second.returncode == 0, second.stdout[-3000:] + second.stderr[-3000:]
+
+    whole = torch.load(ROOT / "runs" / "pytest_native" / "last.pt",
+                       map_location="cpu", weights_only=False)
+    halves = torch.load(ROOT / "runs" / "pytest_native_halves" / "last.pt",
+                        map_location="cpu", weights_only=False)
+    # Every update takes a native start, and the tally is the run's, not the
+    # segment's.
+    assert whole["native_starts"] == 4
+    assert halves["native_starts"] == 4
+    for key, value in whole["rule"].items():
+        assert torch.equal(value, halves["rule"][key]), f"{key} diverged across a resume"
+
+
+@pytest.mark.needs_data
+@pytest.mark.slow
+def test_a_run_without_native_starts_draws_no_extra_randomness():
+    """At probability 0 the draw is skipped entirely, so a run started before
+    the setting existed resumes bit-identically. Without the short circuit the
+    two runs below would differ from the first update."""
+    if not MANIFEST.exists() or not any(PDB.glob("*.bcif")):
+        pytest.skip("needs data/manifest.json and downloaded coordinates")
+
+    plain = run("pytest_native", 2)
+    assert plain.returncode == 0, plain.stdout[-3000:] + plain.stderr[-3000:]
+    weights_plain, _ = weights("pytest_native")
+
+    shutil.rmtree(ROOT / "runs" / "pytest_native", ignore_errors=True)
+    explicit = run("pytest_native", 2, "--native-probability", "0")
+    assert explicit.returncode == 0, explicit.stdout[-3000:] + explicit.stderr[-3000:]
+    weights_explicit, _ = weights("pytest_native")
+
+    for key, value in weights_plain.items():
+        assert torch.equal(value, weights_explicit[key]), f"{key} moved"
 
 
 @pytest.mark.needs_data

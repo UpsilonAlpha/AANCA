@@ -30,10 +30,13 @@ headline.
 drifts without settling can still score well at the step it was supervised at,
 which is exactly the failure a fixed point is supposed to rule out.
 
-**Does it stay?** Drift from a native start. The no-op term asks for zero output
-on an undamaged structure; this measures whether that holds for a long rollout
-rather than the one step the loss sees. An identity-initialised untrained rule
-scores a perfect zero here, so this number only means something after training.
+**Does it stay?** Drift from a native start, over a rollout much longer than
+anything the loss sees at one step. Reported as a mean *and* a worst atom, and
+the mean is the one to read as a curve: the worst atom is a max over atoms of a
+max over structures, so a single flipped terminal chi in one structure sets it
+and it swings by a factor of two between evaluations that agree on everything
+else. An identity-initialised untrained rule scores a perfect zero on both, so
+these numbers only mean something after training.
 """
 
 from __future__ import annotations
@@ -121,8 +124,19 @@ class EvalResult:
     #: accuracy can hide.
     convergence: list[float] = field(default_factory=list)
     #: Max coordinate drift in Angstrom over a rollout started from native,
-    #: worst case over the evaluation set. The "does it stay" number.
+    #: worst case over the evaluation set. A guard, not a trend: it is a max
+    #: over atoms of a max over structures, so one side chain flipping a
+    #: terminal chi in one structure sets it, and it moves by more than a
+    #: factor of two between evaluations that are otherwise indistinguishable.
     native_drift: float = 0.0
+    #: Mean displacement in Angstrom over the same rollouts, over supervised
+    #: side-chain atoms and structures. This is the one to read as a curve;
+    #: measured at 0.015 A while the max said 1.7, which is the gap between
+    #: "the rule stays put" and "one arginine did not".
+    native_drift_mean: float = 0.0
+    #: Worst-atom drift per structure, so the tail is visible rather than
+    #: collapsed into the max.
+    native_drift_by_structure: dict[str, float] = field(default_factory=dict)
     #: Mean chi MAE in degrees of the *damaged* inputs against native, per
     #: level. The baseline a prediction has to beat; without it a good-looking
     #: MAE at kappa=100 says nothing, since mild damage is already close.
@@ -135,7 +149,10 @@ class EvalResult:
         if self.convergence:
             trace = "  ".join(f"{v:.1f}" for v in self.convergence)
             lines.append(f"mean |delta| per step (deg): {trace}")
-        lines.append(f"drift from a native start: {self.native_drift:.3f} A")
+        lines.append(
+            f"drift from a native start: {self.native_drift_mean:.4f} A mean, "
+            f"{self.native_drift:.3f} A worst atom"
+        )
         return "\n".join(lines)
 
 
@@ -208,6 +225,7 @@ def evaluate(
 
         # "Does it stay": one rollout per distinct structure from native.
         seen: set[str] = set()
+        moved_total, moved_count = 0.0, 0
         for case in cases:
             if case.pdb_id in seen:
                 continue
@@ -224,8 +242,15 @@ def evaluate(
             atoms = case.topology.torsion.atom_mask & (
                 case.topology.supervised_mask.unsqueeze(-1)
             )
-            drift = max(drift, float(moved[atoms].max()) if bool(atoms.any()) else 0.0)
+            if not bool(atoms.any()):
+                continue
+            worst = float(moved[atoms].max())
+            out.native_drift_by_structure[case.pdb_id] = worst
+            drift = max(drift, worst)
+            moved_total += float(moved[atoms].sum())
+            moved_count += int(atoms.sum())
         out.native_drift = drift
+        out.native_drift_mean = moved_total / max(moved_count, 1)
         return out
     finally:
         if was_training:

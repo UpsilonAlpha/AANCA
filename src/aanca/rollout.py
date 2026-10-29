@@ -4,12 +4,18 @@ This is where the NCA machinery lives, and where the fixed-point objective is
 actually expressed. Four pieces, each of which `docs/PLAN_V1.md` §3 argues for:
 
 **Asynchronous updates.** Each residue updates with probability ~0.5 per step.
-This does *not* cost the fixed point: the no-op term forces every residue to
-output zero at the native structure, and any subset of zeros is still zero, so
-the mask randomises the path and not the attractor. It also removes the shared
-clock -- a synchronous update is a weak global channel, since every cell
-implicitly knows it is step *t* at the same instant -- which strengthens the
-locality claim rather than merely helping convergence.
+This does *not* cost the fixed point, provided something makes zero the output
+at the native structure: any subset of zeros is still zero, so the mask
+randomises the path and not the attractor. That premise used to be credited to
+the no-op term, wrongly -- the term is evaluated at step 0, where the hidden
+state is empty and the rule outputs ~0.04 deg whatever it is shown, so it
+cannot distinguish a native structure from a wrecked one (scripts/noop_probe.py).
+What carries the premise is ``--native-probability``: rollouts started from
+native, scored by the same reconstruction term at the same random late step.
+Asynchrony also removes the shared clock -- a synchronous update is a weak
+global channel, since every cell implicitly knows it is step *t* at the same
+instant -- which strengthens the locality claim rather than merely helping
+convergence.
 
 **Loss at a random late step, not the last.** This is the mechanism that
 produces an attractor rather than a schedule. A rule supervised only at step N
@@ -288,16 +294,26 @@ def training_objective(
         mu, log_kappa, target, chi_loss_mask, torsion.periodic
     )
 
-    native_state = initial_state(native_coords, rule)
-    native_mask = torch.ones(
-        topo.n_residues, dtype=torch.bool, device=native_coords.device
-    )
-    _after, native_mu, native_log_kappa = step_once(
-        rule, native_state, topo, config, native_mask
-    )
-    noop = noop_nll(
-        native_mu, native_log_kappa, chi_loss_mask, torsion.periodic
-    )
+    # **Skipped entirely at weight 0**, which is now the recommended setting:
+    # the term is evaluated at step 0, where the hidden state is all zeros and
+    # the rule proposes ~0.04 deg whatever it is shown, so it cannot tell a
+    # native structure from one 56 deg away (scripts/noop_probe.py). The
+    # fixed point is supervised by starting rollouts from native instead --
+    # ``--native-probability``. Skipping costs nothing in the random stream,
+    # since this step draws no mask, so a run is unaffected either way.
+    if noop_weight:
+        native_state = initial_state(native_coords, rule)
+        native_mask = torch.ones(
+            topo.n_residues, dtype=torch.bool, device=native_coords.device
+        )
+        _after, native_mu, native_log_kappa = step_once(
+            rule, native_state, topo, config, native_mask
+        )
+        noop = noop_nll(
+            native_mu, native_log_kappa, chi_loss_mask, torsion.periodic
+        )
+    else:
+        noop = torch.zeros((), dtype=reconstruction.dtype, device=mu.device)
 
     restraint = torch.zeros((), dtype=reconstruction.dtype, device=mu.device)
     if rule.bond_geometry:
