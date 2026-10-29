@@ -11,68 +11,23 @@ If the numbers match, `metrics.py` implements the same thing they do and the
 tier-1 comparison is auditable. If they do not, the discrepancy is ours and
 needs finding before a single training run.
 
-Reference values below are from DiffPack (NeurIPS 2023) Tables 1 and 2, which
-is also where the burial definition and the 20-degree accuracy threshold come
-from.
+Reference values live in ``aanca.casp``: DiffPack (NeurIPS 2023) Tables 1 and 2,
+which is also where the burial definition and the 20-degree accuracy threshold
+come from.
 """
 
 from __future__ import annotations
 
 import argparse
-import re
 from pathlib import Path
 
+from aanca.casp import CASP_RANGES, REFERENCE, targets_for
 from aanca.metrics import benchmark_table
 from aanca.structure import load_protein
 from aanca.torch_graph import feature_topology
 
 ROOT = Path(__file__).resolve().parent.parent
 RESULTS = ROOT / "data" / "external" / "attnpacker" / "extracted" / "standard_results"
-
-#: DiffPack Table 1 (CASP13) and Table 2 (CASP14). Keys match the directory
-#: names in the archive where they correspond.
-REFERENCE = {
-    13: {
-        "scwrl": ([27.64, 28.97, 49.75, 61.54], (56.2, 71.3, 43.4), (0.934, 0.495, 1.027)),
-        "faspr": ([27.04, 28.41, 50.30, 60.89], (56.4, 70.3, 43.6), (0.910, 0.502, 1.002)),
-        "rosetta_packer": ([25.88, 28.25, 48.13, 59.82], (58.6, 75.3, 35.7), (0.872, 0.422, 1.001)),
-        "dl_packer": ([22.18, 27.00, 51.22, 70.04], (58.8, 73.9, 45.4), (0.772, 0.402, 0.876)),
-        "AttnPacker_PP": ([18.92, 23.17, 44.89, 58.98], (62.1, 73.7, 47.6), (0.669, 0.366, 0.775)),
-    },
-    14: {
-        "scwrl": ([33.50, 33.05, 51.61, 55.28], (45.4, 62.5, 33.2), (1.062, 0.567, 1.216)),
-        "faspr": ([33.04, 32.49, 50.15, 54.82], (46.3, 62.4, 34.0), (1.048, 0.594, 1.205)),
-        "rosetta_packer": ([31.79, 28.25, 50.54, 56.16], (47.5, 67.2, 33.5), (1.006, 0.501, 1.183)),
-    },
-}
-
-#: CASP13 regular targets are numbered T0949-T1022, CASP14 T1024-T1101. The
-#: archive also contains older CASP targets (T0658, T0734, ...), so filtering by
-#: the T0/T1 prefix alone is wrong -- it would pull CASP10/11 entries into
-#: "CASP13" and give numbers that match nothing.
-CASP_RANGES = {13: (949, 1022), 14: (1024, 1101)}
-
-
-def target_number(stem: str) -> int | None:
-    match = re.match(r"^T(\d{4})", stem)
-    return int(match.group(1)) if match else None
-
-
-def targets_for(casp: int, method: str, backbone: str = "casp_all") -> list[str]:
-    low, high = CASP_RANGES[casp]
-    native_dir = RESULTS / "native" / backbone
-    method_dir = RESULTS / method / backbone
-    if not native_dir.is_dir() or not method_dir.is_dir():
-        return []
-    available = {p.stem for p in method_dir.glob("*.pdb")}
-    out = []
-    for path in sorted(native_dir.glob("*.pdb")):
-        number = target_number(path.stem)
-        if number is None or not low <= number <= high:
-            continue
-        if path.stem in available:
-            out.append(path.stem)
-    return out
 
 
 def align_prediction(native, predicted):
@@ -148,7 +103,7 @@ def align_prediction(native, predicted):
 
 
 def evaluate(casp: int, method: str, backbone: str = "casp_all"):
-    stems = targets_for(casp, method, backbone)
+    stems = targets_for(RESULTS, casp, method, backbone)
     pairs = []
     skipped = []
     for stem in stems:
