@@ -572,13 +572,20 @@ it is one residue type:
 
 LEU's CD1/CD2 and VAL's CG1/CG2 are chemically identical, so which is which
 carries no information — and AttnPacker's files pick arbitrarily where every
-other packer follows the native. 85.6° is not an error the method made. But
-resolving the ambiguity is a change to the *convention*, not to the reader: it
-also moves FASPR, and the four classical methods currently agree with their
-published rows **without** it. So either the published AttnPacker row was
-computed on structures that still carried the labelling, or their evaluation
-resolves what ours does not. Left as written, with AttnPacker's chi2 and its
-RMSD not comparable, pending that decision.
+other packer follows the native. 85.6° is not an error the method made.
+
+**Decided 2026-10-30: leave the labels as written.** Resolving the ambiguity
+would be a change to the *convention*, not to the reader, and the four
+classical methods reproduce their published rows precisely without it; moving
+the convention to rescue one method's re-scoring would put the other four at
+risk for no gain, since their published rows are quotable as they stand.
+
+The consequence, which must travel with any table: **AttnPacker's re-scored
+numbers from this archive are not usable** — chi2 especially, and the RMSD
+through it. Its *published* row in `aanca.casp.REFERENCE` is quotable like any
+other, because that is their measurement rather than ours. What is lost is the
+audit: of the five baselines, four are checked against their own structures and
+AttnPacker is taken on trust.
 
 **Where we stand going in.** v4_gpu at update 20,700, on the training split's
 held-out crops rather than CASP: kappa 0 chi1 40.3°, pooled 17.6°. DiffPack is

@@ -221,6 +221,14 @@ def main() -> int:
         "direction for every method -- see aanca.metrics for the sweep that rules\n"
         "out the burial definition as the cause."
     )
+    if any(m.startswith("AttnPacker") for m in methods):
+        print(
+            "\nAttnPacker's row above is not an audit. Its released structures\n"
+            "label equivalent methyls arbitrarily (LEU CD1/CD2, VAL CG1/CG2),\n"
+            "which costs its chi2 about 12 deg here; resolving that would change\n"
+            "the convention under the four rows that do reproduce, so the labels\n"
+            "are left as written and its published row is taken on trust."
+        )
     return 0
 
 

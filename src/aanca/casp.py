@@ -40,6 +40,15 @@ CASP_RANGES = {13: (949, 1022), 14: (1024, 1101)}
 #: ``method -> (chi MAE x4, accuracy all/core/surface %, RMSD all/core/surface)``.
 #: Keys match the directory names in AttnPacker's archive where they
 #: correspond; ``diffpack`` has no directory, since the archive predates it.
+#:
+#: Every row here is quotable: it is the authors' own measurement. Four of them
+#: are also *audited*, in that ``scripts/validate_benchmark.py`` recovers them
+#: from the authors' own structures. ``AttnPacker_PP`` is not, and cannot be:
+#: the released structures label chemically equivalent methyls arbitrarily
+#: (LEU CD1/CD2, VAL CG1/CG2), which costs its re-scored chi2 some 12 degrees,
+#: and resolving that would change the convention under the four rows that do
+#: reproduce. Decided 2026-10-30 to leave the labels as written, so AttnPacker
+#: is taken on trust where the others are checked.
 REFERENCE = {
     13: {
         "scwrl": ([27.64, 28.97, 49.75, 61.54], (56.2, 71.3, 43.4), (0.934, 0.495, 1.027)),
