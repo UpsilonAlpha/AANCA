@@ -169,3 +169,21 @@ def save(path: Path, payload: dict) -> None:
 def load(path: Path, map_location: str | torch.device = "cpu") -> dict:
     """Read a checkpoint. ``weights_only=False`` because RNG states are tuples."""
     return torch.load(Path(path), map_location=map_location, weights_only=False)
+
+
+def rule_weights(state: dict) -> dict:
+    """The rule's parameters, from either shape of checkpoint a run writes.
+
+    ``last.pt`` is the resumable one and keeps the weights under ``rule``
+    alongside the optimiser and every RNG; ``best.pt`` is written at each new
+    best held-out score and keeps the weights alone, under ``state_dict``.
+    Scoring a run wants whichever file the caller named, and the two were
+    silently incompatible until a benchmark on ``best.pt`` failed with a bare
+    ``KeyError``.
+    """
+    for key in ("rule", "state_dict"):
+        if key in state:
+            return state[key]
+    raise KeyError(
+        f"no rule weights in this checkpoint; it has {sorted(state)}"
+    )

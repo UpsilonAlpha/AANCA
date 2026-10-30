@@ -105,9 +105,16 @@ def main() -> int:
     state = ckpt.load(args.checkpoint, map_location=device)
     stored = state.get("args") or {}
     rule = AANCARule().to(device)
-    rule.load_state_dict(state["rule"])
+    rule.load_state_dict(ckpt.rule_weights(state))
     rule.eval()
-    config = RolloutConfig(steps=args.steps, k=stored.get("k", 64), cutoff=10.0)
+    config = RolloutConfig(
+        steps=args.steps,
+        k=stored.get("k", 64),
+        cutoff=10.0,
+        # Provably the same graph to within a zero-weight edge at the cutoff
+        # (``scripts/check_neighbours.py``), and about five times quicker.
+        device_neighbours=device != "cpu",
+    )
 
     # Only the directories that exist in the archive constrain the target set;
     # ``diffpack`` has no directory, so its published row covers whatever

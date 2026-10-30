@@ -246,3 +246,20 @@ def _through_torch(state):
     torch.save(state, buffer)
     buffer.seek(0)
     return torch.load(buffer, weights_only=False)
+
+
+def test_rule_weights_reads_both_shapes_a_run_writes():
+    """``last.pt`` and ``best.pt`` do not agree on the key, and a benchmark
+    run against the wrong one failed with a bare ``KeyError`` rather than
+    anything that said which file was wanted."""
+    rule = AANCARule()
+    weights = rule.state_dict()
+
+    resumable = {"rule": weights, "optimiser": {}, "update": 7}
+    scored = {"state_dict": weights, "update": 7, "chi1": 15.2}
+
+    assert ckpt.rule_weights(resumable) is weights
+    assert ckpt.rule_weights(scored) is weights
+
+    with pytest.raises(KeyError, match="no rule weights"):
+        ckpt.rule_weights({"update": 7})
