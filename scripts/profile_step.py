@@ -107,6 +107,12 @@ def main() -> int:
     parser.add_argument("--split", default="train")
     parser.add_argument("--device", default="auto", help="auto | cpu | cuda")
     parser.add_argument("--repeats", type=int, default=20)
+    parser.add_argument(
+        "--min-residues",
+        type=int,
+        default=0,
+        help="skip entries smaller than this, so the graph matches training's",
+    )
     args = parser.parse_args()
 
     device = (
@@ -122,18 +128,25 @@ def main() -> int:
         device=device,
         cache_limit=8,
     )
-    # Entries that are mostly nucleic acid pass the manifest filter and yield
-    # almost no protein, so take the first one that actually loads rather than
-    # assuming index 0 is usable.
+    # Two filters, both learned the hard way. Entries that are mostly nucleic
+    # acid pass the manifest filter and yield almost no protein. And a crop is
+    # ``min(structure, crop_size)``, so a small entry silently profiles a
+    # smaller graph than training uses -- which matters here, because the cost
+    # being measured grows with the residue count.
     topo = native = None
     for index in range(len(dataset.specs)):
         try:
-            topo, native = dataset.load(index, rng=random.Random(0))
-            break
+            candidate_topo, candidate_native = dataset.load(index, rng=random.Random(0))
         except ValueError:
             continue
+        if candidate_topo.n_residues >= args.min_residues:
+            topo, native = candidate_topo, candidate_native
+            break
     if topo is None:
-        print(f"no usable structure in the first {len(dataset.specs)} of {args.split}")
+        print(
+            f"no structure of at least {args.min_residues} residues in the first "
+            f"{len(dataset.specs)} of {args.split}"
+        )
         return 1
     rule = AANCARule().to(device)
     rule.eval()

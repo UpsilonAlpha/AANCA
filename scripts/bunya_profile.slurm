@@ -42,7 +42,7 @@ export PYTHONPATH="${ROOT}/src:${PYTHONPATH:-}"
 export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK:-8}"
 
 echo "host : $(hostname)"
-python scripts/profile_step.py --crop-size 384 --steps 80
+python scripts/profile_step.py --crop-size 384 --steps 80 --min-residues 384
 RC=$?
 echo "exit : ${RC}"
 exit "${RC}"
