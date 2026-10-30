@@ -1,0 +1,49 @@
+nohup: ignoring input
+/scratch/user/uquadhik/AANCA/.venv_bunya/lib/python3.12/site-packages/biotite/structure/io/pdb/file.py:153: UserWarning: 2253 elements were guessed from atom name
+  warnings.warn(
+/scratch/user/uquadhik/AANCA/.venv_bunya/lib/python3.12/site-packages/biotite/structure/io/pdb/file.py:153: UserWarning: 1921 elements were guessed from atom name
+  warnings.warn(
+CASP13, backbone set 'casp_all'
+targets numbered T949-T1022
+
+                   chi1   chi2   chi3   chi4  acc all    core    surf  rmsd all    core    surf
+scwrl (ours)      28.45  29.30  47.57  57.30     55.1    70.8    43.7     0.936   0.660   1.136
+  published       27.64  28.97  49.75  61.54     56.2    71.3    43.4     0.934   0.495   1.027
+  -> 93/93 structures, 24199 residues, worst chi MAE gap 4.24 deg
+
+faspr (ours)      27.80  28.90  48.30  57.28     55.3    69.6    44.1     0.907   0.658   1.104
+  published       27.04  28.41  50.30  60.89     56.4    70.3    43.6     0.910   0.502   1.002
+  -> 93/93 structures, 24173 residues, worst chi MAE gap 3.61 deg
+
+rosetta_packer (ours)  26.59  28.58  46.23  55.22     57.5    74.7    44.3     0.870   0.571   1.100
+  published       25.88  28.25  48.13  59.82     58.6    75.3    35.7     0.872   0.422   1.001
+  -> 93/93 structures, 24199 residues, worst chi MAE gap 4.60 deg
+
+dl_packer (ours)  22.89  27.88  50.82  68.79     57.5    73.2    45.3     0.787   0.518   1.001
+  published       22.18  27.00  51.22  70.04     58.8    73.9    45.4     0.772   0.402   0.876
+  -> 83/83 structures, 22901 residues, worst chi MAE gap 1.25 deg
+
+AttnPacker_PP (ours)  21.76  35.18  47.72  57.03     52.3    62.1    44.3     0.858   0.670   1.009
+  published       18.92  23.17  44.89  58.98     62.1    73.7    47.6     0.669   0.366   0.775
+  -> 89/89 structures, 23842 residues, worst chi MAE gap 12.01 deg
+
+diffpack: no usable structures (0 candidates)
+chi MAE, accuracy in all three bands and RMSD all reproduce. RMSD core
+and surface do not, by +0.12 to +0.17 and +0.10 to +0.13 A, in the same
+direction for every method -- see aanca.metrics for the sweep that rules
+out the burial definition as the cause.
+
+AttnPacker's row above is not an audit. Its released structures
+label equivalent methyls arbitrarily (LEU CD1/CD2, VAL CG1/CG2),
+which costs its chi2 about 12 deg here; resolving that would change
+the convention under the four rows that do reproduce, so the labels
+are left as written and its published row is taken on trust.
+==== BENCHMARK ====
+Traceback (most recent call last):
+  File "/scratch/user/uquadhik/AANCA/scripts/benchmark.py", line 173, in <module>
+    raise SystemExit(main())
+                     ^^^^^^
+  File "/scratch/user/uquadhik/AANCA/scripts/benchmark.py", line 108, in main
+    rule.load_state_dict(state["rule"])
+                         ~~~~~^^^^^^^^
+KeyError: 'rule'
