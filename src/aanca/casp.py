@@ -31,6 +31,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+import torch
+
 #: CASP13 regular targets are numbered T0949-T1022, CASP14 T1024-T1101. The
 #: archive also holds older CASP targets (T0658, T0734, ...), so filtering on
 #: the T0/T1 prefix alone would pull CASP10/11 entries into "CASP13" and give
@@ -123,3 +125,31 @@ def targets_for(
         if available is None or path.stem in available:
             out.append(path.stem)
     return out
+
+
+def pack_from_random(rule, native_coords, topo, config, seed: int):
+    """Randomise every chi, roll the rule out, return where it lands.
+
+    This is the benchmark's definition of the task, so it lives beside the
+    target sets rather than in one script: ``scripts/benchmark.py`` produces
+    the published row with it and ``scripts/chi1_histogram.py`` asks what the
+    row is made of. A diagnostic that packed even slightly differently from
+    the number it explains would not be a diagnostic.
+    """
+    from .data import von_mises_deltas
+    from .rollout import initial_state, rollout
+    from .torch_geometry import apply_chi_deltas
+
+    deltas = von_mises_deltas(
+        topo.torsion.chi_mask, 0.0, generator=torch.Generator().manual_seed(seed)
+    )
+    start = apply_chi_deltas(native_coords, deltas, topo.torsion)
+    result = rollout(
+        rule,
+        initial_state(start, rule),
+        topo,
+        config,
+        generator=torch.Generator().manual_seed(seed),
+        record=False,
+    )
+    return result.state.coords

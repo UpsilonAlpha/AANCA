@@ -36,13 +36,16 @@ from pathlib import Path
 import torch
 
 from aanca import checkpoint as ckpt
-from aanca.casp import OTHER_PROTOCOLS, REFERENCE, targets_for
-from aanca.data import von_mises_deltas
+from aanca.casp import (
+    OTHER_PROTOCOLS,
+    REFERENCE,
+    pack_from_random,
+    targets_for,
+)
 from aanca.metrics import BenchmarkRow, benchmark_table
 from aanca.model import AANCARule
-from aanca.rollout import RolloutConfig, initial_state, rollout
+from aanca.rollout import RolloutConfig
 from aanca.structure import load_protein
-from aanca.torch_geometry import apply_chi_deltas
 from aanca.torch_graph import feature_topology
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -61,23 +64,6 @@ def published_row(mae, accuracy, rmsd) -> BenchmarkRow:
         },
         rmsd={"all": rmsd[0], "core": rmsd[1], "surface": rmsd[2]},
     )
-
-
-def pack(rule, native_coords, topo, config, seed: int):
-    """Randomise every chi, then roll the rule out and return where it lands."""
-    deltas = von_mises_deltas(
-        topo.torsion.chi_mask, 0.0, generator=torch.Generator().manual_seed(seed)
-    )
-    start = apply_chi_deltas(native_coords, deltas, topo.torsion)
-    result = rollout(
-        rule,
-        initial_state(start, rule),
-        topo,
-        config,
-        generator=torch.Generator().manual_seed(seed),
-        record=False,
-    )
-    return result.state.coords
 
 
 def main() -> int:
@@ -144,7 +130,9 @@ def main() -> int:
             except Exception as exc:  # malformed or unreadable file
                 skipped.append((stem, f"{type(exc).__name__}: {exc}"))
                 continue
-            predicted = pack(rule, native_coords, topo, config, args.seed + index)
+            predicted = pack_from_random(
+                rule, native_coords, topo, config, args.seed + index
+            )
             pairs.append((predicted.cpu(), native_coords.cpu(), topo))
 
     if not pairs:
