@@ -231,6 +231,17 @@ def main() -> int:
         "structure from a wrecked one. Kept at its old default so a v4 run "
         "still resumes; set it to 0 and use --native-probability instead.",
     )
+    parser.add_argument(
+        "--neighbours",
+        choices=("numpy", "device"),
+        default="numpy",
+        help="where to select neighbours. 'device' is ~5x faster per rollout "
+        "step and is **not** pinned in the fingerprint, because it is not a "
+        "scientific setting: the two differ only on pairs within a float ulp "
+        "of the cutoff, where the envelope is exactly zero, and the rule's "
+        "output is bit-identical (scripts/check_neighbours.py). The default "
+        "stays 'numpy' so an existing run reproduces unless asked otherwise.",
+    )
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--tag", default="run")
     parser.add_argument("--split", default="validation", help="manifest split to draw from")
@@ -387,12 +398,20 @@ def main() -> int:
     )
 
     n_params = sum(p.numel() for p in rule.parameters())
+    on_device = args.neighbours == "device"
     train_config = RolloutConfig(
-        steps=args.steps, truncate=args.truncate, k=args.k, cutoff=10.0
+        steps=args.steps, truncate=args.truncate, k=args.k, cutoff=10.0,
+        device_neighbours=on_device,
     )
     eval_config = RolloutConfig(
-        steps=args.eval_steps, truncate=args.truncate, k=args.k, cutoff=10.0
+        steps=args.eval_steps, truncate=args.truncate, k=args.k, cutoff=10.0,
+        device_neighbours=on_device,
     )
+    if on_device:
+        print(
+            "neighbours selected on the device: same graph to within a "
+            "zero-weight edge at the cutoff, about 5x less time per step"
+        )
 
     print("building the held-out set (fixed crops, fixed damage)...")
     cases = build_eval_set(dataset, eval_indices, concentrations=(100.0, 20.0, 0.0))

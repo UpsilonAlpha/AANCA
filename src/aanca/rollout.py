@@ -70,6 +70,16 @@ class RolloutConfig:
     loss_window: float = 0.5
     bond_stiffness: float = 100.0
     angle_stiffness: float = 10.0
+    #: Select neighbours on the device instead of in NumPy on the host.
+    #:
+    #: **Not a scientific setting, and deliberately not pinned.** The two
+    #: selections differ on about one graph in twenty, always on a pair within
+    #: a float ulp of the cutoff -- and the envelope is exactly zero there, so
+    #: the rule's output is bit-identical either way. Measured over 60 real
+    #: training crops: 3 disagreements, worst ``|delta mu|`` 0.0 degrees
+    #: (``scripts/check_neighbours.py``). What it changes is the clock: the
+    #: NumPy path is 80% of a rollout step on a card, 29.7 ms against 5.6.
+    device_neighbours: bool = False
 
 
 @dataclass
@@ -146,6 +156,7 @@ def step_once(
         topo,
         k=config.k,
         cutoff=config.cutoff,
+        device_neighbours=config.device_neighbours,
     )
     node = graph.node_features.to(torch.float32)
 

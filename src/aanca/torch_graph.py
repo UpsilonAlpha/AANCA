@@ -591,6 +591,7 @@ def build_graph(
     include_sequence_neighbours: bool = True,
     backbone_block: Tensor | None = None,
     fixed_backbone: bool = True,
+    device_neighbours: bool = False,
 ) -> TorchGraph:
     """Select neighbours and featurise. Differentiable except for the selection.
 
@@ -603,7 +604,8 @@ def build_graph(
     to skip recomputing it. Note the neighbour list changes most steps, so this
     helps less than it looks -- ``fixed_backbone`` is the saving that matters.
     """
-    neighbours, edge_mask = select_neighbours(
+    select = select_neighbours_device if device_neighbours else select_neighbours
+    neighbours, edge_mask = select(
         coords, topo, k, cutoff, include_sequence_neighbours
     )
     features, envelope, slices = edge_features(

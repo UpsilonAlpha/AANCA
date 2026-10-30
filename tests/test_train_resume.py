@@ -51,6 +51,7 @@ def clean_runs():
         "pytest_straight", "pytest_halves", "pytest_pinned",
         "pytest_sched", "pytest_sched_halves", "pytest_warm", "pytest_warm_bad",
         "pytest_native", "pytest_native_halves",
+        "pytest_numpy_nb", "pytest_device_nb",
     ):
         shutil.rmtree(ROOT / "runs" / tag, ignore_errors=True)
     yield
@@ -248,3 +249,31 @@ def test_a_resume_with_changed_rollout_length_is_refused():
     changed = run("pytest_pinned", 4, "--steps", "5")
     assert changed.returncode != 0
     assert "different settings" in (changed.stdout + changed.stderr)
+
+
+@pytest.mark.needs_data
+@pytest.mark.slow
+def test_device_neighbours_train_to_the_same_weights():
+    """``--neighbours device`` must be a change of clock, not of experiment.
+
+    The two selections can differ on a pair within a float ulp of the cutoff,
+    but the envelope is exactly zero there, so the rule sees the same thing.
+    Measured over 60 real crops the worst ``|delta mu|`` is 0.0 degrees
+    (``scripts/check_neighbours.py``); this asserts the consequence end to
+    end, which is the claim that licenses switching a running experiment over
+    rather than starting a new one.
+    """
+    if not MANIFEST.exists() or not any(PDB.glob("*.bcif")):
+        pytest.skip("needs data/manifest.json and downloaded coordinates")
+
+    host = run("pytest_numpy_nb", 3)
+    assert host.returncode == 0, host.stdout[-3000:] + host.stderr[-3000:]
+    host_weights, _ = weights("pytest_numpy_nb")
+
+    card = run("pytest_device_nb", 3, "--neighbours", "device")
+    assert card.returncode == 0, card.stdout[-3000:] + card.stderr[-3000:]
+    assert "neighbours selected on the device" in card.stdout
+    card_weights, _ = weights("pytest_device_nb")
+
+    for key, value in host_weights.items():
+        assert torch.equal(value, card_weights[key]), f"{key} differs by backend"
