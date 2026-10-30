@@ -306,35 +306,36 @@ Environment: `.venv_bunya`, torch **2.10.0+rocm7.0** over `python/3.12.3-gcccore
 Diagnostics written for the browser bridge: `/scratch/user/uquadhik/.cc_aanca/`.
 Job logs: `/scratch/user/uquadhik/AANCA/logs/<name>-<jobid>.{out,err}`.
 
-### What is live now (2026-10-31, ~00:15 AEST)
+### What is live now (2026-10-31, ~04:05 AEST)
 
 | job | what |
 |---|---|
 | 31148624 | `v4_gpu` — **COMPLETED**, 60,000 of 60,000, exit 0, 2026-10-30T22:50 |
-| 31148638 | `v5_native` — **RUNNING** on bun159, at update **45,125** of 60,000 |
+| 31148638 | `v5_native` — **COMPLETED**, 60,000 of 60,000, exit 0, 2026-10-31T03:42 |
+| 31182705 | `aanca-bench` — CASP13 on `runs/v5_native/best.pt`, 100 steps |
 
-The QOS wait cleared the same evening. `v4_gpu` ran its last segment in 7:22
-and finished the full 60,000; `v5_native` has done 37,343 updates in this
-segment at 0.84 s/update and needs about **3.5 h** more, inside its 85,499 s
-budget, so it should finish without another segment.
+Both training arms are done. The QOS wait cleared the same evening they were
+resubmitted: `v4_gpu` ran its last segment in 7:22, `v5_native` in 12:12.
 
-Both arms were stopped with STOP files at 15:11 on 2026-10-30 and resubmitted
-on the device neighbour path; the switch cost roughly half a day of queue,
+Both were stopped with STOP files at 15:11 on 2026-10-30 and resubmitted on
+the device neighbour path; the switch cost roughly half a day of queue,
 because releasing two slots at once let the `s39fold` array — Ulban's own, on
 the same GPU QOS — take them within two minutes. Switching one arm at a time
 would have kept a slot held throughout and is the better sequence next time.
 
-### The two arms, at the last eval of each
+### The two arms, both at 60,000
 
-v4 at its end (60,000), v5 at 45,000. **Not a matched comparison**: `v5_native`
-is a warm start from `v4_gpu`'s weights at update 28,404, so it carries that
-training on top of its own counter. Read it as "does native-in-pool move
-anything", not as an equal-budget contrast.
+**Not a matched comparison**: `v5_native` is a warm start from `v4_gpu`'s
+weights at update 28,404, so it carries that training on top of its own
+counter. Read it as "does native-in-pool move anything", not as an
+equal-budget contrast.
 
 | | chi1 k=0 | acc k=0 | chi1 k=100 | acc k=100 | pooled chi1 | drift (mean) |
 |---|---|---|---|---|---|---|
-| `v4_gpu` 60,000 | 38.17 | 33.2 | 4.63 | 95.8 | 16.83 | 0.0896 A |
-| `v5_native` 45,000 | 34.99 | 36.2 | 4.21 | 99.7 | 15.73 | 0.0308 A |
+| `v4_gpu` | 38.17 | 33.2 | 4.63 | 95.8 | 16.83 | 0.0896 A |
+| `v5_native` | 33.47 | 36.3 | 4.27 | 99.5 | 15.20 | 0.0400 A |
+
+The full final evals are in `docs/benchmarks/v5_final_eval.txt`.
 
 Native-in-pool moves every column the right way, and the two it moves most are
 the two it was aimed at: the near-native case is now essentially solved
@@ -343,11 +344,60 @@ the two it was aimed at: the near-native case is now essentially solved
 training case does what the no-op term never could.
 
 What it does **not** fix is the deficit that matters. From fully randomised
-chis the rule still lands at ~35 deg chi1 and 36 % accuracy — far from
+chis the rule still lands at 33.5 deg chi1 and 36.3 % accuracy — far from
 DiffPack's 15.35 deg on CASP13, and the gap is too large to be explained by
 the different target sets. That is the open scientific question, and the
 benchmark harness (§ `scripts/benchmark.py`) exists to put a number on it on
 the published targets rather than on this held-out split.
+
+### Why k=0 might be this bad — hypotheses, not findings
+
+The k ladder is itself the diagnostic. 99.5 % at k=100, 84.2 % at k=20,
+36.3 % at k=0. A rule that were simply weak would degrade gradually, because
+weakness is not conditional on the start. Instead it is near-perfect right up
+to the point where the starting *rotamer well* stops being identifiable, and
+then it falls off a cliff. That is the shape of a **mode-selection** failure,
+not a refinement failure.
+
+Two ways to fail at selection, and the summary statistics separate them. chi1
+is roughly trimodal with wells 120 deg apart. If the 36.3 % that are correct
+sit near 8 deg and every failure were a clean swap to a neighbouring well,
+the MAE would be about 0.36 x 8 + 0.64 x 120 = **80 deg**. It is **33.5**, so
+the failures average around **50 deg** — too far for a near miss, too close
+for a neighbouring well. Fifty degrees is where you land if you split the
+difference between two wells, which is what a von Mises NLL against the
+native rewards when the answer is ambiguous: the loss is minimised in
+expectation by moving toward the circular mean of the plausible answers, and
+the circular mean of g- and t is an angle no side chain occupies. **Open
+measurement:** the signed chi1 error histogram at k=0, and whether the
+predictions land in rotameric regions at all. That decides it.
+
+Structurally, a **deterministic local rule has no way to break a tie**. From
+randomised chis every neighbour is also wrong, so the packing problem has to
+be co-solved, and co-solving needs somebody to commit first. Diffusion gets
+that from the noise in the reverse process; DiffPack gets more of it from
+generating chi1 -> chi2 -> chi3 -> chi4 autoregressively, each level
+conditioned on one already decided. This rule has neither, and applies the
+mean of its own prediction simultaneously everywhere.
+
+**Rule out the boring explanations first.** 400 training structures and
+200,268 parameters, against DiffPack's tens of thousands of chains and
+AttnPacker's ~200 M. It would be embarrassing to redesign the objective and
+then find the gap was a scaling curve.
+
+**Should the benchmark start from fully randomised chis?** Yes for the
+headline number — it is what DiffPack and AttnPacker report, and a packer
+that only works from a nearly-correct answer is a refiner. But uniform over
+the torus is a choice DiffPack can afford because it is a sampler with a
+learned prior. SCWRL and Rosetta never search continuous space from uniform;
+they search a discrete rotamer library, which is to say they start from
+modes. Initialising from a backbone-dependent rotamer draw is from-scratch by
+any reasonable definition and squarely within prior art; if accuracy jumps
+there, the diagnosis is confirmed. The deeper fix, if it is mode averaging,
+is to **sample from the predicted von Mises during rollout instead of taking
+mu**, optionally annealing kappa over steps — nearly free to implement, gives
+the rule the noise it needs to break ties, and makes best-of-N available the
+way the literature uses it.
 
 `v4_gpu`: `--split train --updates 60000 --eval-every 500 --steps 64 --steps-max 96 --lr-drop
 30000 45000 --lr-gamma 0.3 --init-from runs/v3_gpu/last.pt`.
