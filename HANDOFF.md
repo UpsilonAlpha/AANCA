@@ -594,6 +594,45 @@ and not yet comparable, which is the whole reason for the harness — but the ga
 on the from-scratch case is the thing to watch, and it is still closing fast
 (kappa 0 chi1 was 56.4° untrained, 49.1° at 8,000, 40.3° at 20,700).
 
+### The run is not GPU-bound — profiled 2026-10-30
+
+`sbatch scripts/bunya_profile.slurm`, job 31143249, MI355X, a 384-residue crop
+exactly as training uses:
+
+| part of one rollout step | ms | share |
+|---|---|---|
+| `select_neighbours` (CPU NumPy + transfers) | **29.72** | **80%** |
+| `edge_features` | 1.19 | 3% |
+| `rule` forward | 0.34 | 0.9% |
+| `node_features` | 0.15 | 0.4% |
+| `step_once`, all of it | 37.27 | |
+| *the same geometry, done on the device* | *0.53* | *56× faster* |
+
+The model is **one per cent** of a rollout step. Four-fifths of it is
+[`torch_graph.py:301`](src/aanca/torch_graph.py:301), which does
+`coords.detach().cpu().numpy()` and then a NumPy spatial search and some
+Python set arithmetic — a device transfer, a synchronisation and a CPU search,
+eighty times per update, none of which the card can help with.
+
+The two estimates agree: 37.27 ms × 80 steps is 2.98 s against the 2.80 s/update
+actually logged, and the 31.5 ms/step inferred from the v3-to-v4 rate change is
+the same number from the other direction. So the headline is sound — **moving
+neighbour selection onto the device should take an update from 2.8 s to about
+0.5 s**, and 60,000 updates from 47 hours to roughly 9.
+
+The last row is a *lower bound*, not a drop-in: it computes residue-pair
+minimum heavy-atom distances and a `topk` without forcing sequence neighbours
+or keeping the cutoff bookkeeping. The real replacement will be slower than
+0.53 ms and nowhere near 29.72.
+
+Two things not to do with this. Not mid-run: the neighbour path and the batch
+size both move the random stream, and v5's whole purpose is a comparison with
+v4_gpu that depends on them matching. And not as a correctness change —
+`select_neighbours` is not wrong, it is in the wrong place, so the replacement
+has to reproduce it exactly on a fixed structure before it goes anywhere near
+a run. Batch size is the other lever and is untouched: one crop per update,
+where the Neural Cubes trainer used eight.
+
 ### Two more traps, both paid for on 2026-10-29
 
 1. **`AANCA_CHAIN=0` does not disable chaining.** It is the segment *counter*, not a switch, so a
