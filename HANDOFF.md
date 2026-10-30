@@ -306,20 +306,48 @@ Environment: `.venv_bunya`, torch **2.10.0+rocm7.0** over `python/3.12.3-gcccore
 Diagnostics written for the browser bridge: `/scratch/user/uquadhik/.cc_aanca/`.
 Job logs: `/scratch/user/uquadhik/AANCA/logs/<name>-<jobid>.{out,err}`.
 
-### What is live now (2026-10-30, ~15:15 AEST)
+### What is live now (2026-10-31, ~00:15 AEST)
 
 | job | what |
 |---|---|
-| 31148624 | `v4_gpu`, resumed from update **28,404**, `--neighbours device`, **queued** |
-| 31148638 | `v5_native`, resumed from update **7,782**, `--neighbours device`, **queued** |
+| 31148624 | `v4_gpu` — **COMPLETED**, 60,000 of 60,000, exit 0, 2026-10-30T22:50 |
+| 31148638 | `v5_native` — **RUNNING** on bun159, at update **45,125** of 60,000 |
 
-Both were stopped with STOP files at 15:11 and resubmitted on the device
-neighbour path. They are **pending behind the GPU QOS limit**, which is the
-cost of the switch and was foreseeable: stopping them released two slots, and
-the `s39fold` array — Ulban's own, on the same GPU QOS — took them within two
-minutes. Nothing is lost, both checkpointed cleanly, but the arms are not
-running until that QOS frees. Switching one arm at a time would have kept a
-slot held throughout and is the better sequence next time.
+The QOS wait cleared the same evening. `v4_gpu` ran its last segment in 7:22
+and finished the full 60,000; `v5_native` has done 37,343 updates in this
+segment at 0.84 s/update and needs about **3.5 h** more, inside its 85,499 s
+budget, so it should finish without another segment.
+
+Both arms were stopped with STOP files at 15:11 on 2026-10-30 and resubmitted
+on the device neighbour path; the switch cost roughly half a day of queue,
+because releasing two slots at once let the `s39fold` array — Ulban's own, on
+the same GPU QOS — take them within two minutes. Switching one arm at a time
+would have kept a slot held throughout and is the better sequence next time.
+
+### The two arms, at the last eval of each
+
+v4 at its end (60,000), v5 at 45,000. **Not a matched comparison**: `v5_native`
+is a warm start from `v4_gpu`'s weights at update 28,404, so it carries that
+training on top of its own counter. Read it as "does native-in-pool move
+anything", not as an equal-budget contrast.
+
+| | chi1 k=0 | acc k=0 | chi1 k=100 | acc k=100 | pooled chi1 | drift (mean) |
+|---|---|---|---|---|---|---|
+| `v4_gpu` 60,000 | 38.17 | 33.2 | 4.63 | 95.8 | 16.83 | 0.0896 A |
+| `v5_native` 45,000 | 34.99 | 36.2 | 4.21 | 99.7 | 15.73 | 0.0308 A |
+
+Native-in-pool moves every column the right way, and the two it moves most are
+the two it was aimed at: the near-native case is now essentially solved
+(95.8 → 99.7 % accuracy) and the fixed point holds roughly three times tighter
+(0.090 → 0.031 A mean drift). Supervising the fixed point as an ordinary
+training case does what the no-op term never could.
+
+What it does **not** fix is the deficit that matters. From fully randomised
+chis the rule still lands at ~35 deg chi1 and 36 % accuracy — far from
+DiffPack's 15.35 deg on CASP13, and the gap is too large to be explained by
+the different target sets. That is the open scientific question, and the
+benchmark harness (§ `scripts/benchmark.py`) exists to put a number on it on
+the published targets rather than on this held-out split.
 
 `v4_gpu`: `--split train --updates 60000 --eval-every 500 --steps 64 --steps-max 96 --lr-drop
 30000 45000 --lr-gamma 0.3 --init-from runs/v3_gpu/last.pt`.
