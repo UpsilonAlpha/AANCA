@@ -306,12 +306,20 @@ Environment: `.venv_bunya`, torch **2.10.0+rocm7.0** over `python/3.12.3-gcccore
 Diagnostics written for the browser bridge: `/scratch/user/uquadhik/.cc_aanca/`.
 Job logs: `/scratch/user/uquadhik/AANCA/logs/<name>-<jobid>.{out,err}`.
 
-### What is live now (2026-10-30, ~01:30 AEST)
+### What is live now (2026-10-30, ~15:15 AEST)
 
 | job | what |
 |---|---|
-| 30976061 | `v4_gpu` chain, MI355X bun161, segment 1, **running** — now the control |
-| 31052749 | `v5_native` chain, **queued**, warm-started from `runs/v4_gpu/last.pt` |
+| 31148624 | `v4_gpu`, resumed from update **28,404**, `--neighbours device`, **queued** |
+| 31148638 | `v5_native`, resumed from update **7,782**, `--neighbours device`, **queued** |
+
+Both were stopped with STOP files at 15:11 and resubmitted on the device
+neighbour path. They are **pending behind the GPU QOS limit**, which is the
+cost of the switch and was foreseeable: stopping them released two slots, and
+the `s39fold` array — Ulban's own, on the same GPU QOS — took them within two
+minutes. Nothing is lost, both checkpointed cleanly, but the arms are not
+running until that QOS frees. Switching one arm at a time would have kept a
+slot held throughout and is the better sequence next time.
 
 `v4_gpu`: `--split train --updates 60000 --eval-every 500 --steps 64 --steps-max 96 --lr-drop
 30000 45000 --lr-gamma 0.3 --init-from runs/v3_gpu/last.pt`.
