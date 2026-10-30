@@ -30,8 +30,15 @@ from pathlib import Path
 import torch
 
 from aanca.data import RepackingDataset, read_manifest
+from aanca.model import AANCARule
 from aanca.torch_geometry import apply_chi_deltas
-from aanca.torch_graph import select_neighbours, select_neighbours_device
+from aanca.torch_graph import (
+    TorchGraph,
+    edge_features,
+    node_features,
+    select_neighbours,
+    select_neighbours_device,
+)
 
 ROOT = Path(__file__).resolve().parent.parent
 MANIFEST = ROOT / "data" / "manifest.json"
@@ -66,6 +73,45 @@ def randomised(coords, topo, generator):
     return apply_chi_deltas(coords, deltas, topo.torsion)
 
 
+def build_graph_from(coords, topo, neighbours, edge_mask, cutoff: float):
+    """``build_graph`` with the neighbour list supplied rather than chosen."""
+    features, envelope, slices = edge_features(
+        coords, topo, neighbours, edge_mask, cutoff, None, True
+    )
+    return TorchGraph(
+        neighbours=neighbours,
+        edge_mask=edge_mask,
+        envelope=envelope,
+        node_features=node_features(coords, topo),
+        edge_features=features,
+        feature_slices=slices,
+    )
+
+
+def rule_difference(rule, coords, topo, expected, actual, cutoff: float) -> float:
+    """Max ``|delta mu|`` in degrees between the two neighbour lists.
+
+    Runs the real rule over both graphs. A disagreement confined to
+    zero-weight edges at the cutoff cannot move this beyond the reordering of
+    a sum; anything larger means the two selections are not the same function
+    in any sense that matters.
+    """
+    out = []
+    with torch.no_grad():
+        for neighbours, edge_mask in (expected, actual):
+            graph = build_graph_from(coords, topo, neighbours, edge_mask, cutoff)
+            mu, _log_kappa, _hidden = rule(
+                graph.node_features.to(torch.float32),
+                rule.initial_hidden(topo.n_residues, coords.device, torch.float32),
+                graph.edge_features.to(torch.float32),
+                graph.neighbours,
+                graph.edge_mask,
+                graph.envelope.to(torch.float32),
+            )
+            out.append(mu)
+    return float(torch.rad2deg((out[0] - out[1]).abs()).max())
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--structures", type=int, default=60)
@@ -91,7 +137,10 @@ def main() -> int:
         cache_limit=4,
     )
 
+    rule = AANCARule().to(device)
+    rule.eval()
     graphs = edges = disagreements = near = 0
+    worst_output = 0.0
     residues = 0
     failures: list[str] = []
     generator = torch.Generator().manual_seed(args.seed)
@@ -120,9 +169,22 @@ def main() -> int:
             ):
                 disagreements += 1
                 differing = int((actual[0] != expected[0]).any(dim=-1).sum())
+                # **The number that decides whether this matters.** The
+                # envelope is ``0.5 * (1 + cos(pi * d / cutoff))``, exactly
+                # zero at the cutoff, and the rule weights every message by
+                # it -- so an edge that one implementation admits there and
+                # the other drops carries no signal either way. If that
+                # reasoning is right, the rule's output is the same to within
+                # the reordering of a floating-point sum; if it is wrong, it
+                # shows up here as a real difference in mu.
+                moved = rule_difference(
+                    rule, coords32, topo, expected, actual, args.cutoff
+                )
+                worst_output = max(worst_output, moved)
                 failures.append(
                     f"{dataset.specs[index].pdb_id} state {step}: "
-                    f"{differing} of {topo.n_residues} rows differ"
+                    f"{differing} of {topo.n_residues} rows differ, "
+                    f"max |delta mu| {moved:.3e} deg"
                 )
 
             # Exposure: how many pairs sit close enough to the cutoff that the
@@ -154,7 +216,8 @@ def main() -> int:
     print(
         f"\n{graphs} graphs over {residues} residues and {edges} edges, {device}\n"
         f"pairs within {HAIR} A of the cutoff: {near}\n"
-        f"disagreements: {disagreements}"
+        f"disagreements: {disagreements}\n"
+        f"worst |delta mu| where they disagree: {worst_output:.3e} deg"
     )
     for line in failures[:10]:
         print(f"  {line}")
