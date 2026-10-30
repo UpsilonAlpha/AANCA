@@ -616,14 +616,35 @@ eighty times per update, none of which the card can help with.
 
 The two estimates agree: 37.27 ms × 80 steps is 2.98 s against the 2.80 s/update
 actually logged, and the 31.5 ms/step inferred from the v3-to-v4 rate change is
-the same number from the other direction. So the headline is sound — **moving
-neighbour selection onto the device should take an update from 2.8 s to about
-0.5 s**, and 60,000 updates from 47 hours to roughly 9.
+the same number from the other direction.
 
-The last row is a *lower bound*, not a drop-in: it computes residue-pair
-minimum heavy-atom distances and a `topk` without forcing sequence neighbours
-or keeping the cutoff bookkeeping. The real replacement will be slower than
-0.53 ms and nowhere near 29.72.
+**Written and measured, job 31144401.** `torch_graph.select_neighbours_device`
+does the same job without leaving the card — residue-pair minimum heavy-atom
+distances by a double `scatter_reduce`, then one stable sort with forced
+neighbours first:
+
+| | ms |
+|---|---|
+| `select_neighbours` (NumPy) | 29.68 |
+| **`select_neighbours_device`** | **5.62** |
+| the same, sequence links hoisted out | 5.54 |
+| geometry alone, no bookkeeping | 0.52 |
+
+Exact agreement with the NumPy version on the structure profiled, and pinned
+by four tests in `tests/test_torch_graph.py`. **A step would go from 33.6 ms to
+9.6, and an update from 2.7 s to about 0.77** — so 60,000 updates in roughly 13
+hours rather than 47. That is less than the 9 hours the lower bound suggested,
+and the gap is the price of exactness: `cdist` is pinned to
+`donot_use_mm_for_euclid_dist` because the matmul formulation is not exact, and
+a pair within an ulp of the cutoff would then be admitted by one implementation
+and refused by the other. Hoisting the sequence links out of the loop saves
+nothing, so there is no reason to complicate the call.
+
+One trap, caught only by the tests: combining "forced first" with "then by
+distance" into one sort key needs float64. The ulp of float32 at the 1e6 offset
+is 0.0625, so adding it rounded every distance into six-hundredths-of-an-
+Angstrom buckets and reordered genuine neighbours — a wrong graph that looked
+entirely plausible.
 
 Two things not to do with this. Not mid-run: the neighbour path and the batch
 size both move the random stream, and v5's whole purpose is a comparison with
