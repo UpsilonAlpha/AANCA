@@ -350,6 +350,52 @@ the different target sets. That is the open scientific question, and the
 benchmark harness (§ `scripts/benchmark.py`) exists to put a number on it on
 the published targets rather than on this held-out split.
 
+### Tier 1: the CASP13 table — 2026-10-31
+
+`runs/v5_native/best.pt` (update 59,500), 79 CASP13 targets, 100 steps, every
+chi randomised. Full output in `docs/benchmarks/casp13_v5_native_bench.log`;
+the baselines' rows are their published numbers, and
+`docs/benchmarks/casp13_v5_native.log` is the run of
+`scripts/validate_benchmark.py` that recovers them from their own released
+structures, which is what makes the comparison a comparison.
+
+| | chi1 | chi2 | chi3 | chi4 | acc all | core | surf | RMSD all |
+|---|---|---|---|---|---|---|---|---|
+| **AANCA (ours)** | **31.61** | **34.25** | **49.33** | **53.07** | **42.6** | **54.2** | **33.4** | **1.037** |
+| scwrl | 27.64 | 28.97 | 49.75 | 61.54 | 56.2 | 71.3 | 43.4 | 0.934 |
+| faspr | 27.04 | 28.41 | 50.30 | 60.89 | 56.4 | 70.3 | 43.6 | 0.910 |
+| rosetta_packer | 25.88 | 28.25 | 48.13 | 59.82 | 58.6 | 75.3 | 35.7 | 0.872 |
+| dl_packer | 22.18 | 27.00 | 51.22 | 70.04 | 58.8 | 73.9 | 45.4 | 0.772 |
+| AttnPacker_PP | 18.92 | 23.17 | 44.89 | 58.98 | 62.1 | 73.7 | 47.6 | 0.669 |
+| diffpack | 15.35 | 19.19 | 37.30 | 50.19 | 69.5 | 82.7 | 57.3 | 0.579 |
+
+FlowPacker is kept out of the table on purpose: MLSB 2024 Table 1 is 20
+CASP13 targets from the Prediction Center with per-chi accuracy, which is
+neither this target set nor this definition. Its numbers, for reference:
+chi MAE 16.44 / 24.38 / 42.82 / 52.16, RMSD 0.674 / 0.388 / 0.865.
+
+**Audited columns only.** chi MAE, accuracy all/core/surface and RMSD all
+reproduce from the baselines' own structures; RMSD core and surface do not,
+by +0.10 to +0.17 A in the same direction for every method, so ours there is
+not their measurement and must not be quoted as a contrast. AttnPacker's
+re-scored row is not an audit either — its released structures label
+equivalent methyls arbitrarily.
+
+**Where we stand.** Last, on every audited column. chi1 is about twice
+DiffPack's and accuracy is 42.6 % against 69.5 %. We are also behind SCWRL
+and FASPR, which is the line that matters: a method that cannot beat a 2009
+rotamer-library packer is not yet a packer.
+
+**But the shape of the row is the interesting part.** Everyone else's error
+climbs steeply from chi1 outwards — DiffPack 15.4 -> 50.2, SCWRL 27.6 ->
+61.5 — because an error at chi1 swings everything distal to it. Ours is
+nearly flat: 31.6 -> 53.1. We are *worst* at chi1 relative to the field and
+roughly *competitive* at chi3 and chi4, beating SCWRL, FASPR and DLPacker on
+both and every method except DiffPack on chi4. A local refiner that cannot
+choose a chi1 well but does not compound once the well is fixed would look
+exactly like this. It is the same reading the k ladder gives, from an
+independent direction, on the published targets.
+
 ### Why k=0 might be this bad — hypotheses, not findings
 
 The k ladder is itself the diagnostic. 99.5 % at k=100, 84.2 % at k=20,
