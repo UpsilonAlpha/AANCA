@@ -22,6 +22,8 @@ from aanca.torch_graph import (
     node_features,
     pair_min_distances,
     select_neighbours,
+    select_neighbours_device,
+    sequence_links,
     sidechain_summary,
 )
 
@@ -311,3 +313,105 @@ def test_rejects_nonsense_parameters(loaded):
         select_neighbours(coords, topo, k=0)
     with pytest.raises(ValueError):
         select_neighbours(coords, topo, cutoff=0.0)
+
+
+# -- the on-device selection, which must be the same function --------------
+
+
+def test_device_selection_matches_the_numpy_one(loaded):
+    """The replacement for the 80% of a rollout step that runs on the CPU.
+
+    Exactness is the whole requirement. A neighbour list that differs anywhere
+    is a different perception graph, and the only symptom would be a two-day
+    run that scores slightly differently from the one it is supposed to be
+    compared with -- which is indistinguishable from a result.
+    """
+    _protein, topo, coords = loaded
+    coords32 = coords.to(torch.float32)
+    expected = select_neighbours(coords32, topo, k=64, cutoff=CUTOFF)
+    actual = select_neighbours_device(coords32, topo, k=64, cutoff=CUTOFF)
+    assert torch.equal(actual[1], expected[1]), "edge masks differ"
+    assert torch.equal(actual[0], expected[0]), "neighbour lists differ"
+
+
+def test_device_selection_matches_after_the_side_chains_move(loaded):
+    """The graph is rebuilt every step because side chains move, so agreement
+    on the deposited coordinates is not enough -- it has to hold on the
+    off-distribution geometry a rollout actually visits."""
+    protein, topo, coords = loaded
+    generator = torch.Generator().manual_seed(7)
+    for step in range(3):
+        deltas = torch.zeros_like(topo.torsion.chi_mask, dtype=coords.dtype)
+        deltas[topo.torsion.chi_mask] = (
+            torch.rand(
+                int(topo.torsion.chi_mask.sum()), generator=generator,
+                dtype=coords.dtype,
+            )
+            * 2
+            - 1
+        ) * 3.14159
+        moved = apply_chi_deltas(coords, deltas, topo.torsion).to(torch.float32)
+        expected = select_neighbours(moved, topo, k=64, cutoff=CUTOFF)
+        actual = select_neighbours_device(moved, topo, k=64, cutoff=CUTOFF)
+        assert torch.equal(actual[1], expected[1]), f"edge masks differ at {step}"
+        assert torch.equal(actual[0], expected[0]), f"neighbours differ at {step}"
+
+
+def test_device_selection_matches_with_a_binding_k(loaded):
+    """At k=16 the limit, not the cutoff, decides -- so the *order* matters and
+    not just the membership. This is the case that catches a wrong tie-break or
+    a forced neighbour sorted in the wrong place."""
+    _protein, topo, coords = loaded
+    coords32 = coords.to(torch.float32)
+    for k in (8, 16, 32):
+        expected = select_neighbours(coords32, topo, k=k, cutoff=CUTOFF)
+        actual = select_neighbours_device(coords32, topo, k=k, cutoff=CUTOFF)
+        assert torch.equal(actual[1], expected[1]), f"edge masks differ at k={k}"
+        assert torch.equal(actual[0], expected[0]), f"neighbours differ at k={k}"
+
+
+def test_device_selection_keeps_the_sequence_neighbours(loaded):
+    """Forced edges come first whatever the distance.
+
+    At k=1 that is the whole content of the slot, so a version that merely
+    sorted by distance would fail here even on a compact protein -- where at
+    k=8 it would pass, because the bonded neighbours are among the eight
+    nearest anyway.
+    """
+    _protein, topo, coords = loaded
+    coords32 = coords.to(torch.float32)
+    links = sequence_links(topo, coords32.device)
+    neighbours, edge_mask = select_neighbours_device(
+        coords32, topo, k=1, cutoff=CUTOFF
+    )
+    for i in range(topo.n_residues):
+        bonded = set()
+        if i > 0 and bool(links[i - 1]):
+            bonded.add(i - 1)
+        if i + 1 < topo.n_residues and bool(links[i]):
+            bonded.add(i + 1)
+        if bonded:
+            assert bool(edge_mask[i, 0])
+            assert int(neighbours[i, 0]) in bonded, f"residue {i} lost its bond"
+
+
+def test_device_selection_matches_without_sequence_neighbours(loaded):
+    """And the switch is wired the same way in both implementations."""
+    _protein, topo, coords = loaded
+    coords32 = coords.to(torch.float32)
+    for k in (8, 64):
+        expected = select_neighbours(
+            coords32, topo, k=k, cutoff=CUTOFF, include_sequence_neighbours=False
+        )
+        actual = select_neighbours_device(
+            coords32, topo, k=k, cutoff=CUTOFF, include_sequence_neighbours=False
+        )
+        assert torch.equal(actual[1], expected[1]), f"edge masks differ at k={k}"
+        assert torch.equal(actual[0], expected[0]), f"neighbours differ at k={k}"
+
+
+def test_device_selection_refuses_the_same_arguments():
+    topo = coords = None
+    for bad in ({"k": 0}, {"cutoff": 0.0}):
+        with pytest.raises(ValueError):
+            select_neighbours_device(torch.zeros(1, 3), topo, **bad)

@@ -316,6 +316,118 @@ def select_neighbours(
     )
 
 
+def sequence_links(topo: FeatureTopology, device) -> Tensor:
+    """``(n_res,)`` -- is residue ``i`` covalently bonded to ``i + 1``?
+
+    The tensor form of :func:`graph.sequence_neighbour_sets`, and a property of
+    the topology rather than of the coordinates, so a caller that rebuilds the
+    graph every step should hoist it out of the loop.
+    """
+    chain_ids, res_ids = topo.chain_ids, topo.res_id_list
+    links = [
+        chain_ids[i] == chain_ids[i + 1] and res_ids[i + 1] - res_ids[i] == 1
+        for i in range(len(chain_ids) - 1)
+    ]
+    return torch.tensor(links, dtype=torch.bool, device=device)
+
+
+def select_neighbours_device(
+    coords: Tensor,
+    topo: FeatureTopology,
+    k: int = 64,
+    cutoff: float = 10.0,
+    include_sequence_neighbours: bool = True,
+    links: Tensor | None = None,
+) -> tuple[Tensor, Tensor]:
+    """:func:`select_neighbours` without leaving the device.
+
+    **Why this exists.** Profiled on an MI355X at the 384-residue crop training
+    uses, the NumPy version is 29.72 ms of a 37.27 ms rollout step -- 80% --
+    while the rule's own forward pass is 0.34 ms. It is not slow code; it is
+    code in the wrong place, because ``coords.detach().cpu().numpy()`` forces a
+    device transfer and a synchronisation eighty times per update and the
+    search itself cannot use the card at all.
+
+    **It must agree with the NumPy version exactly**, which is what
+    ``tests/test_torch_graph.py`` pins: a different graph is a different
+    experiment, and one that would show up as nothing more than a run that
+    scores slightly differently. Two details carry that agreement and are easy
+    to lose:
+
+    * the ordering is *forced neighbours first, then by distance*, and a forced
+      pair that is beyond the cutoff enters at exactly ``cutoff``;
+    * ties are broken by residue index, via a stable sort. In the NumPy version
+      that falls out of dict insertion order; here it is asked for.
+
+    ``links`` is :func:`sequence_links`, passed in when the caller has hoisted
+    it out of a rollout loop. ``compute_mode`` is pinned to the direct
+    formulation because the matmul one is not exact, and a pair sitting within
+    an ulp of the cutoff would otherwise be admitted by one implementation and
+    refused by the other.
+    """
+    if k < 1:
+        raise ValueError(f"k must be at least 1, got {k}")
+    if cutoff <= 0:
+        raise ValueError(f"cutoff must be positive, got {cutoff}")
+
+    device = coords.device
+    n_res = topo.n_residues
+    atoms = coords.detach()[topo.atom_mask]
+    owner = torch.as_tensor(topo.owner, device=device, dtype=torch.long)
+    n_atoms = atoms.shape[0]
+
+    distances = torch.cdist(
+        atoms, atoms, compute_mode="donot_use_mm_for_euclid_dist"
+    )
+    infinity = torch.tensor(float("inf"), dtype=distances.dtype, device=device)
+    # Minimum heavy-atom distance, reduced twice: over the atoms of the first
+    # residue, then over those of the second.
+    by_residue = torch.full(
+        (n_res, n_atoms), float("inf"), dtype=distances.dtype, device=device
+    ).scatter_reduce(
+        0, owner.unsqueeze(-1).expand(-1, n_atoms), distances, "amin"
+    )
+    pair_distance = torch.full(
+        (n_res, n_res), float("inf"), dtype=distances.dtype, device=device
+    ).scatter_reduce(
+        1, owner.unsqueeze(0).expand(n_res, -1), by_residue, "amin"
+    )
+    pair_distance.fill_diagonal_(float("inf"))
+
+    forced = torch.zeros((n_res, n_res), dtype=torch.bool, device=device)
+    if include_sequence_neighbours and n_res > 1:
+        if links is None:
+            links = sequence_links(topo, device)
+        index = torch.arange(n_res - 1, device=device)
+        forced[index, index + 1] = links
+        forced[index + 1, index] = links
+
+    within = pair_distance <= cutoff
+    candidate = within | forced
+    # A forced pair beyond the cutoff enters at the cutoff itself, which is
+    # ``setdefault(j, cutoff)`` in the NumPy version.
+    effective = torch.where(within, pair_distance, torch.full_like(pair_distance, cutoff))
+    # Forced first, then distance, as one sort key -- and **in float64**. The
+    # offset has to exceed any distance that survives the cutoff, and in
+    # float32 the ulp at 1e6 is 0.0625, so adding it would round every
+    # distance into 6-hundredths-of-an-Angstrom buckets and scramble the order
+    # inside each one. That is not a tie-break detail: it reordered real
+    # neighbours by a tenth of an Angstrom. float64 holds 1e6 plus a float32
+    # distance exactly, since 20 bits of exponent and 24 of mantissa fit in 53.
+    offset = torch.where(forced, 0.0, 1.0e6).to(torch.float64)
+    key = torch.where(
+        candidate,
+        effective.to(torch.float64) + offset,
+        torch.tensor(float("inf"), dtype=torch.float64, device=device),
+    )
+
+    order = torch.argsort(key, dim=-1, stable=True)[:, :k]
+    chosen = torch.gather(key, 1, order)
+    edge_mask = torch.isfinite(chosen)
+    neighbours = order * edge_mask
+    return neighbours, edge_mask
+
+
 # -- features --------------------------------------------------------------
 
 

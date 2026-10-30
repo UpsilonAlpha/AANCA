@@ -39,6 +39,8 @@ from aanca.torch_graph import (
     edge_features,
     node_features,
     select_neighbours,
+    select_neighbours_device,
+    sequence_links,
 )
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -193,22 +195,41 @@ def main() -> int:
         lambda: step_once(rule, state, topo, config, mask),
         device, args.repeats,
     )
+    t_device = timed(
+        "select_neighbours_device (the replacement)",
+        lambda: select_neighbours_device(coords32, topo, args.k, 10.0),
+        device, args.repeats,
+    )
+    links = sequence_links(topo, device)
+    timed(
+        "  the same, sequence links hoisted out",
+        lambda: select_neighbours_device(coords32, topo, args.k, 10.0, links=links),
+        device, args.repeats,
+    )
     t_bound = timed(
-        "-- lower bound, same geometry on device",
+        "-- lower bound, geometry only",
         lambda: gpu_neighbour_lower_bound(coords32, topo, args.k),
         device, args.repeats,
     )
 
+    exact = torch.equal(
+        select_neighbours(coords32, topo, args.k, 10.0)[0],
+        select_neighbours_device(coords32, topo, args.k, 10.0)[0],
+    )
+    print(f"\nthe two agree on this structure: {exact}")
+
     print(
-        f"\nselect_neighbours is {t_select / t_step:.0%} of a step. At {args.steps} "
+        f"select_neighbours is {t_select / t_step:.0%} of a step. At {args.steps} "
         f"steps that is {t_select * args.steps / 1000:.2f} s of an update's "
         f"{t_step * args.steps / 1000:.2f} s."
     )
     print(
-        f"The device does the same geometry in {t_bound:.2f} ms, "
-        f"{t_select / max(t_bound, 1e-9):.0f}x faster, so the ceiling on this "
-        f"change is about {(t_select - t_bound) * args.steps / 1000:.2f} s per update."
+        f"The replacement takes {t_device:.2f} ms, "
+        f"{t_select / max(t_device, 1e-9):.0f}x faster, which would make a step "
+        f"{t_step - t_select + t_device:.2f} ms and an update about "
+        f"{(t_step - t_select + t_device) * args.steps / 1000:.2f} s."
     )
+    print(f"Geometry alone, with none of the bookkeeping, is {t_bound:.2f} ms.")
     return 0
 
 
