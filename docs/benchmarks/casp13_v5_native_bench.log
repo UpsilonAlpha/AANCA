@@ -1,0 +1,22 @@
+nohup: ignoring input
+/scratch/user/uquadhik/AANCA/.venv_bunya/lib/python3.12/site-packages/biotite/structure/io/pdb/file.py:153: UserWarning: 2253 elements were guessed from atom name
+  warnings.warn(
+/scratch/user/uquadhik/AANCA/.venv_bunya/lib/python3.12/site-packages/biotite/structure/io/pdb/file.py:153: UserWarning: 1921 elements were guessed from atom name
+  warnings.warn(
+runs/v5_native/best.pt at update 59500, CASP13, 79 targets, 100 steps, every chi randomised, cpu
+
+                   chi1   chi2   chi3   chi4  acc all    core    surf  rmsd all    core    surf
+AANCA (ours)      31.61  34.25  49.33  53.07     42.6    54.2    33.4     1.037   0.837   1.179
+scwrl             27.64  28.97  49.75  61.54     56.2    71.3    43.4     0.934   0.495   1.027
+faspr             27.04  28.41  50.30  60.89     56.4    70.3    43.6     0.910   0.502   1.002
+rosetta_packer    25.88  28.25  48.13  59.82     58.6    75.3    35.7     0.872   0.422   1.001
+dl_packer         22.18  27.00  51.22  70.04     58.8    73.9    45.4     0.772   0.402   0.876
+AttnPacker_PP     18.92  23.17  44.89  58.98     62.1    73.7    47.6     0.669   0.366   0.775
+diffpack          15.35  19.19  37.30  50.19     69.5    82.7    57.3     0.579   0.298   0.696
+
+audited columns: chi MAE, accuracy all/core/surface, RMSD all. The
+  RMSD core and surface columns do not reproduce from the baselines' own
+  structures (see aanca.metrics) -- ours there is not their measurement.
+
+not in the table above -- flowpacker chi MAE [16.44, 24.38, 42.82, 52.16], RMSD (0.674, 0.388, 0.865).
+  MLSB 2024 Table 1; 20 CASP13 / 34 CASP14 targets from the Prediction Center, per-chi accuracy, not the set or the definition used in REFERENCE.
