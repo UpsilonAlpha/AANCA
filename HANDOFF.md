@@ -668,6 +668,49 @@ for it.
   seeds) and unanimity high. A much larger figure — say 95 % — would contradict
   `descent` and one of the two would have to be wrong.
 
+**sweep — and here is the thing neither of the other two could see.** The rule
+relaxes to its own answer *from both directions*, including downhill.
+
+       kappa   start right   rule right    start MAE    rule MAE
+       16.00         99.5%        97.7%       11.59        8.72
+        8.00         98.0%        96.4%       16.59       10.36
+        4.00         92.5%        92.8%       24.40       14.37
+        2.00         78.2%        83.6%       38.38       24.57
+        1.00         59.5%        78.6%       57.80       30.44
+        0.50         46.9%        78.0%       72.76       30.99
+        0.00         33.1%        77.3%       90.42       31.61
+
+Read the two percentage columns against each other. Below kappa 2 the start
+varies enormously — 78.2 % down to 33.1 % — and the answer barely moves: 83.6,
+78.6, 78.0, 77.3. **The basin is as wide as the measurement can show.** That is
+`descent` again as a dose-response curve, and it closes the initialisation
+question for good: no starting distribution recovers the 22.7 %.
+
+The new part is the top of the table. At kappa 16 the rule is handed a start
+that is **99.5 %** right in well terms and returns **97.7 %** — it breaks wells
+it was given. Same at kappa 8 (98.0 to 96.4). The crossover is near kappa 4.
+So the native structure is **not a fixed point of the rule**, and `rule right`
+is not a floor the rule climbs to but an attractor it relaxes onto from either
+side.
+
+Note that `rule MAE` improves at every single level, 11.59 to 8.72 included.
+Both are true and they are not in tension: the bulk of residues tighten toward
+their well while a small tail is pushed across a boundary. An average over
+angles cannot show that and the well-match rate can.
+
+**This is a training finding, not a capacity one.** v5 set `--noop-weight 0`
+and leaned on `--native-probability 0.2` to supervise stationarity, after
+`scripts/noop_probe.py` showed the no-op term was vacuous — evaluated at step 0,
+where the hidden state is empty and the rule proposes ~0.04 deg whatever it is
+shown. The kappa 16 row says that substitution did not fully take. It is also
+the cheapest thing on this list to act on, since it is a loss term rather than
+an architecture.
+
+`basin_probe stationary` asks the rollout version of the question with a start
+that is native by construction, so every broken well is unambiguous, and
+`basin_probe breakdown` splits the 22.7 % by burial, by residue type, and
+spatially. Both queued (31346662, 31346663).
+
 ### Why v4 looks the way it does
 
 Three settings changed at once, which is usually bad practice and is right here: all three came
