@@ -91,3 +91,15 @@ def test_flowpacker_is_kept_out_of_the_comparable_table():
     other = OTHER_PROTOCOLS["flowpacker"]
     assert len(other[13][1]) == 4, "per-chi accuracy has four columns, not three"
     assert "per-chi accuracy" in other["source"]
+
+
+def test_the_results_path_is_absolute_and_independent_of_the_working_directory():
+    """A relative spelling of this in ``scripts/chi1_histogram.py`` pointed at a
+    directory that had never existed, and only surfaced as a batch job exiting
+    1 after the queue wait. It is defined once now; this is the guard."""
+    from aanca.casp import RESULTS
+
+    assert RESULTS.is_absolute()
+    assert RESULTS.parts[-5:] == (
+        "data", "external", "attnpacker", "extracted", "standard_results"
+    )

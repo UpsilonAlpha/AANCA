@@ -49,15 +49,13 @@ from pathlib import Path
 import torch
 
 from aanca import checkpoint as ckpt
-from aanca.casp import pack_from_random, targets_for
-from aanca.casp import REFERENCE
+from aanca.casp import REFERENCE, RESULTS, pack_from_random, targets_for
 from aanca.model import AANCARule
 from aanca.rollout import RolloutConfig
 from aanca.structure import load_protein
 from aanca.torch_geometry import measure_chis, wrap_to_pi
 from aanca.torch_graph import feature_topology
 
-RESULTS = Path("data/benchmark")
 
 #: The three canonical chi1 rotamer wells, in degrees. Lovell et al. (2000),
 #: the penultimate rotamer library; every packing paper in this line uses the

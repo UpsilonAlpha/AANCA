@@ -27,7 +27,7 @@ from aanca.structure import load_protein
 from aanca.torch_graph import feature_topology
 
 ROOT = Path(__file__).resolve().parent.parent
-RESULTS = ROOT / "data" / "external" / "attnpacker" / "extracted" / "standard_results"
+from aanca.casp import RESULTS  # noqa: E402  (one definition, see aanca.casp)
 
 
 def align_prediction(native, predicted):

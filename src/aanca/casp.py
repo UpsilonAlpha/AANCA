@@ -153,3 +153,20 @@ def pack_from_random(rule, native_coords, topo, config, seed: int):
         record=False,
     )
     return result.state.coords
+
+
+#: Where the baselines' released structures live, anchored on this file rather
+#: than the working directory. One definition because three callers read it:
+#: ``scripts/validate_benchmark.py`` scores the baselines from it,
+#: ``scripts/benchmark.py`` scores a rule on the same targets, and
+#: ``scripts/chi1_histogram.py`` decomposes the row that comes out. A fourth
+#: spelling of the path, in the diagnostic, was wrong and only showed up as a
+#: batch job exiting 1 against a directory that had never existed.
+RESULTS = (
+    Path(__file__).resolve().parent.parent.parent
+    / "data"
+    / "external"
+    / "attnpacker"
+    / "extracted"
+    / "standard_results"
+)
