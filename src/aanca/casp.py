@@ -127,7 +127,30 @@ def targets_for(
     return out
 
 
-def pack_from_random(rule, native_coords, topo, config, seed: int):
+def randomised_start(native_coords, topo, seed: int, kappa: float = 0.0):
+    """The benchmark's starting structure: every chi perturbed, nothing else.
+
+    Split out from :func:`pack_from_random` because the basin probe needs the
+    starting point as an object it can measure -- the question "did the rule
+    just stay in the well it was dropped into?" cannot be asked otherwise --
+    and because the same probe sweeps ``kappa`` where the benchmark pins it at
+    0. One function so the sweep's kappa=0 row is the benchmark's own task and
+    not a near-miss of it.
+
+    ``kappa`` is a von Mises concentration, so **larger is milder**: 0 is the
+    uniform draw the published protocol uses, and the perturbation stays an
+    exactly invertible rigid rotation at every level.
+    """
+    from .data import von_mises_deltas
+    from .torch_geometry import apply_chi_deltas
+
+    deltas = von_mises_deltas(
+        topo.torsion.chi_mask, kappa, generator=torch.Generator().manual_seed(seed)
+    )
+    return apply_chi_deltas(native_coords, deltas, topo.torsion)
+
+
+def pack_from_random(rule, native_coords, topo, config, seed: int, kappa: float = 0.0):
     """Randomise every chi, roll the rule out, return where it lands.
 
     This is the benchmark's definition of the task, so it lives beside the
@@ -136,14 +159,9 @@ def pack_from_random(rule, native_coords, topo, config, seed: int):
     row is made of. A diagnostic that packed even slightly differently from
     the number it explains would not be a diagnostic.
     """
-    from .data import von_mises_deltas
     from .rollout import initial_state, rollout
-    from .torch_geometry import apply_chi_deltas
 
-    deltas = von_mises_deltas(
-        topo.torsion.chi_mask, 0.0, generator=torch.Generator().manual_seed(seed)
-    )
-    start = apply_chi_deltas(native_coords, deltas, topo.torsion)
+    start = randomised_start(native_coords, topo, seed, kappa)
     result = rollout(
         rule,
         initial_state(start, rule),

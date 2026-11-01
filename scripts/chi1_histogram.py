@@ -52,55 +52,10 @@ from aanca import checkpoint as ckpt
 from aanca.casp import REFERENCE, RESULTS, pack_from_random, targets_for
 from aanca.model import AANCARule
 from aanca.rollout import RolloutConfig
+from aanca.rotamers import WELLS, draw, histogram, nearest_well
 from aanca.structure import load_protein
 from aanca.torch_geometry import measure_chis, wrap_to_pi
 from aanca.torch_graph import feature_topology
-
-
-#: The three canonical chi1 rotamer wells, in degrees. Lovell et al. (2000),
-#: the penultimate rotamer library; every packing paper in this line uses the
-#: same three names.
-WELLS = {"g-": -60.0, "t": 180.0, "g+": 60.0}
-
-
-def nearest_well(degrees: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-    """``(index, signed distance)`` to the nearest of :data:`WELLS`.
-
-    Distance is wrapped, so a prediction at 170 is 10 degrees from trans and
-    not 350 from it.
-    """
-    centres = torch.tensor(list(WELLS.values()), dtype=degrees.dtype)
-    offsets = wrap_to_pi(
-        torch.deg2rad(degrees.unsqueeze(-1) - centres)
-    ).rad2deg()
-    index = offsets.abs().argmin(dim=-1)
-    return index, offsets.gather(-1, index.unsqueeze(-1)).squeeze(-1)
-
-
-def histogram(values: torch.Tensor, low: float, high: float, bins: int) -> list[int]:
-    """Counts per equal-width bin; values outside the range are clamped in."""
-    if values.numel() == 0:
-        return [0] * bins
-    width = (high - low) / bins
-    index = ((values - low) / width).floor().to(torch.long).clamp(0, bins - 1)
-    counts = torch.zeros(bins, dtype=torch.long)
-    return counts.scatter_add_(0, index, torch.ones_like(index)).tolist()
-
-
-def draw(counts: list[int], low: float, high: float, width: int = 48) -> str:
-    """An ASCII bar chart, because this is read in a job log over a git push."""
-    peak = max(counts) or 1
-    step = (high - low) / len(counts)
-    total = sum(counts) or 1
-    lines = []
-    for i, count in enumerate(counts):
-        left = low + i * step
-        bar = "#" * round(width * count / peak)
-        lines.append(
-            f"  {left:7.0f} to {left + step:7.0f} | {bar:<{width}} "
-            f"{count:6d}  {100 * count / total:5.1f}%"
-        )
-    return "\n".join(lines)
 
 
 def collect(rule, config, stems, backbone: str, device: str, seed: int):
