@@ -1,0 +1,45 @@
+host : bun153
+run  : scripts/basin_probe.py breakdown runs/v5_native/best.pt --device cpu
+
+breakdown: runs/v5_native/best.pt at update 59500, CASP13, 79 targets, 100 steps, cpu
+
+17979 residues, 22.7% in the wrong well overall
+
+--- by burial ---
+
+  core (5744 residues)      :  14.9% wrong
+  non-core (12235 residues) :  26.3% wrong
+
+--- by residue type, worst first, types with 100+ residues ---
+
+  SER   43.7%  of  1553
+  GLU   33.5%  of  1252
+  ASP   28.5%  of  1209
+  GLN   27.9%  of   840
+  ARG   26.1%  of  1077
+  ASN   25.4%  of  1085
+  MET   23.9%  of   511
+  CYS   23.6%  of   237
+  LYS   22.9%  of  1122
+  THR   22.2%  of  1398
+  HIS   20.2%  of   465
+  VAL   18.5%  of  1582
+  TRP   15.4%  of   383
+  LEU   13.1%  of  2112
+  ILE   13.0%  of  1315
+  TYR   12.7%  of   895
+  PHE    9.2%  of   943
+
+--- spatially: is the failure cooperative? ---
+
+  share of chi1 neighbours also wrong, given self wrong  :  25.4%
+  share of chi1 neighbours also wrong, given self right  :  20.0%
+  base rate                                              :  22.7%
+
+Reading it: if the two conditional shares both sit at the base rate,
+wrong wells are spatially independent and each residue fails alone.
+A raised share given self-wrong is a cooperative failure, which is
+the co-solving story and would make the clamp test's native arm the
+place to look for the fix.
+
+exit : 0

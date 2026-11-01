@@ -520,6 +520,23 @@ def run_stationary(rule, config, stems, args) -> int:
 # --------------------------------------------------------------------------
 
 
+def neighbour_wrong_share(
+    near: torch.Tensor, wrong: torch.Tensor, eligible: torch.Tensor
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """``(share, valid)``: the wrong-well share of each residue's neighbours.
+
+    ``valid`` marks residues with at least one eligible neighbour. They have
+    to be excluded rather than counted as 0.0, because a residue the statistic
+    cannot speak about would otherwise drag both conditional means toward
+    zero -- and unevenly, since isolated residues are surface residues and
+    surface residues are the wrong ones more often.
+    """
+    selected = near & eligible.unsqueeze(0)
+    total = selected.sum(dim=1)
+    share = (selected & wrong.unsqueeze(0)).sum(dim=1) / total.clamp_min(1)
+    return share, total > 0
+
+
 def run_breakdown(rule, config, stems, args) -> int:
     """Split the wrong-well rate by burial, by residue type, and spatially.
 
@@ -529,7 +546,10 @@ def run_breakdown(rule, config, stems, args) -> int:
     the co-solving story. If they are spatially independent, each residue is
     failing on its own and the rule is closer to a per-residue lookup.
     """
-    flags, names, cores, neighbour_wrong = [], [], [], []
+    flags, names, cores = [], [], []
+    # One (share, valid, wrong) triple per stratum, so the spatial statistic
+    # can be read within a burial class as well as over everything.
+    strata: dict[str, list] = {"all": [], "core": [], "non-core": []}
     for index, _stem, topo, native_coords in each_target(
         stems, args.backbone, args.device
     ):
@@ -542,28 +562,38 @@ def run_breakdown(rule, config, stems, args) -> int:
         pred_well = nearest_well(chi1_degrees(packed, torsion))[0]
         wrong = native_well != pred_well
 
-        # Neighbours by CB distance at the rule's own cutoff, restricted to
-        # residues that have a chi1 to be wrong about.
+        counts = cb_neighbour_counts(native_coords, topo).cpu()
+        core_mask = classify_burial(counts)["core"].cpu()
+
+        # Neighbours by CB distance at the rule's own cutoff.
         cb = frame_atom_coords(native_coords, topo)[:, 4, :].cpu()
-        close = (torch.cdist(cb, cb) <= BURIAL_RADIUS) & scored.unsqueeze(0)
-        close.fill_diagonal_(False)
-        n_close = close.sum(dim=1).clamp_min(1)
-        share = (close & wrong.unsqueeze(0)).sum(dim=1) / n_close
+        near = torch.cdist(cb, cb) <= BURIAL_RADIUS
+        near.fill_diagonal_(False)
+
+        groups = {
+            "all": torch.ones_like(scored),
+            "core": core_mask,
+            "non-core": ~core_mask,
+        }
+        for name, group in groups.items():
+            eligible = scored & group
+            share, valid = neighbour_wrong_share(near, wrong, eligible)
+            # The subject is restricted to the same class as its neighbours,
+            # so burial cannot produce the correlation on its own.
+            subject = eligible & valid
+            strata[name].append((share[subject], wrong[subject]))
 
         flags.append(wrong[scored])
-        neighbour_wrong.append(share[scored])
         names.extend(
             name for name, keep in zip(torsion.resnames, scored.tolist()) if keep
         )
-        counts = cb_neighbour_counts(native_coords, topo).cpu()
-        cores.append(classify_burial(counts)["core"][scored])
+        cores.append(core_mask[scored])
 
     if not flags:
         print("no usable targets")
         return 1
 
     wrong = torch.cat(flags)
-    share = torch.cat(neighbour_wrong)
     core = torch.cat(cores)
     base = percent(wrong)
 
@@ -587,20 +617,34 @@ def run_breakdown(rule, config, stems, args) -> int:
 
     print("\n--- spatially: is the failure cooperative? ---\n")
     print(
-        f"  share of chi1 neighbours also wrong, given self wrong  : "
-        f"{100 * float(share[wrong].mean()):5.1f}%"
+        "  Share of a residue's chi1 neighbours within 10 A that are also in"
+        "\n  the wrong well. Stratified because burial predicts wrongness AND is"
+        "\n  spatially clumped, so the 'all' row cannot tell a cooperative"
+        "\n  failure from two surface residues happening to be neighbours. In"
+        "\n  the core and non-core rows both the subject and its neighbours are"
+        "\n  restricted to that class, which removes the confound.\n"
     )
+    print("  stratum     self wrong   self right   difference        n")
+    for name in ("all", "core", "non-core"):
+        share = torch.cat([s for s, _w in strata[name]])
+        flag = torch.cat([w for _s, w in strata[name]])
+        if not bool(flag.any()) or not bool((~flag).any()):
+            continue
+        bad = 100 * float(share[flag].mean())
+        good = 100 * float(share[~flag].mean())
+        print(
+            f"  {name:<10}  {bad:9.1f}%  {good:10.1f}%  {bad - good:+10.1f}"
+            f"  {flag.numel():7d}"
+        )
+    print(f"\n  base rate over everything : {base:5.1f}%")
     print(
-        f"  share of chi1 neighbours also wrong, given self right  : "
-        f"{100 * float(share[~wrong].mean()):5.1f}%"
-    )
-    print(f"  base rate                                              : {base:5.1f}%")
-    print(
-        "\nReading it: if the two conditional shares both sit at the base rate,"
+        "\nReading it: a difference near zero in the *stratified* rows means"
         "\nwrong wells are spatially independent and each residue fails alone."
-        "\nA raised share given self-wrong is a cooperative failure, which is"
-        "\nthe co-solving story and would make the clamp test's native arm the"
-        "\nplace to look for the fix."
+        "\nA positive difference that survives stratification is a cooperative"
+        "\nfailure -- an early wrong commitment propagating -- which is the"
+        "\nco-solving story and would make the clamp test's native arm the"
+        "\nplace to look for the fix. The identity rule gives this statistic a"
+        "\nflat null, since its errors are independent uniform draws."
     )
     return 0
 
