@@ -1,4 +1,40 @@
-C:\Users\uquadhik\Library\University\Year1\Structures\AANCA\.venv\Lib\site-packages\biotite\structure\io\pdb\file.py:153: UserWarning: 2253 elements were guessed from atom name
-  warnings.warn(
-C:\Users\uquadhik\Library\University\Year1\Structures\AANCA\.venv\Lib\site-packages\biotite\structure\io\pdb\file.py:153: UserWarning: 1921 elements were guessed from atom name
-  warnings.warn(
+CASP13, backbone set 'casp_all'
+targets numbered T949-T1022
+
+chi1 wrong-well rate by residue type, from the baselines' own structures
+(AANCA's own column is in docs/benchmarks/basin_breakdown_v5_native.log)
+
+  type        scwrl       faspr rosetta_pac   dl_packer AttnPacker_      n
+  LEU        12.9%       11.9%       11.6%        9.2%        7.0%     2112
+  VAL        14.9%       14.9%       13.8%       11.3%       28.2%     1582
+  SER        39.1%       39.1%       37.8%       29.9%       26.9%     1553
+  THR        19.6%       19.3%       18.7%       15.9%       15.3%     1398
+  ILE        10.9%       10.7%        9.7%        8.3%        7.8%     1315
+  GLU        31.1%       29.6%       30.0%       24.5%       20.3%     1252
+  ASP        22.6%       22.9%       22.7%       16.7%       13.7%     1209
+  LYS        24.9%       23.0%       21.4%       17.1%       15.3%     1122
+  ASN        23.1%       21.8%       22.2%       17.6%       15.1%     1085
+  ARG        22.7%       24.6%       21.4%       16.7%       14.7%     1077
+  PHE         8.4%        5.7%        7.8%        4.7%        3.1%      943
+  TYR        10.8%        9.0%       11.3%        5.9%        4.8%      895
+  GLN        26.9%       28.4%       23.7%       21.2%       17.9%      840
+  MET        19.8%       19.2%       18.8%       15.5%       15.5%      511
+  HIS        14.8%       11.4%       13.3%        8.6%        8.4%      465
+  TRP         8.9%        7.3%        6.8%        5.5%        3.9%      383
+  CYS        18.6%       19.8%       14.8%       14.8%        9.7%      237
+  all        20.1%       19.5%       18.9%       15.0%       14.6%    17979
+
+DISCOUNT AttnPacker's VAL CELL. Its released structures label
+equivalent methyls arbitrarily, which HANDOFF already records as the
+reason its re-scored row is not an audit. VAL chi1 is N-CA-CB-CG1, so
+a CG1/CG2 swap moves it a full 120 degrees into a different well,
+which is why that one cell reads worse than SCWRL's while every other
+cell is the best in its row. LEU chi1 is N-CA-CB-CG and is untouched
+by the same swap, so LEU is unaffected -- the two together are the
+confirmation rather than a coincidence.
+
+Reading it: ours is 22.7% overall, SER 43.7%, PHE 9.2%. If the
+baselines show the same shape, the small polar types are the field's
+hard case and our deficit is a uniform scaling of everyone's problem.
+If they are flat across types where we are not, the shape is ours and
+it points at a specific missing ingredient rather than at capacity.

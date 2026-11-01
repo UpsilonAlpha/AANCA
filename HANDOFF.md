@@ -735,10 +735,93 @@ shown. The kappa 16 row says that substitution did not fully take. It is also
 the cheapest thing on this list to act on, since it is a loss term rather than
 an architecture.
 
-`basin_probe stationary` asks the rollout version of the question with a start
-that is native by construction, so every broken well is unambiguous, and
-`basin_probe breakdown` splits the 22.7 % by burial, by residue type, and
-spatially. Both queued (31346662, 31346663).
+**breakdown — where the 22.7 % lives, and it does cluster.** By burial, core
+14.9 % wrong against non-core 26.3 %: the rule is *better* where there is more
+environment to read, which is the direction co-solving predicts and also the
+direction every packer reports. By type the split is steric against polar —
+SER 43.7 %, GLU 33.5 %, ASP 28.5 % at one end; PHE 9.2 %, TYR 12.7 %, ILE
+13.0 %, LEU 13.1 % at the other. SER and THR together are **24.3 % of all chi1
+error from 16.4 % of the residues**; GLU, ASP, GLN and ASN are another 31.3 %.
+
+The spatial statistic survives burial stratification:
+
+      stratum     self wrong   self right   difference        n
+      all              25.4%        20.0%        +5.5    17977
+      core             18.6%        14.1%        +4.6     5741
+      non-core         29.1%        24.1%        +5.1    12230
+
+Wrong-well residues really do sit next to other wrong-well residues, and it is
+not burial doing it. The identity rule's null is flat in all three strata
+(-0.6, -0.2, +0.6), so the statistic is calibrated. **This is correlational.**
+Shared local difficulty beyond burial — an ill-resolved surface loop, a region
+of odd backbone geometry — would look identical. The clamp test is the
+interventional form of exactly this question, which is what makes it the one
+worth waiting for.
+
+**hbond — my own hypothesis, refuted in the direction I did not predict.** The
+obvious reading of SER 43.7 % was that a hydroxyl's chi1 is set by hydrogen
+bonding and nothing in the feature set names a hydrogen bond. Counting the N
+and O atoms of other residues within 3.5 A of the atom chi1 actually places
+(`OG` for SER, `OG1` for THR) says otherwise: among SER and THR the error
+**falls** as partners crowd in — 37.6 % at zero, 33.9 % at one, 30.5 % at two
+or more. The rule is already reading acceptor geometry and more constraint
+helps it. The control moves the other way, non-polar tips going 19.2 to 21.2 to
+35.1 %, so this is not an artefact of the partner-count variable. SER is not a
+hydrogen-bonding blind spot; it is small and under-determined, and its worst
+cell is the 797 residues with no partner at all — 7.4 % of all chi1 error from
+4.4 % of residues, where the crystal angle is partly arbitrary and partly set
+by water we do not model.
+
+**Which made the ownership question answerable with no rollout at all.**
+`scripts/validate_benchmark.py --by-type` scores the baselines' own released
+structures for chi1 well-match per residue type, on the same target
+intersection and the same 17,979 residues, so the columns are comparable to
+ours rather than adjacent to it
+(`docs/benchmarks/baselines_by_type_casp13.log`).
+
+      type        scwrl       faspr rosetta_pac   dl_packer AttnPacker_      n
+      SER        39.1%       39.1%       37.8%       29.9%       26.9%     1553
+      GLU        31.1%       29.6%       30.0%       24.5%       20.3%     1252
+      ASP        22.6%       22.9%       22.7%       16.7%       13.7%     1209
+      LEU        12.9%       11.9%       11.6%        9.2%        7.0%     2112
+      TYR        10.8%        9.0%       11.3%        5.9%        4.8%      895
+      PHE         8.4%        5.7%        7.8%        4.7%        3.1%      943
+      all        20.1%       19.5%       18.9%       15.0%       14.6%    17979
+
+**The shape is the field's, not ours.** SER is the worst type for every method,
+PHE and TRP the best for every method. So the profile is a property of the
+problem.
+
+**And our deficit is not localised.** Against SCWRL, the weakest baseline, the
+excess reconciles to +453 residues = +2.52 points against the observed +2.6,
+and no type carries more than about a sixth of it: SER +71, ASP +71, VAL +57,
+then a long tail. We are level with SCWRL on LEU (1.02x), GLN (1.04x), GLU
+(1.08x) and PHE (1.10x), and we **beat** it on LYS (0.92x). The clearest
+relative outliers are TRP (1.73x) and HIS (1.36x), but between them they are
++50 residues of the +453.
+
+*An earlier commit message (8c62a68) overstated this.* It read the ratios
+against FASPR, which is unusually strong on PHE (5.7 %) and TRP (7.3 %), and
+concluded we are specifically weak on the rigid rings. Against SCWRL that
+claim mostly dissolves — PHE is 1.10x. The robust statement is that the
+deficit is broadly uniform, roughly 1.1-1.3x across most types, which argues
+**against** a single missing physical term and for a general capability gap:
+capacity, data, or search.
+
+Note the asymmetry in the gaps, because it sets the nearer milestone. We are
++2.6 points from SCWRL and +8.1 from AttnPacker. The classical floor is within
+reach; the learned ceiling is not close.
+
+**A real implementation gap found while reading for this.** There is **no
+clash term in the v1 loss**. `training_objective` is
+`reconstruction + noop_weight * noop + restraint`, where `restraint` is the
+bond/angle harmonic and only fires when `bond_geometry` is on. The only
+occurrence of "clash" in `losses.py` is a comment explaining that bond
+geometry must be restrained lest the rule relieve a clash term — one that was
+never implemented. The agreed first-experiment recipe specified "chi-angle
+error plus an all-atom clash term". This is not offered as the explanation of
+anything above; it is a planned component that was omitted and should go in.
+
 
 ### Why v4 looks the way it does
 

@@ -176,7 +176,12 @@ def chi1_wells_by_type(casp: int, method: str, backbone: str = "casp_all"):
     from aanca.rotamers import nearest_well
 
     counts: dict[str, list[int]] = {}
-    stems = targets_for(RESULTS, casp, method, backbone)
+    # The same target intersection ``scripts/benchmark.py`` averages our own
+    # row over, not this method's own larger set. Scoring each baseline on
+    # whatever it happened to cover would compare our 17,979 residues against
+    # someone else's 19,272 and call the difference a result.
+    covered = [m for m in REFERENCE[casp] if (RESULTS / m / backbone).is_dir()]
+    stems = targets_for(RESULTS, casp, covered, backbone)
     for stem in stems:
         try:
             native = load_protein(
@@ -236,6 +241,16 @@ def print_by_type(casp: int, methods: list[str], backbone: str) -> None:
         cells += f"{100 * wrong / seen:11.1f}%" if seen else "           -"
         grand = max(grand, seen)
     print(f"  {'all':<4}" + cells + f"  {grand:7d}")
+    print(
+        "\nDISCOUNT AttnPacker's VAL CELL. Its released structures label"
+        "\nequivalent methyls arbitrarily, which HANDOFF already records as the"
+        "\nreason its re-scored row is not an audit. VAL chi1 is N-CA-CB-CG1, so"
+        "\na CG1/CG2 swap moves it a full 120 degrees into a different well,"
+        "\nwhich is why that one cell reads worse than SCWRL's while every other"
+        "\ncell is the best in its row. LEU chi1 is N-CA-CB-CG and is untouched"
+        "\nby the same swap, so LEU is unaffected -- the two together are the"
+        "\nconfirmation rather than a coincidence."
+    )
     print(
         "\nReading it: ours is 22.7% overall, SER 43.7%, PHE 9.2%. If the"
         "\nbaselines show the same shape, the small polar types are the field's"
