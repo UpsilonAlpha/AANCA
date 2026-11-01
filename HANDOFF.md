@@ -823,6 +823,70 @@ error plus an all-atom clash term". This is not offered as the explanation of
 anything above; it is a planned component that was omitted and should go in.
 
 
+**stationary — and it corrects two things written above.** Started at the
+crystal structure exactly, 79 targets, 100 steps
+(`docs/benchmarks/basin_stationary_v5_native.log`):
+
+      wells broken        :  0.76%  (136 residues)
+      chi1 MAE from native:   2.38 deg
+      within 20 deg       :  98.5%
+
+      proposed |delta chi| per step from native, degrees
+      step    1 :   0.097      step   20 :   0.054
+      step    2 :   0.206      step   50 :   0.050
+      step   10 :   0.086      step  100 :   0.042
+
+**Correction 1. The native structure IS very nearly a fixed point.** The sweep
+entry above says it is not, on the strength of the kappa 16 row, and that was
+over-read. Handed the crystal structure the rule breaks 0.76 % of wells and
+moves chi1 by 2.38 degrees — and its proposed update decays to 0.042 deg/step,
+which is *quieter than at its own attractor from a random start* (0.18-0.44
+deg/step in `converge`, on an easier 8-target subset, so compare the order of
+magnitude and not the digits). So `--noop-weight 0` plus
+`--native-probability 0.2` did substantially work, and the claim that the
+substitution "did not fully take" was wrong. It took, to within 0.76 %.
+
+**Correction 2. There is not one attractor per residue.** The entry above says
+the rule has a single attractor it reaches from anywhere, which is what
+`descent` shows *at kappa 0* and which I generalised too far. Put the three
+measurements together instead:
+
+- from the exact native structure, the rule holds it (0.76 % broken);
+- at kappa 16 and 8, roughly 12-17 deg of chi1 noise, the output still tracks
+  the start (99.5 to 97.7, 98.0 to 96.4) rather than relaxing to 77 %;
+- at kappa 4 the two effects balance (92.5 to 92.8);
+- at kappa 2 and below the output saturates at 77-78 % whatever the start was,
+  and `descent` confirms directly that the predicted well is then nearly
+  independent of the starting well.
+
+That is a landscape with a **narrow native basin** — it holds out to something
+like 12-24 degrees of perturbation — sitting inside a **dominant basin** that
+everything further away falls into. The 1.8 points lost at kappa 16 against
+only 0.76 % lost from exact native is the basin edge already being felt at
+12 degrees: about a point of residues that the noise left in the right well
+but displaced far enough that the rule relaxed them to its own answer instead
+of back to the crystal one.
+
+**So Ulban was partly right, in a more precise form than either of us put it.**
+There is real basin structure. But the benchmark's uniform start lies far
+outside the native basin, which is why the 22.7 % is still a wrong answer and
+not a basin artefact — `descent` establishes that at kappa 0 directly, and
+nothing here weakens it.
+
+**What this re-opens, which the histogram entry had closed.** That entry says
+rotamer-library initialisation is not the fix, because the rule already lands
+on wells. That reasoning is still true and the conclusion no longer follows.
+If a start inside the native basin is *kept and tightened* — and at kappa 16
+the MAE improves from 11.59 to 8.72 — then initialising from something with
+better well selection than ours and refining with the rule is worth measuring.
+SCWRL is 79.9 % right against our 77.3 %, and our within-well precision is
+good (10.93 deg when the well is right, 84.5 % within 20). Whether the
+composite beats either part is an experiment, not an argument, and it needs
+the baselines' structures as starting coordinates rather than a random draw —
+which `aanca.casp.randomised_start` makes a one-argument change. It would be a
+hybrid rather than a method, and it says nothing about whether the rule alone
+is good. Worth knowing anyway.
+
 ### Why v4 looks the way it does
 
 Three settings changed at once, which is usually bad practice and is right here: all three came

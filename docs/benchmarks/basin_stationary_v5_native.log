@@ -1,0 +1,44 @@
+host : bun151
+run  : scripts/basin_probe.py stationary runs/v5_native/best.pt --device cpu
+
+stationary: runs/v5_native/best.pt at update 59500, CASP13, 79 targets, 100 steps, cpu
+
+17979 residues started at their crystal chi1
+
+--- what a rollout from native costs ---
+
+  wells broken        :  0.76%  (136 residues)
+  chi1 MAE from native:   2.38 deg
+  within 20 deg       :  98.5%
+
+  broken, core surface split : core  0.35%, non-core  0.95%
+
+--- which residues lose their well ---
+
+  ILE   1.83%  of  1315
+  MET   1.76%  of   511
+  LYS   0.98%  of  1122
+  GLN   0.95%  of   840
+  LEU   0.90%  of  2112
+  VAL   0.88%  of  1582
+  CYS   0.84%  of   237
+  ASN   0.83%  of  1085
+
+--- proposed |delta chi| per step from native, degrees ---
+
+  step    1 :   0.097
+  step    2 :   0.206
+  step    5 :   0.123
+  step   10 :   0.086
+  step   20 :   0.054
+  step   50 :   0.050
+  step  100 :   0.042
+
+Reading it: a rule whose attractor is the native state would break
+almost no wells and sit near zero MAE. Whatever it breaks here is the
+same failure the kappa 16 row of `sweep` shows, measured without the
+ambiguity of a perturbed start, and it is a training problem rather
+than a capacity one -- the fixed point at native is what
+``--native-probability`` was meant to supervise.
+
+exit : 0
