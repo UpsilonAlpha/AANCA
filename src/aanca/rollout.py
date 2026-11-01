@@ -144,12 +144,25 @@ def step_once(
     topo: FeatureTopology,
     config: RolloutConfig,
     mask: Tensor,
+    frozen: Tensor | None = None,
 ) -> tuple[RolloutState, Tensor, Tensor]:
     """One application of the rule. Returns ``(new_state, mu, log_kappa)``.
 
     The mask gates the hidden state as well as the coordinates. Gating only the
     coordinates would let a frozen residue still advance its own memory, which
     is not what asynchrony means -- the cell either ticks or it does not.
+
+    ``frozen`` is a different thing and gates **geometry only**, which is the
+    one place that distinction is deliberately broken. It exists for the clamp
+    test (``scripts/clamp_test.py``): to ask whether the rule reads its
+    neighbours' side-chain conformations, some residues are pinned at a known
+    conformation while the rest solve around them. A pinned residue has to keep
+    ticking, because ``AANCARule.forward`` builds every message from
+    ``cat([node_features, hidden])`` of the *sender* -- so freezing its hidden
+    state as well would both remove a channel and feed its neighbours an
+    all-zero hidden vector at step 50, which never occurs in training. Pinning
+    the coordinates alone leaves every input on-distribution except the one
+    under test.
     """
     graph = build_graph(
         state.coords.to(config.feature_dtype),
@@ -172,11 +185,15 @@ def step_once(
     gate = mask.unsqueeze(-1)
     hidden = torch.where(gate, new_hidden, state.hidden)
 
-    chi = torch.where(gate, mu, torch.zeros_like(mu)).to(state.coords.dtype)
+    # The cell ticks under ``mask``; its atoms move under ``mask & ~frozen``.
+    moving = mask if frozen is None else (mask & ~frozen)
+    move = moving.unsqueeze(-1)
+
+    chi = torch.where(move, mu, torch.zeros_like(mu)).to(state.coords.dtype)
     bond, angle = rule.internal_deltas(node, hidden)
     if bond is not None:
-        bond = torch.where(gate, bond, torch.zeros_like(bond)).to(state.coords.dtype)
-        angle = torch.where(gate, angle, torch.zeros_like(angle)).to(state.coords.dtype)
+        bond = torch.where(move, bond, torch.zeros_like(bond)).to(state.coords.dtype)
+        angle = torch.where(move, angle, torch.zeros_like(angle)).to(state.coords.dtype)
 
     coords = apply_internal_deltas(
         state.coords, topo.torsion, chi=chi, angle=angle, bond=bond
@@ -192,12 +209,17 @@ def rollout(
     generator: torch.Generator | None = None,
     supervise_step: int | None = None,
     record: bool = True,
+    frozen: Tensor | None = None,
 ) -> RolloutResult:
     """Unroll ``config.steps`` times, detaching every ``config.truncate`` steps.
 
     ``supervise_step`` captures ``(mu, log_kappa)`` at that step for the loss.
     The graph is never detached at or after that step, so the captured outputs
     keep a gradient path back at least to the preceding truncation boundary.
+
+    ``frozen`` pins those residues' geometry for the whole rollout; see
+    :func:`step_once`. It does not touch the mask stream, so a frozen and an
+    unfrozen rollout from the same seed differ only in which atoms moved.
     """
     result = RolloutResult(state=state)
     chi_mask = topo.torsion.chi_mask
@@ -207,7 +229,7 @@ def rollout(
             topo.n_residues, config.update_probability, state.coords.device, generator
         )
         seen = state.coords
-        state, mu, log_kappa = step_once(rule, state, topo, config, mask)
+        state, mu, log_kappa = step_once(rule, state, topo, config, mask, frozen)
 
         if record:
             with torch.no_grad():

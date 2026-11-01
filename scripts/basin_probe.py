@@ -70,59 +70,21 @@ import torch
 
 from aanca import checkpoint as ckpt
 from aanca.casp import REFERENCE, RESULTS, pack_from_random, randomised_start, targets_for
+from aanca.diagnostics import (
+    chi1_degrees,
+    chi1_residues,
+    circular_error,
+    each_target,
+    percent,
+)
 from aanca.model import AANCARule
 from aanca.rollout import RolloutConfig, initial_state, rollout
 from aanca.rotamers import WELL_NAMES, nearest_well
-from aanca.structure import load_protein
-from aanca.torch_geometry import measure_chis, wrap_to_pi
-from aanca.torch_graph import feature_topology
 
 #: Offset between seed replicates in ``bestof``. Large enough that replicate 0
 #: with ``--seed 0`` reproduces the benchmark's own stream exactly, and no
 #: replicate ever collides with another target's seed.
 SEED_STRIDE = 100_000
-
-
-def chi1_degrees(coords: torch.Tensor, torsion) -> torch.Tensor:
-    """chi1 of every residue, in degrees, on the CPU."""
-    return torch.rad2deg(measure_chis(coords, torsion)[:, 0]).cpu()
-
-
-def chi1_residues(torsion) -> torch.Tensor:
-    """Residues with a real chi1 that the three-well model describes."""
-    has_chi1 = torsion.chi_mask[:, 0].cpu()
-    is_pro = torch.tensor(
-        [name == "PRO" for name in torsion.resnames], dtype=torch.bool
-    )
-    return has_chi1 & ~is_pro
-
-
-def circular_error(predicted: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
-    """``|predicted - target|`` in degrees, by the shortest arc."""
-    return wrap_to_pi(torch.deg2rad(predicted - target)).rad2deg().abs()
-
-
-def each_target(stems, backbone: str, device: str):
-    """``(index, stem, topo, native_coords)``, skipping unreadable files.
-
-    The index is the seed offset, so it counts every stem whether or not the
-    file loaded -- a target that starts failing to parse must not shift the
-    seeds of the targets after it, or two runs of this script stop being
-    comparable.
-    """
-    for index, stem in enumerate(stems):
-        try:
-            protein = load_protein(
-                RESULTS / "native" / backbone / f"{stem}.pdb", repair_columns=True
-            )
-            topo, native_coords = feature_topology(protein, device=device)
-        except Exception:  # malformed or unreadable; benchmark.py reports these
-            continue
-        yield index, stem, topo, native_coords
-
-
-def percent(numerator: torch.Tensor) -> float:
-    return 100.0 * float(numerator.float().mean())
 
 
 # --------------------------------------------------------------------------
