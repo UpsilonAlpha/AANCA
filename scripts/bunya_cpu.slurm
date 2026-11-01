@@ -51,7 +51,15 @@ export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK:-8}"
 echo "host : $(hostname)"
 echo "run  : $*"
 echo
-python "$@"
+# -u, always. Every diagnostic on the night of 1-2 Nov wrote its whole output
+# in one buffered flush at exit, which cost two things. There was no way to see
+# how far a job had got -- the .out sat at these two header lines for hours, so
+# "still running" and "hung" were indistinguishable -- and a job killed on its
+# walltime would have left nothing at all, throwing away every target it had
+# already packed. `bestof` came within 25 minutes of exactly that after five
+# and three quarter hours. Unbuffered costs nothing here: these scripts print
+# a few dozen lines, not a stream.
+python -u "$@"
 RC=$?
 echo
 echo "exit : ${RC}"
