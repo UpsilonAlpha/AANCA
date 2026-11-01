@@ -1,0 +1,38 @@
+host : bun154
+run  : scripts/basin_probe.py descent runs/v5_native/best.pt --device cpu
+
+descent: runs/v5_native/best.pt at update 59500, CASP13, 79 targets, 100 steps, cpu
+
+17979 residues with a chi1, prolines excluded
+
+--- how often each is right ---
+
+  the start we handed the rule :  33.1%
+  the rule's answer            :  77.3%
+  the rule stayed where it started :  34.7%
+
+--- the transition matrix: where it started, where it ended ---
+
+  start \ predicted        g-       t      g+       n
+  g-                   56.5%   30.7%   12.8%     5919
+  t                    54.2%   31.4%   14.3%     5937
+  g+                   53.0%   30.1%   16.9%     6123
+
+--- the number that decides it ---
+
+  right when the start was already right (5953 residues):  79.1%
+  right when the start was wrong         (12026 residues):  76.4%
+
+  of the 4076 wrong answers,  37.6% stayed in the well they started in
+  of the 13903 right answers,  33.9% stayed in the well they started in
+
+Reading it: pure descent leaves everything where it started, so
+'stayed' would be near 100% and the answer would be right only as
+often as the start was -- about a third. Pure classification makes
+the predicted well independent of the start, so every row of the
+matrix would be the same and would reproduce the native well
+frequencies (g- 50.2%, t 32.9%, g+ 16.9%). The gap between the two
+conditional rates above is how much the start still matters once
+the rule has run.
+
+exit : 0

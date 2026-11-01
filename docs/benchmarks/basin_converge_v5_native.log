@@ -1,0 +1,50 @@
+host : bun155
+run  : scripts/basin_probe.py converge runs/v5_native/best.pt --device cpu --limit 8
+
+converge: runs/v5_native/best.pt at update 59500, CASP13, 8 targets, 100 steps, cpu
+
+1367 residues over 8 targets
+
+--- the structure at each rollout length ---
+
+   steps   well right     chi1 MAE   drift from step 100
+      10        50.4%        67.69                63.25
+      20        71.6%        39.57                27.85
+      30        80.2%        29.26                12.04
+      50        82.7%        25.67                 4.44
+     100        83.7%        24.66                 0.00
+     200        83.9%        24.39                 2.38
+     400        83.5%        24.53                 3.67
+     700        83.8%        24.36                 4.32
+    1000        83.8%        24.35                 4.73
+
+--- proposed |delta chi| per step, degrees, mean over targets ---
+
+  (the rule's output, before the asynchronous mask gates it)
+
+  step     1 | ############                                       2.631
+  step     2 | #########################                          5.562
+  step     3 | ############################                       6.251
+  step     5 | #########################                          5.658
+  step    10 | ######################################             8.539
+  step    20 | ###################################                7.827
+  step    30 | ###############                                    3.360
+  step    50 | ####                                               0.883
+  step   100 | ##                                                 0.362
+  step   200 | #                                                  0.229
+  step   400 | #                                                  0.181
+  step   700 | #                                                  0.335
+  step  1000 | ##                                                 0.435
+
+  mean over the last 100 steps :   0.269 deg
+  mean around the midpoint     :   0.218 deg
+  largest step-to-step change in the last 100 :   0.089 deg
+
+Reading it: a curve decaying toward zero with a small final swing is
+a fixed point. A curve that flattens at a non-zero value is a rule
+still pushing at convergence, held in place only by the mask; a
+large final swing is the oscillation some Graph NCA rules show. The
+drift column is the stability claim -- it should stay near zero well
+past the length the rule was trained at.
+
+exit : 0

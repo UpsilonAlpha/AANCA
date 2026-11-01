@@ -573,39 +573,100 @@ representations already carry identity information and the joint model's premise
 is confirmed before anything is built. At background, the premise is in doubt.
 One CPU job, no training of the rule.
 
-### Is the 22.7 % a failure at all? — Ulban's forcefield reading, 2026-11-01
+### Is the 22.7 % a failure at all? — measured 2026-11-01, and it is
 
 Ulban's objection to the framing above: if the rule is learning a forcefield,
 then rolling downhill to the nearest well from a randomised start is *correct
 behaviour*, and the wrong-well rate measures the basin structure of the energy
-landscape rather than an error. This is right, it is testable, and the test is
-the same one the prior-art artifact identified as the part of this work that is
-ours ("Is it actually a fixed point?" — convergence, stability, basin size).
-None of the three has been measured.
+landscape rather than an error. The test is the one the prior-art artifact
+called the part of this work that is ours ("Is it actually a fixed point?" —
+convergence, stability, basin size), and `scripts/basin_probe.py` runs it.
 
-Four measurements, one script, no retraining. `pack_from_random` derives the
-start deterministically from `--seed`, so the randomised starting chis are
-exactly recoverable.
+**The reading does not hold.** The starting conformation explains about 8 % of
+the wrong-well rate. Two of the four measurements are in
+(`docs/benchmarks/basin_descent_v5_native.log`, 31329786, 14:39;
+`basin_converge_v5_native.log`, 31329822, 12:35); `sweep` (31329787) and
+`bestof` (31329821) were still running.
 
-1. **Start-well correlation.** Is the predicted well predicted by the *starting*
-   well? Strong correlation means gradient descent in a landscape, and the
-   benchmark number is then a basin-of-attraction measurement under a uniform
-   prior, not an accuracy. No correlation means the rule ignores where it started
-   and the 22.7 % is a genuine selection error.
-2. **Best-of-N over seeds.** If the native well is reachable from *some* start,
-   the rule knows more than the single-seed number shows. This also sets up the
-   honest comparison: DiffPack is conditioned on the noise level and samples a
-   posterior; we do deterministic descent from one point. Report single-shot
-   (the published protocol) and best-of-N separately, and say which is which.
-3. **Basin sweep.** Recovery accuracy against perturbation magnitude, from small
-   von Mises noise to uniform. The basin-size curve.
-4. **Convergence and stability.** Mean |delta chi| per step — does it decay or
-   oscillate, as some of Grattarola's morphogenesis rules did? And drift from the
-   step-100 structure when run to 1000.
+**descent — the start barely matters.** 17,979 residues, the same set and
+protocol as the histogram, which it reproduces (77.3 % well-right).
 
-If (1) comes back strongly correlated, the chi1 column stops being the kill
-signal it looks like and the paper's claim moves from accuracy to landscape.
-If it comes back flat, capacity and the clamp test stand as written above.
+|                                | measured | pure descent | pure classification |
+| ------------------------------ | -------- | ------------ | ------------------- |
+| start already in native well   | 33.1 %   | 33.1 %       | 33.1 %              |
+| rule's answer right            | 77.3 %   | 33.1 %       | —                   |
+| stayed in the well it started  | 34.7 %   | ~100 %       | 33.1 %              |
+
+33.1 % is not a guess for the last column: under independence
+P(stayed) = sum_w P(start=w)·P(pred=w), which is 33.1 % for these marginals.
+The measured 34.7 % is **1.6 points** above it. The transition matrix says the
+same thing — every row is the rule's own output distribution, whatever the
+start:
+
+      start \ predicted        g-       t      g+       n
+      g-                   56.5%   30.7%   12.8%     5919
+      t                    54.2%   31.4%   14.3%     5937
+      g+                   53.0%   30.1%   16.9%     6123
+
+Those rows average to g- 54.55 / t 30.73 / g+ 14.69, which is the histogram's
+predicted-well distribution (54.6 / 30.7 / 14.7) to two decimals — an
+independent cross-check that the two runs measure the same object. The residual
+diagonal lift is about +2 points per row.
+
+So the rule is **not** descending from where it was dropped; it recomputes the
+answer from the environment. Right when the start was already right: 79.1 %.
+Right when the start was wrong: 76.4 %. A perfect start would move the error
+from 22.7 % to 20.9 %, so **92 % of the wrong-well errors are not attributable
+to the starting conformation.**
+
+**converge — it is a fixed point, and that is a real result.** 8 targets only
+(1,367 residues, 83.7 % well-right), so the absolute numbers are not comparable
+to the published row — an easier subset. The *shape* is the finding.
+
+       steps   well right     chi1 MAE   drift from step 100
+          10        50.4%        67.69                63.25
+          50        82.7%        25.67                 4.44
+         100        83.7%        24.66                 0.00
+         200        83.9%        24.39                 2.38
+        1000        83.8%        24.35                 4.73
+
+The proposed |delta chi| peaks at 8.5 deg around step 10-20 — the hidden state
+starts empty, so the rule is nearly silent at step 1 (2.6 deg), builds
+perception, acts hardest, then settles — and decays to 0.18-0.44 deg from step
+200 on, with a largest step-to-step change in the last 100 steps of 0.089 deg.
+Not the oscillation some of Grattarola's morphogenesis rules show. Drift from
+the step-100 structure is 4.73 deg after ten times the benchmark's rollout, and
+**decelerating**: 0.024, 0.0065, 0.0022, 0.0014 deg/step over the four
+intervals. Saturating, not diverging.
+
+Two honest caveats. The residual update sits on a small **non-zero** floor
+rather than reaching zero, and ticks up slightly after step 400 (0.181 to
+0.435) — a slow wobble of a few tenths of a degree, worth re-running at 10,000
+steps before the stability claim goes in a paper. And 8 targets is a thin base
+for it.
+
+**What this settles, and what it moves.**
+
+- **The forcefield defence is closed.** There is one attractor per residue and
+  the rule reaches it from anywhere in the uniform start distribution. That is a
+  *better* dynamical claim than basin-dependence would have been, but it means a
+  wrong well is a wrong answer, not an unlucky draw.
+- **The steps probe is answered in passing, and it is the flat answer.** 100
+  against 400 steps moves well-right by 0.2 points. The benchmark is already run
+  past convergence, so the deficit is not a convergence artefact — which, per
+  the section above, leaves capacity and data at the front.
+- **The clamp test is now the decisive experiment.** `descent` shows the rule
+  ignores its own starting chi; it does *not* show whether it reads its
+  neighbours' side chains. Those are different claims and only the clamp test
+  separates them. If a half-native neighbourhood does not move the wrong-well
+  rate, the rule is a per-residue marginal predictor and the co-solving is
+  decorative — and note that 77.3 % is about what a backbone-dependent rotamer
+  library gets from backbone alone.
+- **A prediction for `bestof`, recorded before it lands.** If the attractor is
+  environment-determined, independent seeds should largely agree: "any seed
+  right" modestly above 77.3 % (the update-mask stream still differs between
+  seeds) and unanimity high. A much larger figure — say 95 % — would contradict
+  `descent` and one of the two would have to be wrong.
 
 ### Why v4 looks the way it does
 
