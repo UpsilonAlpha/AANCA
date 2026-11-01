@@ -1,0 +1,142 @@
+host : bun155
+run  : scripts/chi1_histogram.py runs/v5_native/best.pt --casp 13 --steps 100 --device cpu
+
+runs/v5_native/best.pt at update 59500, CASP13, 79 targets, 100 steps, every chi randomised, cpu
+
+17979 residues with a chi1 (0 prolines excluded from here on)
+
+signed chi1 error, predicted minus native (deg)
+     -180 to    -170 |                                                      29    0.2%
+     -170 to    -160 |                                                      41    0.2%
+     -160 to    -150 | #                                                    60    0.3%
+     -150 to    -140 | #                                                   116    0.6%
+     -140 to    -130 | ##                                                  165    0.9%
+     -130 to    -120 | ###                                                 249    1.4%
+     -120 to    -110 | ###                                                 256    1.4%
+     -110 to    -100 | ##                                                  221    1.2%
+     -100 to     -90 | ##                                                  164    0.9%
+      -90 to     -80 | ##                                                  178    1.0%
+      -80 to     -70 | #                                                   146    0.8%
+      -70 to     -60 | ##                                                  165    0.9%
+      -60 to     -50 | ##                                                  155    0.9%
+      -50 to     -40 | ##                                                  201    1.1%
+      -40 to     -30 | ###                                                 292    1.6%
+      -30 to     -20 | ######                                              564    3.1%
+      -20 to     -10 | #################                                  1707    9.5%
+      -10 to       0 | ################################################   4721   26.3%
+        0 to      10 | #########################################          3993   22.2%
+       10 to      20 | ##############                                     1336    7.4%
+       20 to      30 | ######                                              564    3.1%
+       30 to      40 | ###                                                 271    1.5%
+       40 to      50 | ##                                                  189    1.1%
+       50 to      60 | ##                                                  183    1.0%
+       60 to      70 | ##                                                  176    1.0%
+       70 to      80 | ##                                                  200    1.1%
+       80 to      90 | ###                                                 266    1.5%
+       90 to     100 | ###                                                 297    1.7%
+      100 to     110 | ###                                                 313    1.7%
+      110 to     120 | ###                                                 269    1.5%
+      120 to     130 | ##                                                  215    1.2%
+      130 to     140 | #                                                   122    0.7%
+      140 to     150 | #                                                    62    0.3%
+      150 to     160 |                                                      36    0.2%
+      160 to     170 |                                                      28    0.2%
+      170 to     180 |                                                      29    0.2%
+
+predicted chi1 (deg) -- wells at -60, +60, 180
+     -180 to    -170 | ##################                                 1569    8.7%
+     -170 to    -160 | #########                                           740    4.1%
+     -160 to    -150 | #####                                               464    2.6%
+     -150 to    -140 | ####                                                377    2.1%
+     -140 to    -130 | ####                                                312    1.7%
+     -130 to    -120 | ####                                                310    1.7%
+     -120 to    -110 | ###                                                 298    1.7%
+     -110 to    -100 | ####                                                340    1.9%
+     -100 to     -90 | #####                                               418    2.3%
+      -90 to     -80 | #########                                           756    4.2%
+      -80 to     -70 | ########################                           2045   11.4%
+      -70 to     -60 | ################################################   4126   22.9%
+      -60 to     -50 | #################                                  1422    7.9%
+      -50 to     -40 | ###                                                 250    1.4%
+      -40 to     -30 | #                                                    93    0.5%
+      -30 to     -20 | #                                                    43    0.2%
+      -20 to     -10 |                                                      12    0.1%
+      -10 to       0 |                                                       8    0.0%
+        0 to      10 |                                                       6    0.0%
+       10 to      20 |                                                       6    0.0%
+       20 to      30 |                                                       8    0.0%
+       30 to      40 | #                                                    76    0.4%
+       40 to      50 | ####                                                332    1.8%
+       50 to      60 | ###########                                         971    5.4%
+       60 to      70 | ############                                       1012    5.6%
+       70 to      80 | ##                                                  159    0.9%
+       80 to      90 |                                                      31    0.2%
+       90 to     100 |                                                      18    0.1%
+      100 to     110 |                                                      15    0.1%
+      110 to     120 |                                                      10    0.1%
+      120 to     130 |                                                       2    0.0%
+      130 to     140 |                                                       6    0.0%
+      140 to     150 |                                                       8    0.0%
+      150 to     160 |                                                      31    0.2%
+      160 to     170 | ###                                                 259    1.4%
+      170 to     180 | #################                                  1446    8.0%
+
+native chi1 (deg) -- the control: this is what on-the-wells looks like
+     -180 to    -170 | ##########################                         1961   10.9%
+     -170 to    -160 | #############                                       983    5.5%
+     -160 to    -150 | #####                                               356    2.0%
+     -150 to    -140 | ##                                                  123    0.7%
+     -140 to    -130 | #                                                    54    0.3%
+     -130 to    -120 |                                                      33    0.2%
+     -120 to    -110 | #                                                    48    0.3%
+     -110 to    -100 | #                                                    71    0.4%
+     -100 to     -90 | ##                                                  186    1.0%
+      -90 to     -80 | ########                                            582    3.2%
+      -80 to     -70 | ##########################                         1942   10.8%
+      -70 to     -60 | ################################################   3649   20.3%
+      -60 to     -50 | ##########################                         1975   11.0%
+      -50 to     -40 | ######                                              444    2.5%
+      -40 to     -30 | #                                                    76    0.4%
+      -30 to     -20 | #                                                    40    0.2%
+      -20 to     -10 |                                                       6    0.0%
+      -10 to       0 |                                                       8    0.0%
+        0 to      10 |                                                       6    0.0%
+       10 to      20 |                                                      10    0.1%
+       20 to      30 |                                                      19    0.1%
+       30 to      40 | #                                                    40    0.2%
+       40 to      50 | ###                                                 216    1.2%
+       50 to      60 | ###########                                         841    4.7%
+       60 to      70 | #################                                  1263    7.0%
+       70 to      80 | ######                                              467    2.6%
+       80 to      90 | ##                                                  124    0.7%
+       90 to     100 | #                                                    40    0.2%
+      100 to     110 |                                                       5    0.0%
+      110 to     120 |                                                       6    0.0%
+      120 to     130 |                                                       8    0.0%
+      130 to     140 |                                                      18    0.1%
+      140 to     150 |                                                      23    0.1%
+      150 to     160 | #                                                   106    0.6%
+      160 to     170 | ######                                              465    2.6%
+      170 to     180 | #######################                            1785    9.9%
+
+--- what the error is made of ---
+
+distance to the nearest well : predicted  12.82 deg mean,   7.90 median
+                               native      9.66 deg mean,   7.17 median
+
+predicted well is the native one : 77.3% (chance is about 33%)
+  g-  predicted  54.6% of residues, native  50.2%
+  t   predicted  30.7% of residues, native  32.9%
+  g+  predicted  14.7% of residues, native  16.9%
+
+when the well is right (13903 residues): |error|  10.93 deg mean, 84.5% within 20
+when it is wrong      (4076 residues): |error| 102.15 deg mean
+
+Reading it: predictions sitting as close to the wells as the natives do,
+with a well-match rate near chance, is well *selection* failing -- the
+rule picks real rotamers and picks wrong. Predictions sitting markedly
+further from the wells than the natives is *averaging* -- the rule lands
+between wells, at an angle no side chain occupies, which is what a von
+Mises NLL against the native rewards when it cannot resolve the mode.
+
+exit : 0

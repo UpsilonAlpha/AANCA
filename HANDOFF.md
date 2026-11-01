@@ -396,54 +396,80 @@ choose a chi1 well but does not compound once the well is fixed would look
 exactly like this. It is the same reading the k ladder gives, from an
 independent direction, on the published targets.
 
-### Why k=0 might be this bad — hypotheses, not findings
+### What the chi1 deficit is made of — measured, 2026-11-01
 
-The k ladder is itself the diagnostic. 99.5 % at k=100, 84.2 % at k=20,
-36.3 % at k=0. A rule that were simply weak would degrade gradually, because
-weakness is not conditional on the start. Instead it is near-perfect right up
-to the point where the starting *rotamer well* stops being identifiable, and
-then it falls off a cliff. That is the shape of a **mode-selection** failure,
-not a refinement failure.
+`scripts/chi1_histogram.py` over the same 79 CASP13 targets, 17,979 residues
+with a chi1. Full output in `docs/benchmarks/chi1_histogram_v5_native.log`.
 
-Two ways to fail at selection, and the summary statistics separate them. chi1
-is roughly trimodal with wells 120 deg apart. If the 36.3 % that are correct
-sit near 8 deg and every failure were a clean swap to a neighbouring well,
-the MAE would be about 0.36 x 8 + 0.64 x 120 = **80 deg**. It is **33.5**, so
-the failures average around **50 deg** — too far for a near miss, too close
-for a neighbouring well. Fifty degrees is where you land if you split the
-difference between two wells, which is what a von Mises NLL against the
-native rewards when the answer is ambiguous: the loss is minimised in
-expectation by moving toward the circular mean of the plausible answers, and
-the circular mean of g- and t is an angle no side chain occupies. **Open
-measurement:** the signed chi1 error histogram at k=0, and whether the
-predictions land in rotameric regions at all. That decides it.
+| | predicted | native |
+|---|---|---|
+| distance to the nearest canonical well | 12.82 deg mean, **7.90 median** | 9.66 deg mean, **7.17 median** |
+| predicted well is the native one | **77.3 %** | — (chance 33 %) |
+| \|error\| when the well is right (13,903 res) | **10.93 deg**, 84.5 % within 20 | — |
+| \|error\| when the well is wrong (4,076 res) | **102.15 deg** | — |
 
-Structurally, a **deterministic local rule has no way to break a tie**. From
-randomised chis every neighbour is also wrong, so the packing problem has to
-be co-solved, and co-solving needs somebody to commit first. Diffusion gets
-that from the noise in the reverse process; DiffPack gets more of it from
-generating chi1 -> chi2 -> chi3 -> chi4 autoregressively, each level
-conditioned on one already decided. This rule has neither, and applies the
-mean of its own prediction simultaneously everywhere.
+**The answer is "wrong well", and the averaging hypothesis is dead.**
+Predictions sit on the rotamer wells, at a median 7.9 deg from one against
+the natives' 7.2, and the predicted histogram has the same three-peak shape
+as the native control. There is a modest excess of mass in the non-rotameric
+valleys — it is the whole of the gap between the 12.82 deg mean and the 7.90
+median — but it is a tail, not the distribution.
 
-**Rule out the boring explanations first.** 400 training structures and
-200,268 parameters, against DiffPack's tens of thousands of chains and
-AttnPacker's ~200 M. It would be embarrassing to redesign the objective and
-then find the gap was a scaling curve.
+The failure is a **minority mode-selection error with clean consequences**:
+on 22.7 % of residues the rule commits to a real rotamer that is not the
+native one, and is then ~102 deg out, which is one well over. On the other
+77.3 % it is an excellent refiner, 10.9 deg mean and 84.5 % within 20.
 
-**Should the benchmark start from fully randomised chis?** Yes for the
-headline number — it is what DiffPack and AttnPacker report, and a packer
-that only works from a nearly-correct answer is a refiner. But uniform over
-the torus is a choice DiffPack can afford because it is a sampler with a
-learned prior. SCWRL and Rosetta never search continuous space from uniform;
-they search a discrete rotamer library, which is to say they start from
-modes. Initialising from a backbone-dependent rotamer draw is from-scratch by
-any reasonable definition and squarely within prior art; if accuracy jumps
-there, the diagnosis is confirmed. The deeper fix, if it is mode averaging,
-is to **sample from the predicted von Mises during rollout instead of taking
-mu**, optionally annealing kappa over steps — nearly free to implement, gives
-the rule the noise it needs to break ties, and makes best-of-N available the
-way the literature uses it.
+The decomposition reconstructs the published number exactly, which is the
+check that it describes the same thing: 0.773 x 10.93 + 0.227 x 102.15 =
+**31.6 deg**, against the 31.61 the CASP13 row reports.
+
+**Two earlier readings in this file were wrong and are withdrawn.** The
+arithmetic that argued for averaging — "if the 36.3 % correct were the
+right-well fraction, a clean swap would give 80 deg MAE, so the failures must
+average 50" — conflated two different quantities. The 36.3 / 42.6 % figure is
+*per-residue accuracy over every chi*, the published definition, so a residue
+with a perfect chi1 and a sloppy chi3 counts as wrong. The chi1 right-well
+fraction is 77.3 %, not 42.6, and with the real number the clean-swap model
+reproduces the MAE to two decimal places. The lesson generalises: do not do
+arithmetic across two different denominators.
+
+**Where the gap actually is.** Hold our within-well precision fixed at 10.93
+deg and ask what wrong-well rate would give DiffPack's 15.35: about **4.8 %**.
+So the whole of the chi1 deficit is one number — they get the well wrong
+about one time in twenty and we get it wrong about one time in four — and
+nothing about our refinement is the problem.
+
+**What that rules in and out.**
+
+- **Rotamer-library initialisation is not the fix.** The rule already lands
+  on wells; handing it one does not tell it which.
+- **Sampling from the predicted von Mises instead of taking mu** is no longer
+  motivated as an antidote to averaging, because there is no averaging to
+  cure. It stays interesting for a different reason: it makes best-of-N
+  possible, and with 22.7 % wrong-well a scoring function over a handful of
+  samples could recover much of the gap. That is a search strategy, not a fix
+  to the rule.
+- **Capacity and data move to the front.** Picking the right well from a
+  randomised neighbourhood is a conditional-classification problem, and
+  200,268 parameters trained on 400 structures is a thin model of it. This is
+  now the cheapest hypothesis left standing.
+- **Co-solving may still be the mechanism.** From randomised chis every
+  neighbour is also wrong, so an early commitment propagates. Whether the
+  22.7 % is cooperative — wrong-well residues clustered next to each other —
+  is a measurement, not a guess.
+
+**Open measurements, cheapest first.** Does the wrong-well rate move with
+rollout length (100 vs 400 steps)? If not, it is capacity, not convergence.
+Is the 22.7 % concentrated by burial, by residue type, or spatially clustered
+with other wrong-well residues? And does a scaling probe — more structures,
+same architecture — move it?
+
+**Should the benchmark start from fully randomised chis?** Yes. It is what
+DiffPack and AttnPacker report, and the measurement above shows the task is
+being attempted honestly: the rule produces rotameric structures, it just
+picks the wrong rotamer too often. Changing the initialisation now would hide
+the one number that matters.
 
 `v4_gpu`: `--split train --updates 60000 --eval-every 500 --steps 64 --steps-max 96 --lr-drop
 30000 45000 --lr-gamma 0.3 --init-from runs/v3_gpu/last.pt`.
