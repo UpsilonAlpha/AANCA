@@ -370,6 +370,45 @@ def uniform_deltas(
     return torch.where(chi_mask, noise, torch.zeros_like(noise))
 
 
+def damaged_residues(
+    chi_mask: Tensor, fraction: float, generator: torch.Generator | None = None
+) -> Tensor:
+    """Which residues the damage is applied to. Shape ``(n_residues,)``, bool.
+
+    **Why this exists, measured 2026-11-02.** Until now every sample was
+    damaged *globally*: one concentration drawn per structure and applied to
+    every chi (:meth:`ChiDataset.sample`). So the training distribution
+    contained only the two corners -- everything displaced, or, at
+    ``--native-probability``, nothing displaced -- and never a residue that is
+    wrong while its neighbourhood is right. ``scripts/clamp_test.py`` measured
+    what that costs: pin three quarters of a protein at its crystal
+    conformations and the free residues drop to 57.1 % well-right, against
+    75.2 % when the same residues are pinned at *random* conformations and
+    77.3 % when nothing is pinned at all. Correct neighbours make the rule
+    worse, because a spatially mixed state is off its training distribution --
+    and "repack this residue in a fixed native environment" is the classical
+    packing task, the one a rotamer library with a pairwise energy does
+    natively. We were worse at the easy problem than at the hard one.
+
+    The subset is drawn **independently per residue**, which matches the clamp
+    test's own intervention and is the weaker, more general case: a spatially
+    contiguous patch would also train the mixed state but would let the rule
+    key off the patch boundary. Worth trying as a variant, not first.
+
+    A residue is damaged on all of its chis or none of them. The unit is a
+    side chain in the wrong place, not a chi2 that disagrees with its own chi1.
+
+    Drawn on the CPU whatever the device, for the same reason
+    :func:`uniform_deltas` is: one CPU ``generator`` then reproduces a GPU run.
+    """
+    if not 0.0 <= fraction <= 1.0:
+        raise ValueError(f"fraction must be in [0, 1], got {fraction}")
+    draws = torch.rand(
+        chi_mask.shape[0], dtype=torch.float64, generator=generator
+    )
+    return (draws < fraction).to(chi_mask.device)
+
+
 @dataclass
 class Sample:
     pdb_id: str
@@ -380,6 +419,11 @@ class Sample:
     #: exactly, which makes the damage auditable rather than merely applied.
     deltas: Tensor
     concentration: float
+    #: Fraction of residues the damage was applied to. 1.0 is the global
+    #: damage every sample used before 2026-11-02; below 1, the rest of the
+    #: side chains start at their native conformations, which is the state
+    #: ``scripts/clamp_test.py`` showed the rule cannot handle.
+    damage_fraction: float = 1.0
     #: Residues in this sample, as indices into the full entry. ``None`` when
     #: the entry was taken whole.
     crop_indices: list[int] | None = None
@@ -422,6 +466,7 @@ class RepackingDataset:
         self,
         specs: list[StructureSpec],
         concentrations: tuple[float, ...] = (100.0, 20.0, 5.0, 0.0),
+        damage_fractions: tuple[float, ...] = (1.0,),
         cache_topologies: bool = True,
         device: torch.device | str = "cpu",
         crop_size: int | None = 512,
@@ -434,10 +479,21 @@ class RepackingDataset:
             raise ValueError("no structures given")
         if not concentrations:
             raise ValueError("no damage levels given")
+        if not damage_fractions:
+            raise ValueError("no damage fractions given")
+        if any(not 0.0 <= f <= 1.0 for f in damage_fractions):
+            raise ValueError(
+                f"damage fractions must be in [0, 1], got {damage_fractions}"
+            )
         if crop_size is not None and crop_size < 1:
             raise ValueError(f"crop_size must be positive or None, got {crop_size}")
         self.specs = specs
         self.concentrations = concentrations
+        #: Drawn per sample alongside the concentration, and for the same
+        #: reason: a *mixture*, never a schedule, and the rule is not told
+        #: which it got. ``(1.0,)`` reproduces the global damage of every run
+        #: up to v5 exactly, including its random stream.
+        self.damage_fractions = damage_fractions
         self.device = device
         #: Residues per sample for entries larger than this. ``None`` disables
         #: cropping, in which case ``max_residues`` is the only thing standing
@@ -584,6 +640,7 @@ class RepackingDataset:
         self,
         index: int,
         concentration: float | None = None,
+        fraction: float | None = None,
         generator: torch.Generator | None = None,
         rng: random.Random | None = None,
         crop_seed: int | None = None,
@@ -594,6 +651,14 @@ class RepackingDataset:
         recover from mild and severe damage alike, and it is never told which it
         got. Telling it would be noise-level conditioning, which is precisely
         what DiffPack has and this deliberately does not.
+
+        ``fraction=None`` likewise picks one of ``damage_fractions``: the share
+        of residues the damage is applied to at all, the rest starting at their
+        native conformations. It is a second axis of the same mixture, and it
+        is the axis that was missing -- see :func:`damaged_residues` for what
+        that cost. Note that it *subsumes* ``--native-probability``, since
+        fraction 0 is a native start; both knobs are kept because the
+        probability is pinned in checkpoints already written.
 
         ``rng`` draws the crop seed as well, so successive samples of a large
         entry see different regions of it. ``crop_seed`` overrides that and
@@ -616,6 +681,33 @@ class RepackingDataset:
             if concentration <= 0
             else von_mises_deltas(mask, concentration, generator)
         )
+
+        # The fraction is drawn *after* the deltas, and the draw is skipped
+        # entirely when it would select everything. Both are deliberate: a run
+        # whose fractions are ``(1.0,)`` -- every run up to v5 -- then consumes
+        # exactly the random stream it consumed before this existed, so its
+        # curve is reproducible and ``--init-from`` warm-starts onto a
+        # distribution it recognises. The precedent is ``--native-probability``,
+        # which skips its own draw at probability 0 for the same reason.
+        if fraction is None:
+            # One option is not a choice, so it draws nothing. That is what
+            # keeps a ``(1.0,)`` run's stream identical to a pre-2026-11-02
+            # one, and it holds for any single-valued setting.
+            if len(self.damage_fractions) == 1:
+                fraction = self.damage_fractions[0]
+            else:
+                pick = torch.randint(
+                    len(self.damage_fractions), (1,), generator=generator
+                ).item()
+                fraction = self.damage_fractions[pick]
+        elif not 0.0 <= fraction <= 1.0:
+            raise ValueError(f"fraction must be in [0, 1], got {fraction}")
+        if fraction < 1.0:
+            keep = damaged_residues(mask, fraction, generator)
+            deltas = torch.where(
+                keep.unsqueeze(-1), deltas, torch.zeros_like(deltas)
+            )
+
         damaged = apply_chi_deltas(native, deltas, topo.torsion)
         return Sample(
             pdb_id=self.specs[index].pdb_id,
@@ -624,6 +716,7 @@ class RepackingDataset:
             damaged=damaged,
             deltas=deltas,
             concentration=float(concentration),
+            damage_fraction=float(fraction),
             crop_indices=crop_indices,
             crop_seed=used_seed,
         )

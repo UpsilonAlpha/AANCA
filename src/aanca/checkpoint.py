@@ -59,9 +59,17 @@ import torch
 #: continue the same curve at a rate the earlier half never saw, and nothing
 #: in the log would say so. ``steps_max`` joins ``steps`` for the same reason
 #: the rollout length is pinned at all.
+#: ``damage_fractions`` is pinned for the plainest reason of all: it changes
+#: what the damaged half of the training distribution *is*. A resume that
+#: altered it would continue one curve under a different problem. A warm start
+#: is expected to alter it -- it is absent from
+#: ``scripts/train.py``'s ``WARM_START_MUST_MATCH``, because the pool and the
+#: split still describe the same structures -- which is how v6 is built on v5
+#: rather than beside it.
 PINNED = (
     "crop_size", "steps", "steps_max", "truncate", "seed", "pool_probability", "k",
     "native_probability", "noop_weight", "lr", "lr_drop", "lr_gamma",
+    "damage_fractions",
     "split", "structures", "eval_structures",
 )
 

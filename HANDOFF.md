@@ -1170,6 +1170,77 @@ What the probe leaves standing: pooled chi1 is still improving, and the real
 deficit is not persistence but kappa 0 — 49–56° against a damaged input of
 89.7°, with 20% accuracy. That is the number v1 has to move.
 
+### v6: the mixed state as a training case — `--damage-fractions`
+
+Built 2026-11-02, directly off the clamp test, and it is a **fine-tune rather
+than a generation**: `--init-from runs/v5_native/last.pt` carries the weights,
+the optimiser moments and the sample pool across, so nothing v5 learned is
+discarded. Ulban's constraint, and the right one — the finding is a gap in the
+training *distribution*, not in the architecture.
+
+**The change.** `RepackingDataset` gains `damage_fractions`, a second axis of
+the existing mixture: the share of residues the damage is applied to at all,
+drawn per sample, the rest starting at their native conformations
+(`aanca.data.damaged_residues`). A residue is damaged on all of its chis or
+none — the unit is a side chain in the wrong place, not a chi2 disagreeing with
+its own chi1 — and the subset is drawn independently per residue, which matches
+the clamp test's own intervention. A spatially contiguous patch would also
+train the mixed state but would let the rule key off the patch boundary; worth
+trying as a variant, not first.
+
+**Two details that would be bugs if they went the other way.**
+
+1. `(1.0,)` — the default, and what every run up to v5 did — draws *nothing*.
+   One option is not a choice, so no `randint` is spent on it and the random
+   stream is byte-for-byte the pre-2026-11-02 one. Without that, v5's curve
+   stops being reproducible and the warm start lands on a distribution it does
+   not report. The precedent is `--native-probability`, which skips its own
+   draw at probability 0 for exactly this reason. Tested.
+2. `damage_fractions` is **pinned** in the checkpoint fingerprint, so a
+   *resume* cannot silently change what the damaged half of the distribution
+   is. It is deliberately absent from `train.WARM_START_MUST_MATCH`, which is
+   what lets a warm start change it: the pool and the split still describe the
+   same structures, which is all that list is defending.
+
+Note that fraction 0 *is* a native start, so this subsumes
+`--native-probability`. Both knobs are kept because the probability is pinned
+in checkpoints already written.
+
+**The run.** `v6_mixed`, from `v5_native/last.pt` at update 60,000:
+
+    bash scripts/bunya_submit.sh gpu --tag v6_mixed --split train \
+      --updates 20000 --eval-every 500 --steps 64 --steps-max 96 \
+      --lr 3e-5 --lr-drop 12000 --lr-gamma 0.3 \
+      --native-probability 0.2 --noop-weight 0 \
+      --damage-fractions 1.0 1.0 0.5 0.2 0.05 \
+      --init-from runs/v5_native/last.pt
+
+- **The learning rate is the one thing to get right.** A warm start restarts at
+  update 0, so the drop schedule is re-applied from scratch: passing v5's
+  `--lr 3e-4` would raise the rate ~11x over what it was actually training at
+  by update 60,000 (3e-4 after two 0.3 drops is 2.7e-5) and would undo the run
+  rather than extend it. 3e-5 continues roughly where v5 left off.
+- **1.0 is duplicated in the list on purpose**, so global damage holds 40 % of
+  the fresh draws rather than 20 %. The published benchmark *is* the global
+  task and must not regress to buy the mixed one. The in-run guard is free:
+  `build_eval_set` is untouched, its three levels are still 100/20/0 applied
+  globally, so the held-out curve stays directly comparable to v5's and a
+  regression shows within a few hundred updates. Raise the 1.0 share if it
+  does.
+- **The readout is pre-registered**, which is the part worth protecting. Run
+  `scripts/clamp_test.py` on the fine-tuned checkpoint and compare against
+  `docs/benchmarks/clamp_v5_native.log`. The prediction: `native - random`
+  moves from -18.1 at fraction 0.75 towards 0 or positive. If it does not move,
+  the off-distribution explanation is wrong and the missing clash term is
+  carrying the effect on its own, which is then the next thing to add.
+- **A baseline on the exact weights.** The clamp and basin logs were measured
+  on `best.pt` at update 59,500 (pooled chi1 MAE 14.69); `last.pt` is update
+  60,000 (15.20, half an eval interval later and marginally worse). The warm
+  start must use `last.pt`, because `best.pt` holds the weights alone — no
+  optimiser, no pool, no args — and `--init-from` would refuse it. So
+  `clamp_test` is also run on `last.pt`, to make the before/after exact rather
+  than approximately exact.
+
 ### v5: the fixed point as a training case — `--native-probability`
 
 Decided 2026-10-30. The no-op term is dropped rather than relocated, and the

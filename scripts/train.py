@@ -243,6 +243,20 @@ def main() -> int:
         "stays 'numpy' so an existing run reproduces unless asked otherwise.",
     )
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument(
+        "--damage-fractions",
+        type=float,
+        nargs="*",
+        default=[1.0],
+        help="share of residues the damage is applied to, drawn per sample "
+        "from this list. 1.0 alone is the global damage every run up to v5 "
+        "used, and reproduces its random stream exactly. Anything below 1 "
+        "trains the state the rule cannot currently handle: a side chain in "
+        "the wrong place inside a neighbourhood that is right "
+        "(scripts/clamp_test.py; aanca.data.damaged_residues). Not pinned "
+        "against a warm start, which is the point -- change it and "
+        "--init-from carries the weights, the optimiser and the pool across.",
+    )
     parser.add_argument("--tag", default="run")
     parser.add_argument("--split", default="validation", help="manifest split to draw from")
     parser.add_argument("--device", default="auto", help="auto | cpu | cuda")
@@ -319,6 +333,7 @@ def main() -> int:
     dataset = RepackingDataset(
         available,
         concentrations=(100.0, 20.0, 5.0, 0.0),
+        damage_fractions=tuple(args.damage_fractions),
         crop_size=args.crop_size,
         device=device,
         cache_limit=max(cache, 1),
@@ -396,6 +411,13 @@ def main() -> int:
         f"device {device}, split {args.split}: {len(train_indices)} training "
         f"structures, {len(eval_indices)} held out (disjoint)"
     )
+
+    if tuple(args.damage_fractions) != (1.0,):
+        # Printed because it is the one setting a reader of the log would
+        # otherwise have to infer from the accuracy, and it changes what the
+        # numbers mean.
+        shares = ", ".join(f"{f:g}" for f in args.damage_fractions)
+        print(f"damage fractions: {shares} (drawn per sample)")
 
     n_params = sum(p.numel() for p in rule.parameters())
     on_device = args.neighbours == "device"
