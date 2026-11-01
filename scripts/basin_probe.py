@@ -77,9 +77,11 @@ from aanca.diagnostics import (
     each_target,
     percent,
 )
+from aanca.metrics import BURIAL_RADIUS, cb_neighbour_counts, classify_burial
 from aanca.model import AANCARule
 from aanca.rollout import RolloutConfig, initial_state, rollout
 from aanca.rotamers import WELL_NAMES, nearest_well
+from aanca.torch_graph import frame_atom_coords
 
 #: Offset between seed replicates in ``bestof``. Large enough that replicate 0
 #: with ``--seed 0`` reproduces the benchmark's own stream exactly, and no
@@ -419,11 +421,197 @@ def run_converge(rule, config, stems, args) -> int:
     return 0
 
 
+# --------------------------------------------------------------------------
+# 5. stationary: handed the right answer, does it keep it?
+# --------------------------------------------------------------------------
+
+
+def run_stationary(rule, config, stems, args) -> int:
+    """Start at the crystal structure and see what the rule breaks.
+
+    `sweep` found the rule is net-destructive in well terms at low damage --
+    at kappa 16 it takes a start that is 99.5 % right down to 97.7 % -- which
+    says the native structure is not a fixed point of the rule. That matters
+    because v5 set ``--noop-weight 0`` and leaned on ``--native-probability``
+    to supervise stationarity instead, after ``scripts/noop_probe.py`` showed
+    the no-op term was vacuous at step 0. This is the rollout version of that
+    question rather than the one-step version, and kappa 16 only approximates
+    it: here the start *is* native, so every break is unambiguous.
+    """
+    broken, kept, names, burials = [], [], [], []
+    curves = []
+    for index, _stem, topo, native_coords in each_target(
+        stems, args.backbone, args.device
+    ):
+        torsion = topo.torsion
+        scored = chi1_residues(torsion)
+        generator = torch.Generator().manual_seed(args.seed + index)
+        result = rollout(
+            rule,
+            initial_state(native_coords, rule),
+            topo,
+            config,
+            generator=generator,
+            record=True,
+        )
+        native_deg = chi1_degrees(native_coords, torsion)
+        final_deg = chi1_degrees(result.state.coords, torsion)
+        native_well = nearest_well(native_deg)[0]
+        final_well = nearest_well(final_deg)[0]
+
+        broke = (native_well != final_well)[scored]
+        broken.append(broke)
+        kept.append(circular_error(final_deg, native_deg)[scored])
+        names.extend(
+            name for name, keep in zip(torsion.resnames, scored.tolist()) if keep
+        )
+        counts = cb_neighbour_counts(native_coords, topo).cpu()
+        burials.append(classify_burial(counts)["core"][scored])
+        curves.append(result.mean_abs_delta)
+
+    if not broken:
+        print("no usable targets")
+        return 1
+
+    broke = torch.cat(broken)
+    error = torch.cat(kept)
+    core = torch.cat(burials)
+
+    print(f"\n{broke.numel()} residues started at their crystal chi1\n")
+    print("--- what a rollout from native costs ---\n")
+    print(f"  wells broken        : {percent(broke):5.2f}%  ({int(broke.sum())} residues)")
+    print(f"  chi1 MAE from native: {float(error.mean()):6.2f} deg")
+    print(f"  within 20 deg       : {percent(error <= 20):5.1f}%")
+    print(f"\n  broken, core surface split : core {percent(broke[core]):5.2f}%, "
+          f"non-core {percent(broke[~core]):5.2f}%")
+
+    print("\n--- which residues lose their well ---\n")
+    by_name: dict[str, list[int]] = {}
+    for name, flag in zip(names, broke.tolist()):
+        row = by_name.setdefault(name, [0, 0])
+        row[0] += int(flag)
+        row[1] += 1
+    ranked = sorted(
+        ((n, b, t) for n, (b, t) in by_name.items() if t >= 100),
+        key=lambda r: -r[1] / r[2],
+    )
+    for name, bad, total in ranked[:8]:
+        print(f"  {name}  {100 * bad / total:5.2f}%  of {total:5d}")
+
+    width = min(len(c) for c in curves)
+    mean_curve = torch.tensor([c[:width] for c in curves]).mean(dim=0).rad2deg()
+    print("\n--- proposed |delta chi| per step from native, degrees ---\n")
+    for step in [s for s in (1, 2, 5, 10, 20, 50, 100) if s <= width]:
+        print(f"  step {step:4d} : {float(mean_curve[step - 1]):7.3f}")
+
+    print(
+        "\nReading it: a rule whose attractor is the native state would break"
+        "\nalmost no wells and sit near zero MAE. Whatever it breaks here is the"
+        "\nsame failure the kappa 16 row of `sweep` shows, measured without the"
+        "\nambiguity of a perturbed start, and it is a training problem rather"
+        "\nthan a capacity one -- the fixed point at native is what"
+        "\n``--native-probability`` was meant to supervise."
+    )
+    return 0
+
+
+# --------------------------------------------------------------------------
+# 6. breakdown: who are the 22.7 %?
+# --------------------------------------------------------------------------
+
+
+def run_breakdown(rule, config, stems, args) -> int:
+    """Split the wrong-well rate by burial, by residue type, and spatially.
+
+    The third is the one with teeth. If wrong-well residues sit next to other
+    wrong-well residues more often than chance, the failure is cooperative --
+    an early wrong commitment propagating through the neighbourhood, which is
+    the co-solving story. If they are spatially independent, each residue is
+    failing on its own and the rule is closer to a per-residue lookup.
+    """
+    flags, names, cores, neighbour_wrong = [], [], [], []
+    for index, _stem, topo, native_coords in each_target(
+        stems, args.backbone, args.device
+    ):
+        torsion = topo.torsion
+        scored = chi1_residues(torsion)
+        packed = pack_from_random(
+            rule, native_coords, topo, config, args.seed + index
+        )
+        native_well = nearest_well(chi1_degrees(native_coords, torsion))[0]
+        pred_well = nearest_well(chi1_degrees(packed, torsion))[0]
+        wrong = native_well != pred_well
+
+        # Neighbours by CB distance at the rule's own cutoff, restricted to
+        # residues that have a chi1 to be wrong about.
+        cb = frame_atom_coords(native_coords, topo)[:, 4, :].cpu()
+        close = (torch.cdist(cb, cb) <= BURIAL_RADIUS) & scored.unsqueeze(0)
+        close.fill_diagonal_(False)
+        n_close = close.sum(dim=1).clamp_min(1)
+        share = (close & wrong.unsqueeze(0)).sum(dim=1) / n_close
+
+        flags.append(wrong[scored])
+        neighbour_wrong.append(share[scored])
+        names.extend(
+            name for name, keep in zip(torsion.resnames, scored.tolist()) if keep
+        )
+        counts = cb_neighbour_counts(native_coords, topo).cpu()
+        cores.append(classify_burial(counts)["core"][scored])
+
+    if not flags:
+        print("no usable targets")
+        return 1
+
+    wrong = torch.cat(flags)
+    share = torch.cat(neighbour_wrong)
+    core = torch.cat(cores)
+    base = percent(wrong)
+
+    print(f"\n{wrong.numel()} residues, {base:.1f}% in the wrong well overall\n")
+    print("--- by burial ---\n")
+    print(f"  core ({int(core.sum())} residues)      : {percent(wrong[core]):5.1f}% wrong")
+    print(f"  non-core ({int((~core).sum())} residues) : {percent(wrong[~core]):5.1f}% wrong")
+
+    print("\n--- by residue type, worst first, types with 100+ residues ---\n")
+    by_name: dict[str, list[int]] = {}
+    for name, flag in zip(names, wrong.tolist()):
+        row = by_name.setdefault(name, [0, 0])
+        row[0] += int(flag)
+        row[1] += 1
+    ranked = sorted(
+        ((n, b, t) for n, (b, t) in by_name.items() if t >= 100),
+        key=lambda r: -r[1] / r[2],
+    )
+    for name, bad, total in ranked:
+        print(f"  {name}  {100 * bad / total:5.1f}%  of {total:5d}")
+
+    print("\n--- spatially: is the failure cooperative? ---\n")
+    print(
+        f"  share of chi1 neighbours also wrong, given self wrong  : "
+        f"{100 * float(share[wrong].mean()):5.1f}%"
+    )
+    print(
+        f"  share of chi1 neighbours also wrong, given self right  : "
+        f"{100 * float(share[~wrong].mean()):5.1f}%"
+    )
+    print(f"  base rate                                              : {base:5.1f}%")
+    print(
+        "\nReading it: if the two conditional shares both sit at the base rate,"
+        "\nwrong wells are spatially independent and each residue fails alone."
+        "\nA raised share given self-wrong is a cooperative failure, which is"
+        "\nthe co-solving story and would make the clamp test's native arm the"
+        "\nplace to look for the fix."
+    )
+    return 0
+
+
 MEASUREMENTS = {
     "descent": run_descent,
     "bestof": run_bestof,
     "sweep": run_sweep,
     "converge": run_converge,
+    "stationary": run_stationary,
+    "breakdown": run_breakdown,
 }
 
 

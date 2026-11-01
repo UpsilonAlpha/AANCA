@@ -1,0 +1,22 @@
+host : bun154
+run  : scripts/basin_probe.py sweep runs/v5_native/best.pt --device cpu
+
+sweep: runs/v5_native/best.pt at update 59500, CASP13, 79 targets, 100 steps, cpu
+
+kappa is a von Mises concentration, so larger is milder; 0 is the uniform draw.
+
+   kappa   start right   rule right    start MAE    rule MAE   residues
+   16.00         99.5%        97.7%       11.59        8.72      17979
+    8.00         98.0%        96.4%       16.59       10.36      17979
+    4.00         92.5%        92.8%       24.40       14.37      17979
+    2.00         78.2%        83.6%       38.38       24.57      17979
+    1.00         59.5%        78.6%       57.80       30.44      17979
+    0.50         46.9%        78.0%       72.76       30.99      17979
+    0.00         33.1%        77.3%       90.42       31.61      17979
+
+Reading it: the gap between the two percentage columns is what the
+rule adds to the structure it was handed. A gap that holds up as
+kappa falls to 0 is a wide basin; one that collapses means the rule
+only repairs starts that were nearly right already.
+
+exit : 0
