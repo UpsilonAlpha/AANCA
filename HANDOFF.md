@@ -602,7 +602,7 @@ run, not an afternoon.
 Recording this because the earlier estimate was told to Ulban as "one CPU job,
 no training of the rule", and it is wrong.
 
-### Is the 22.7 % a failure at all? — measured 2026-11-01, and it is
+### Is the 22.7 % a failure at all? — measured 2026-11-01/02, and it is
 
 Ulban's objection to the framing above: if the rule is learning a forcefield,
 then rolling downhill to the nearest well from a randomised start is *correct
@@ -610,6 +610,38 @@ behaviour*, and the wrong-well rate measures the basin structure of the energy
 landscape rather than an error. The test is the one the prior-art artifact
 called the part of this work that is ours ("Is it actually a fixed point?" —
 convergence, stability, basin size), and `scripts/basin_probe.py` runs it.
+
+#### Read this before the rest of the section
+
+The entries below are in the order they were measured, across one night, and
+**three of them were corrected by later ones.** The corrections are at the end,
+under `stationary` and under the by-type table. If you read only the early
+entries you will carry away two wrong conclusions. In short:
+
+| what the section concludes | where |
+| --- | --- |
+| The benchmark's 22.7 % is a genuine wrong answer, not a basin artefact. The uniform start lies far outside the native basin, and at kappa 0 the starting conformation explains only ~8 % of the error. | `descent` |
+| The rule is a fixed point: converged by step 50, stable to 1000 steps, no oscillation. The steps probe is answered flatly. | `converge` |
+| But the landscape is **not** single-attractor. A narrow native basin, holding to roughly 12-24 deg of chi1 noise, sits inside a dominant basin everything further away falls into at 77-78 %. | `sweep` + `stationary` |
+| The native structure **is** nearly a fixed point: 0.76 % of wells broken, 2.38 deg MAE. `--native-probability` worked. | `stationary` |
+| The error is concentrated in the small polar types, but that shape belongs to the *problem*: SER is worst and PHE best for every published method too. Our own deficit is broadly uniform at 1.1-1.3x, so no single missing term explains it. | `breakdown` + by-type |
+| Wrong wells cluster spatially, and it survives burial stratification. Correlational; `clamp_test` is the interventional form. | `breakdown` |
+| The rule already reads hydrogen-bond acceptor geometry. SER is under-determined, not invisible. | `hbond` |
+
+**The three corrections, so they are findable rather than buried:**
+
+1. *"The native structure is not a fixed point of the rule"* — written under
+   `sweep`, from its kappa 16 row. **Wrong**, over-read; see Correction 1 under
+   `stationary`.
+2. *"One attractor per residue, reached from anywhere"* — written under
+   `descent`'s "What this settles". **Too strong**; true at kappa 0 only. See
+   Correction 2 under `stationary`.
+3. *"Specifically weak on the rigid rings"* — commit 8c62a68, reading ratios
+   against FASPR. **Mostly dissolves** against SCWRL. See the by-type entry.
+
+A fourth correction, to the *previous* section rather than this one: the
+frozen-trunk identity probe is withdrawn as confounded. That is written up
+immediately above this heading.
 
 **The reading does not hold.** The starting conformation explains about 8 % of
 the wrong-well rate. Two of the four measurements are in
@@ -676,10 +708,14 @@ for it.
 
 **What this settles, and what it moves.**
 
-- **The forcefield defence is closed.** There is one attractor per residue and
-  the rule reaches it from anywhere in the uniform start distribution. That is a
+- **The forcefield defence is closed.** ~~There is one attractor per residue and
+  the rule reaches it from anywhere in the uniform start distribution.~~ That is a
   *better* dynamical claim than basin-dependence would have been, but it means a
   wrong well is a wrong answer, not an unlucky draw.
+  **CORRECTED — see Correction 2 under `stationary`.** The struck sentence holds
+  at kappa 0 only. There is a narrow native basin as well. The surviving part is
+  the last clause: the benchmark's start is outside that basin, so its wrong
+  wells are wrong answers.
 - **The steps probe is answered in passing, and it is the flat answer.** 100
   against 400 steps moves well-right by 0.2 points. The benchmark is already run
   past convergence, so the deficit is not a convergence artefact — which, per
@@ -718,9 +754,17 @@ question for good: no starting distribution recovers the 22.7 %.
 The new part is the top of the table. At kappa 16 the rule is handed a start
 that is **99.5 %** right in well terms and returns **97.7 %** — it breaks wells
 it was given. Same at kappa 8 (98.0 to 96.4). The crossover is near kappa 4.
-So the native structure is **not a fixed point of the rule**, and `rule right`
+~~So the native structure is **not a fixed point of the rule**~~, and `rule right`
 is not a floor the rule climbs to but an attractor it relaxes onto from either
 side.
+
+> **CORRECTED — see Correction 1 under `stationary`.** From the *exact* crystal
+> structure the rule breaks only 0.76 % of wells and moves chi1 by 2.38 deg, so
+> native very nearly is a fixed point and `--native-probability` worked. The
+> 1.8 points lost here is the edge of a narrow native basin being felt at
+> 12 deg of noise, not a rule that cannot sit still. Everything below about
+> `rule MAE` improving at every level still stands, and so does the training
+> recommendation — it is just worth less than this entry claimed.
 
 Note that `rule MAE` improves at every single level, 11.59 to 8.72 included.
 Both are true and they are not in tension: the bulk of residues tighten toward
