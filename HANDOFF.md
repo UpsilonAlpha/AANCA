@@ -573,6 +573,35 @@ representations already carry identity information and the joint model's premise
 is confirmed before anything is built. At background, the premise is in doubt.
 One CPU job, no training of the rule.
 
+**The frozen-trunk identity probe is withdrawn as "nearly free" — it is
+confounded.** The section above proposes it as the cheap go/no-go for the joint
+packing-plus-inverse-folding idea: freeze the v5 trunk, train a linear 96-to-20
+head on the converged hidden state, measure native sequence recovery. On trying
+to write it, that is not a test of anything.
+
+The rule's node features *are* `residue one-hot (20) + chi sin/cos (8) + chi
+mask (4)`, and every hidden state is computed from
+`cat([node_features, hidden])`. So residue i's hidden state has been handed
+residue i's identity directly, at every step. A linear probe would recover it
+near-perfectly by reading back its own input, and the number would mean
+nothing. Worse, the leak does not close by zeroing the one-hot: the residue's
+own side-chain *geometry* names it too -- a leucine has leucine's atoms, and
+`chi_mask` alone distinguishes most types.
+
+The cheapest honest version needs both halves masked: zero the subject's
+one-hot **and** truncate its side chain to CB, for a random subset of
+residues, then ask whether the environment lets the hidden state recover the
+identity. That is masked-residue prediction, i.e. inverse folding, and it is
+not a probe of the existing checkpoint -- the rule has never seen an
+unlabelled, side-chain-less residue, so it would have to be *trained* with
+masking for the result to mean anything. Side-chain truncation is still much
+cheaper than the full mutable-identity refactor, since atoms only ever get
+deleted and never added, so this is the right first rung. But it is a training
+run, not an afternoon.
+
+Recording this because the earlier estimate was told to Ulban as "one CPU job,
+no training of the rule", and it is wrong.
+
 ### Is the 22.7 % a failure at all? — measured 2026-11-01, and it is
 
 Ulban's objection to the framing above: if the rule is learning a forcefield,

@@ -649,6 +649,139 @@ def run_breakdown(rule, config, stems, args) -> int:
     return 0
 
 
+# --------------------------------------------------------------------------
+# 7. hbond: is the SER/THR deficit a missing-physics problem?
+# --------------------------------------------------------------------------
+
+#: Protein atoms that can donate or accept a hydrogen bond.
+POLAR_ELEMENTS = ("N", "O")
+
+#: Generous heavy-atom donor-acceptor distance. Nothing here depends on the
+#: exact value; 3.5 A is the usual cutoff and the buckets are coarse.
+HBOND_CUTOFF = 3.5
+
+
+def run_hbond(rule, config, stems, args) -> int:
+    """Split the wrong-well rate by whether the atom chi1 places can H-bond.
+
+    `breakdown` found the error is polar: SER 43.7 %, GLU 33.5 %, ASP 28.5 %
+    against PHE 9.2 %, TYR 12.7 %, ILE 13.0 %. SER and THR alone are 24.3 % of
+    all chi1 error from 16.4 % of the residues. The obvious reading is that an
+    aromatic's chi1 is pinned by what it collides with -- which distances and
+    relative orientations describe well -- while a serine's is pinned by where
+    its hydroxyl can hydrogen bond, which nothing in the feature set names.
+
+    That reading makes a prediction, and the prediction can go either way,
+    which is what makes it worth running. The atom chi1 places is the fourth
+    of its four defining atoms: ``OG`` for SER, ``OG1`` for THR, ``SG`` for
+    CYS, ``CG`` for LEU. Count the N and O atoms of *other* residues near it
+    in the crystal structure, and split the error by that count.
+
+    If hydrogen-bonded hydroxyls are **worse**, their chi1 is set by a partner
+    the rule cannot recognise as a partner, and the fix is a feature rather
+    than more parameters. If they are the **same or better**, the rule is
+    already reading the acceptor geometry, the hydrogen-bonding story is wrong,
+    and SER is simply small and under-determined -- in which case some of that
+    43.7 % is not recoverable by any method, and the honest move is to check
+    what the baselines score on SER before treating it as our deficit.
+    """
+    flags, partners, polar_tip, names = [], [], [], []
+    for index, _stem, topo, native_coords in each_target(
+        stems, args.backbone, args.device
+    ):
+        torsion = topo.torsion
+        scored = chi1_residues(torsion)
+        packed = pack_from_random(
+            rule, native_coords, topo, config, args.seed + index
+        )
+        native_well = nearest_well(chi1_degrees(native_coords, torsion))[0]
+        pred_well = nearest_well(chi1_degrees(packed, torsion))[0]
+        wrong = (native_well != pred_well)[scored]
+
+        coords = native_coords.cpu()
+        tip_index = torsion.chi_atoms[:, 0, 3].cpu()
+        tips = coords[torch.arange(coords.shape[0]), tip_index]
+
+        # First character of a protein atom name is its element: no side-chain
+        # atom of a standard residue has a two-letter symbol.
+        tip_is_polar, residue_of, polar_xyz = [], [], []
+        for r, row in enumerate(torsion.atom_names):
+            tip_is_polar.append(row[int(tip_index[r])][:1] in POLAR_ELEMENTS)
+            for a, name in enumerate(row):
+                if name[:1] in POLAR_ELEMENTS and bool(torsion.atom_mask[r, a]):
+                    residue_of.append(r)
+                    polar_xyz.append(coords[r, a])
+
+        owner = torch.tensor(residue_of)
+        near = torch.cdist(tips.float(), torch.stack(polar_xyz).float())
+        other = owner.unsqueeze(0) != torch.arange(tips.shape[0]).unsqueeze(1)
+        count = ((near <= HBOND_CUTOFF) & other).sum(dim=1)
+
+        flags.append(wrong)
+        partners.append(count[scored])
+        polar_tip.append(torch.tensor(tip_is_polar)[scored])
+        names.extend(
+            name for name, keep in zip(torsion.resnames, scored.tolist()) if keep
+        )
+
+    if not flags:
+        print("no usable targets")
+        return 1
+
+    wrong = torch.cat(flags)
+    count = torch.cat(partners)
+    polar = torch.cat(polar_tip)
+    names_t = names
+
+    print(
+        f"\n{wrong.numel()} residues. The atom chi1 places is polar (N or O) in"
+        f"\n{int(polar.sum())} of them.\n"
+    )
+    print(
+        "  Scope: the polar group is essentially SER and THR, because they are"
+        "\n  the only types whose chi1 places an N or O. ASP, GLU, ASN and GLN"
+        "\n  are polar residues but chi1 places their CG, and chi2 positions the"
+        "\n  atoms that hydrogen bond -- so this test says nothing about them,"
+        "\n  and they are another 31.3% of the error. CYS is excluded too: its"
+        "\n  SG is a sulphur, which these element buckets do not count.\n"
+    )
+    print(f"--- wrong-well rate by nearby N/O of other residues, within {HBOND_CUTOFF} A ---\n")
+    print("  group                 0 partners   1   2 or more        n")
+    for label, subset in (
+        ("polar tip", polar),
+        ("non-polar tip", ~polar),
+        ("SER or THR", torch.tensor([n in ("SER", "THR") for n in names_t])),
+    ):
+        if not bool(subset.any()):
+            continue
+        cells = ""
+        for bucket in (count == 0, count == 1, count >= 2):
+            pick = subset & bucket
+            cells += f"{percent(wrong[pick]):9.1f}%" if bool(pick.any()) else "        -"
+        print(f"  {label:<18} {cells}  {int(subset.sum()):7d}")
+
+    print("\n--- the same split, counts in each bucket ---\n")
+    for label, subset in (
+        ("polar tip", polar),
+        ("non-polar tip", ~polar),
+        ("SER or THR", torch.tensor([n in ("SER", "THR") for n in names_t])),
+    ):
+        sizes = [int((subset & b).sum()) for b in (count == 0, count == 1, count >= 2)]
+        print(f"  {label:<18} {sizes[0]:9d} {sizes[1]:9d} {sizes[2]:11d}")
+
+    print(
+        "\nReading it: if the rate climbs with partner count among polar tips,"
+        "\nthe rule is failing exactly where a hydrogen bond determines the"
+        "\nanswer, and the missing ingredient is a feature rather than capacity."
+        "\nIf it is flat or falls, the hydrogen-bonding story is wrong and SER"
+        "\nis simply small and under-determined -- in which case compare"
+        "\nagainst what the baselines score on SER before calling it ours."
+        "\nThe non-polar row is the control: a CG carbon cannot hydrogen bond,"
+        "\nso any trend there is crowding, not chemistry."
+    )
+    return 0
+
+
 MEASUREMENTS = {
     "descent": run_descent,
     "bestof": run_bestof,
@@ -656,6 +789,7 @@ MEASUREMENTS = {
     "converge": run_converge,
     "stationary": run_stationary,
     "breakdown": run_breakdown,
+    "hbond": run_hbond,
 }
 
 
