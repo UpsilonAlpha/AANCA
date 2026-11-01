@@ -487,6 +487,126 @@ files, kept at `runs/v3_*`), `v4` with the learning-rate schedule and the longer
 the first generation where the arms differ in something other than that weight**, and the first
 where the control is a run already in flight rather than a second submission.
 
+### Joint packing and inverse folding — evaluated 2026-11-01
+
+Ulban's proposal: add an amino-acid identity field to the cell state and let the
+same local rule solve identity and conformation together, so packing informs
+sequence design and sequence design informs packing. The prior-art artifact
+("Protein NCA Prior Art", §"The stage to insert next, which is nearly free")
+already names this as the next rung after repacking, in the parallel-update
+form. What follows is what the chi1 measurement changes about it.
+
+**The architectural claim holds, and it is stronger than it looks.** Node
+features are already `residue one-hot (20) + chi sin/cos (8) + chi mask (4)`
+(`graph.py:382`), and the docstring there says the quiet part out loud:
+"Residue identity is an *input*: this is a repacker and the sequence is known."
+The identity field exists; it is re-clamped from the native sequence every step.
+Making it mutable is a change to *whether we write that channel back*, not a new
+representation. The output head costs ~20x96 weights against 200,268 — under
+1 %. Diffusion-over-frames has to design a joint noise process over a
+categorical and a continuous manifold with a shared schedule (this is most of
+what MultiFlow does); a per-residue state vector gets joint generation for
+nothing. That asymmetry is a real argument for the architecture and belongs in
+the paper.
+
+**What is not free is the chi topology.** `chi_mask`, `CHI_ATOMS` and
+`SIDECHAIN_BONDS` are all functions of the residue name, and
+`apply_chi_deltas` rotates a fixed atom graph. Mutable identity means a mutable
+atom graph and a mutable number of chis. That is the bulk of the work, and it is
+a refactor rather than a head swap.
+
+**The soft/hard dilemma, which has no free answer.**
+- *Mean field* — carry a 20-simplex and pack all identities weighted by
+  probability. This is exactly Koehl & Delarue's SCMF, which the artifact
+  already flags as our true precedent, and it reintroduces SCMF's known failure
+  (averaging washes out strong pairwise coupling) in identity space. Note the
+  irony: we just **measured** that no such averaging happens in chi space. Adding
+  a soft identity field invites it back through a different door.
+- *Hard assign* each step and pack that residue. The rollout becomes Gibbs with
+  random scan; BPTT needs straight-through or Gumbel-softmax. Standard, but it
+  changes the training story from "differentiable fixed point" to "stochastic
+  fixed point".
+- *Decoupled read-out* — predict identity without feeding it back to geometry.
+  Genuinely nearly free, but it is not the joint model: the promised benefit
+  requires the feedback.
+
+**Sequential N-to-C is the wrong update order.** A fixed sweep direction is a
+bias the weights can exploit, it breaks the permutation symmetry that makes the
+rule a field, and it makes the fixed point order-dependent. The stochastic
+update mask already in the design (p~0.5 per residue per step) is Gibbs with
+random scan and is strictly more general. It also protects the one thing the
+CASP13 row shows we do well: our chi1-to-chi4 error is flat (31.6 to 53.1) where
+everyone else's compounds, because all chis are solved at once. Sequentialising
+re-imports the compounding the architecture currently avoids.
+
+**The expected gain is a consistency gain, not an information gain.** The physics
+behind the proposal is sound and has 25 years of precedent — fixed-backbone
+design in Rosetta co-optimises identity and rotamer because whether a position
+tolerates a TRP depends on whether the indole fits. But at design time there are
+no native side chains to condition on. A side-chain-aware inverse folder
+conditions on *its own* predicted side chains, which are a near-deterministic
+function of the backbone and sequence it already has. So the model gains no new
+information over ProteinMPNN; what it gains is the ability to reject an identity
+whose rotamers cannot be packed. That is worth having, and it makes a falsifiable
+prediction: **the improvement should concentrate at buried, tightly packed
+positions and vanish on the surface.** Report it split that way or the claim is
+untestable.
+
+**Native sequence recovery is the wrong headline.** PottsMPNN deliberately traded
+NSR down (~44 % against ProteinMPNN's ~58 %) for better refolding
+self-consistency and ddG correlation. Beating 44 % on NSR could just mean we are
+a worse-calibrated ProteinMPNN. Commit instead to (a) self-consistency — design,
+fold, RMSD — and (b) **joint recovery**: sequence recovery and chi accuracy from
+a jointly scrambled start. Nobody reports (b), because nobody's model does both
+at once. That number is ours.
+
+**Sequencing argument against doing this next.** Capacity is a live hypothesis
+for the 22.7 % wrong-well rate. ProteinMPNN spends ~1.7 M parameters on sequence
+alone; we have 200,268 on packing. Loading a second task onto the same trunk
+before knowing whether the trunk is already saturated would confound both
+results.
+
+**Cheap probe that tests the premise first.** Freeze the v5 trunk, train a linear
+96-to-20 head on the converged hidden state, and measure native identity
+recovery. Well above background composition means side-chain-solving
+representations already carry identity information and the joint model's premise
+is confirmed before anything is built. At background, the premise is in doubt.
+One CPU job, no training of the rule.
+
+### Is the 22.7 % a failure at all? — Ulban's forcefield reading, 2026-11-01
+
+Ulban's objection to the framing above: if the rule is learning a forcefield,
+then rolling downhill to the nearest well from a randomised start is *correct
+behaviour*, and the wrong-well rate measures the basin structure of the energy
+landscape rather than an error. This is right, it is testable, and the test is
+the same one the prior-art artifact identified as the part of this work that is
+ours ("Is it actually a fixed point?" — convergence, stability, basin size).
+None of the three has been measured.
+
+Four measurements, one script, no retraining. `pack_from_random` derives the
+start deterministically from `--seed`, so the randomised starting chis are
+exactly recoverable.
+
+1. **Start-well correlation.** Is the predicted well predicted by the *starting*
+   well? Strong correlation means gradient descent in a landscape, and the
+   benchmark number is then a basin-of-attraction measurement under a uniform
+   prior, not an accuracy. No correlation means the rule ignores where it started
+   and the 22.7 % is a genuine selection error.
+2. **Best-of-N over seeds.** If the native well is reachable from *some* start,
+   the rule knows more than the single-seed number shows. This also sets up the
+   honest comparison: DiffPack is conditioned on the noise level and samples a
+   posterior; we do deterministic descent from one point. Report single-shot
+   (the published protocol) and best-of-N separately, and say which is which.
+3. **Basin sweep.** Recovery accuracy against perturbation magnitude, from small
+   von Mises noise to uniform. The basin-size curve.
+4. **Convergence and stability.** Mean |delta chi| per step — does it decay or
+   oscillate, as some of Grattarola's morphogenesis rules did? And drift from the
+   step-100 structure when run to 1000.
+
+If (1) comes back strongly correlated, the chi1 column stops being the kill
+signal it looks like and the paper's claim moves from accuracy to landscape.
+If it comes back flat, capacity and the clamp test stand as written above.
+
 ### Why v4 looks the way it does
 
 Three settings changed at once, which is usually bad practice and is right here: all three came
