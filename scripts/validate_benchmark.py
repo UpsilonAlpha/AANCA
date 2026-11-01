@@ -156,12 +156,106 @@ def evaluate(casp: int, method: str, backbone: str = "casp_all"):
     return (benchmark_table(pairs) if pairs else None), len(stems), skipped
 
 
+def chi1_wells_by_type(casp: int, method: str, backbone: str = "casp_all"):
+    """``{resname: [wrong, total]}`` chi1 well-match counts for one baseline.
+
+    Added because `basin_probe breakdown` found our chi1 error is concentrated
+    in the small polar types -- SER 43.7 %, against PHE 9.2 % -- and
+    `basin_probe hbond` ruled out the obvious explanation, that we cannot see
+    hydrogen bonds: among SER and THR the error *falls* as donors and
+    acceptors crowd in, 37.6 % to 30.5 %. So the remaining question is whether
+    SER is hard for everyone or hard for us, and that is answerable from the
+    baselines' own released structures with no rollout at all.
+
+    Scored on the same residues, with the same well assignment and the same
+    proline exclusion as our own number, so the two are comparable.
+    """
+    import torch
+
+    from aanca.diagnostics import chi1_degrees, chi1_residues
+    from aanca.rotamers import nearest_well
+
+    counts: dict[str, list[int]] = {}
+    stems = targets_for(RESULTS, casp, method, backbone)
+    for stem in stems:
+        try:
+            native = load_protein(
+                RESULTS / "native" / backbone / f"{stem}.pdb", repair_columns=True
+            )
+            predicted = load_protein(
+                RESULTS / method / backbone / f"{stem}.pdb", repair_columns=True
+            )
+        except Exception:
+            continue
+        topo, native_coords = feature_topology(native)
+        pred_coords, scored = align_prediction(native, predicted)
+        keep = chi1_residues(topo.torsion) & scored
+        if not bool(keep.any()):
+            continue
+        native_well = nearest_well(chi1_degrees(native_coords, topo.torsion))[0]
+        pred_well = nearest_well(chi1_degrees(pred_coords, topo.torsion))[0]
+        wrong = native_well != pred_well
+        for index, name in enumerate(topo.torsion.resnames):
+            if not bool(keep[index]):
+                continue
+            row = counts.setdefault(name, [0, 0])
+            row[0] += int(bool(wrong[index]))
+            row[1] += 1
+    return counts
+
+
+def print_by_type(casp: int, methods: list[str], backbone: str) -> None:
+    tables = {}
+    for method in methods:
+        table = chi1_wells_by_type(casp, method, backbone)
+        if table:
+            tables[method] = table
+    if not tables:
+        print("no usable structures for any method")
+        return
+
+    names = sorted(
+        {n for t in tables.values() for n in t},
+        key=lambda n: -sum(t.get(n, [0, 0])[1] for t in tables.values()),
+    )
+    header = "  type " + "".join(f"{m[:11]:>12}" for m in tables)
+    print("chi1 wrong-well rate by residue type, from the baselines' own structures")
+    print("(AANCA's own column is in docs/benchmarks/basin_breakdown_v5_native.log)\n")
+    print(header + "      n")
+    for name in names:
+        cells, total = "", 0
+        for table in tables.values():
+            wrong, seen = table.get(name, [0, 0])
+            cells += f"{100 * wrong / seen:11.1f}%" if seen else "           -"
+            total = max(total, seen)
+        print(f"  {name:<4}" + cells + f"  {total:7d}")
+    cells, grand = "", 0
+    for table in tables.values():
+        wrong = sum(w for w, _ in table.values())
+        seen = sum(s for _, s in table.values())
+        cells += f"{100 * wrong / seen:11.1f}%" if seen else "           -"
+        grand = max(grand, seen)
+    print(f"  {'all':<4}" + cells + f"  {grand:7d}")
+    print(
+        "\nReading it: ours is 22.7% overall, SER 43.7%, PHE 9.2%. If the"
+        "\nbaselines show the same shape, the small polar types are the field's"
+        "\nhard case and our deficit is a uniform scaling of everyone's problem."
+        "\nIf they are flat across types where we are not, the shape is ours and"
+        "\nit points at a specific missing ingredient rather than at capacity."
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--casp", type=int, default=13, choices=[13, 14])
     parser.add_argument("--methods", default="")
     parser.add_argument("--backbone", default="casp_all")
     parser.add_argument("--verbose-skips", action="store_true")
+    parser.add_argument(
+        "--by-type",
+        action="store_true",
+        help="chi1 wrong-well rate per residue type instead of the table",
+    )
     args = parser.parse_args()
 
     if not RESULTS.is_dir():
@@ -174,6 +268,11 @@ def main() -> int:
 
     print(f"CASP{args.casp}, backbone set '{args.backbone}'")
     print(f"targets numbered T{CASP_RANGES[args.casp][0]}-T{CASP_RANGES[args.casp][1]}\n")
+
+    if args.by_type:
+        have = [m for m in methods if (RESULTS / m / args.backbone).is_dir()]
+        print_by_type(args.casp, have, args.backbone)
+        return 0
 
     printed_header = False
     for method in methods:

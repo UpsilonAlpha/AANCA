@@ -1,0 +1,4 @@
+C:\Users\uquadhik\Library\University\Year1\Structures\AANCA\.venv\Lib\site-packages\biotite\structure\io\pdb\file.py:153: UserWarning: 2253 elements were guessed from atom name
+  warnings.warn(
+C:\Users\uquadhik\Library\University\Year1\Structures\AANCA\.venv\Lib\site-packages\biotite\structure\io\pdb\file.py:153: UserWarning: 1921 elements were guessed from atom name
+  warnings.warn(

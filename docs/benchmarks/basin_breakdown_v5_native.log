@@ -1,4 +1,4 @@
-host : bun153
+host : bun152
 run  : scripts/basin_probe.py breakdown runs/v5_native/best.pt --device cpu
 
 breakdown: runs/v5_native/best.pt at update 59500, CASP13, 79 targets, 100 steps, cpu
@@ -32,14 +32,26 @@ breakdown: runs/v5_native/best.pt at update 59500, CASP13, 79 targets, 100 steps
 
 --- spatially: is the failure cooperative? ---
 
-  share of chi1 neighbours also wrong, given self wrong  :  25.4%
-  share of chi1 neighbours also wrong, given self right  :  20.0%
-  base rate                                              :  22.7%
+  Share of a residue's chi1 neighbours within 10 A that are also in
+  the wrong well. Stratified because burial predicts wrongness AND is
+  spatially clumped, so the 'all' row cannot tell a cooperative
+  failure from two surface residues happening to be neighbours. In
+  the core and non-core rows both the subject and its neighbours are
+  restricted to that class, which removes the confound.
 
-Reading it: if the two conditional shares both sit at the base rate,
+  stratum     self wrong   self right   difference        n
+  all              25.4%        20.0%        +5.5    17977
+  core             18.6%        14.1%        +4.6     5741
+  non-core         29.1%        24.1%        +5.1    12230
+
+  base rate over everything :  22.7%
+
+Reading it: a difference near zero in the *stratified* rows means
 wrong wells are spatially independent and each residue fails alone.
-A raised share given self-wrong is a cooperative failure, which is
-the co-solving story and would make the clamp test's native arm the
-place to look for the fix.
+A positive difference that survives stratification is a cooperative
+failure -- an early wrong commitment propagating -- which is the
+co-solving story and would make the clamp test's native arm the
+place to look for the fix. The identity rule gives this statistic a
+flat null, since its errors are independent uniform draws.
 
 exit : 0

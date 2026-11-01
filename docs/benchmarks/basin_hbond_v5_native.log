@@ -1,0 +1,38 @@
+host : bun152
+run  : scripts/basin_probe.py hbond runs/v5_native/best.pt --device cpu
+
+hbond: runs/v5_native/best.pt at update 59500, CASP13, 79 targets, 100 steps, cpu
+
+17979 residues. The atom chi1 places is polar (N or O) in
+2951 of them.
+
+  Scope: the polar group is essentially SER and THR, because they are
+  the only types whose chi1 places an N or O. ASP, GLU, ASN and GLN
+  are polar residues but chi1 places their CG, and chi2 positions the
+  atoms that hydrogen bond -- so this test says nothing about them,
+  and they are another 31.3% of the error. CYS is excluded too: its
+  SG is a sulphur, which these element buckets do not count.
+
+--- wrong-well rate by nearby N/O of other residues, within 3.5 A ---
+
+  group                 0 partners   1   2 or more        n
+  polar tip               37.6%     33.9%     30.5%     2951
+  non-polar tip           19.2%     21.2%     35.1%    15028
+  SER or THR              37.6%     33.9%     30.5%     2951
+
+--- the same split, counts in each bucket ---
+
+  polar tip                797       967        1187
+  non-polar tip           9901      4406         721
+  SER or THR               797       967        1187
+
+Reading it: if the rate climbs with partner count among polar tips,
+the rule is failing exactly where a hydrogen bond determines the
+answer, and the missing ingredient is a feature rather than capacity.
+If it is flat or falls, the hydrogen-bonding story is wrong and SER
+is simply small and under-determined -- in which case compare
+against what the baselines score on SER before calling it ours.
+The non-polar row is the control: a CG carbon cannot hydrogen bond,
+so any trend there is crowding, not chemistry.
+
+exit : 0
