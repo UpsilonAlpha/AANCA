@@ -1,0 +1,33 @@
+host : bun155
+run  : scripts/basin_probe.py bestof runs/v5_native/best.pt --device cpu --seeds 8
+
+bestof: runs/v5_native/best.pt at update 59500, CASP13, 79 targets, 100 steps, cpu
+
+17979 residues, 8 independent starts
+
+--- well-match rate, by how the answer is chosen ---
+
+  one seed, the published protocol :  77.5% mean (77.3 to 77.7 across seeds)
+  modal well across seeds          :  77.9%   (no native answer needed)
+  any seed right                   :  84.4%   (an oracle, not a method)
+  every seed right                 :  69.6%
+
+--- chi1 MAE, degrees ---
+
+  one seed  :  31.55 mean (31.38 to 31.66)
+  best seed per residue :  23.08  (oracle)
+
+--- unanimity as a confidence signal ---
+
+  all 8 starts agree on the well :  83.5% of residues
+    and there the first seed is right     :  83.3%
+    where they disagree, right            :  47.0%
+
+Reading it: a large gap between one seed and 'any seed right' means
+the native well is in reach and the single-shot number is a sampling
+artefact. A large gap between one seed and the modal well means that
+artefact is recoverable for free, since voting needs no energy
+function. If unanimity separates right from wrong, the rule has a
+usable confidence estimate it is not currently being asked for.
+
+exit : 0

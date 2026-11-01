@@ -626,6 +626,8 @@ entries you will carry away two wrong conclusions. In short:
 | The native structure **is** nearly a fixed point: 0.76 % of wells broken, 2.38 deg MAE. `--native-probability` worked. | `stationary` |
 | The error is concentrated in the small polar types, but that shape belongs to the *problem*: SER is worst and PHE best for every published method too. Our own deficit is broadly uniform at 1.1-1.3x, so no single missing term explains it. | `breakdown` + by-type |
 | Wrong wells cluster spatially, and it survives burial stratification. Correlational; `clamp_test` is the interventional form. | `breakdown` |
+| The co-solving is real: varying only whether pinned neighbours hold *correct* conformations moves free-residue accuracy by 18 points. But the sign is backwards -- a native-frozen neighbourhood makes the free residues **worse**, because a spatially mixed state is off the training distribution. | `clamp` |
+| The attractor is start-independent (modal vote over 8 seeds: +0.4 points), and unanimity across seeds is a free confidence signal: 83.3 % right where 8 agree, 47.0 % where they do not. | `bestof` |
 | The rule already reads hydrogen-bond acceptor geometry. SER is under-determined, not invisible. | `hbond` |
 
 **The three corrections, so they are findable rather than buried:**
@@ -727,11 +729,15 @@ for it.
   rate, the rule is a per-residue marginal predictor and the co-solving is
   decorative — and note that 77.3 % is about what a backbone-dependent rotamer
   library gets from backbone alone.
+  **ANSWERED, and not with either branch above** — see the `clamp` section.
+  The rule does read its neighbours' side chains, strongly; what it cannot do
+  is use them when they are correct and it is not.
 - **A prediction for `bestof`, recorded before it lands.** If the attractor is
   environment-determined, independent seeds should largely agree: "any seed
   right" modestly above 77.3 % (the update-mask stream still differs between
   seeds) and unanimity high. A much larger figure — say 95 % — would contradict
   `descent` and one of the two would have to be wrong.
+  **The prediction held**: 84.4 % and 83.5 %. See the `bestof` section.
 
 **sweep — and here is the thing neither of the other two could see.** The rule
 relaxes to its own answer *from both directions*, including downhill.
@@ -930,6 +936,111 @@ the baselines' structures as starting coordinates rather than a random draw —
 which `aanca.casp.randomised_start` makes a one-argument change. It would be a
 hybrid rather than a method, and it says nothing about whether the rule alone
 is good. Worth knowing anyway.
+
+### The clamp test — the rule reads its neighbours, and reads them wrong
+
+Measured 2026-11-02, 31346329, `docs/benchmarks/clamp_v5_native.log`. This is
+the interventional form of the spatial-clustering question, and the answer is
+neither of the two I had set up for.
+
+A fraction of residues is held fixed through the whole rollout — they keep
+ticking their hidden state, so neighbours are fed a vector the rule has seen
+before, but their atoms never move (`rollout(..., frozen=)`). Two arms at each
+fraction: the pinned residues held at their **native** conformations, or held
+at an **independently randomised** draw. Both arms freeze the same residues and
+score only the free ones, so the quieter-neighbourhood effect of pinning is
+divided out and `native - random` varies one thing — whether the information in
+the neighbourhood is correct.
+
+      pinned     native - random
+       0.25              +0.5
+       0.50              -6.9
+       0.75             -18.1
+
+**Correct neighbours make it worse, by a lot.** With three quarters of the
+protein pinned at crystal conformations the free residues score 57.1 %; pin the
+same residues at random conformations instead and they score 75.2 %. The
+`pinned drift` column is 0.00e+00 at every fraction, so the pin did not leak and
+the table stands.
+
+**What this settles, and what it does not.**
+
+- **The co-solving is real, not decorative.** An 18-point swing from varying
+  only the *content* of the neighbourhood is not compatible with a per-residue
+  marginal predictor. The clamp test's null — "near zero at every fraction" —
+  is decisively rejected. The question I wrote it to answer is answered: the
+  rule reads its neighbours' side chains.
+- **But the reading is miscalibrated, and in a way that names the cause.** A
+  free residue displaced inside an otherwise-native neighbourhood is a state
+  **the training distribution never contains**. `ChiDataset.sample` draws one
+  concentration per sample and applies it to *every* chi (`data.py` 585-620,
+  `von_mises_deltas` masking on `chi_mask`), so the curriculum is a mixture over
+  *global* damage levels: all-damaged, or, at `--native-probability`, all-native.
+  Nothing in it is spatially mixed. `stationary` already showed the all-native
+  corner is fine (0.76 % wells broken). So the failure is specific to the
+  mixed state, which is exactly the off-distribution prediction.
+- **And that mixed state is the classical packing task.** "Repack this residue
+  in a fixed native environment" is what a rotamer-library method with a
+  pairwise energy does natively and what SCWRL is built on. Our rule cannot do
+  it — 57.1 % against the 77.3 % it manages when everything is damaged
+  together. That is the most basic form of the problem and we are *worse* at it
+  than at the harder one.
+- **It does not separate two mechanisms.** Off-distribution input and a missing
+  clash term predict the same table. A dense correct neighbourhood is
+  sterically tight; relieving that requires a response to overlap that was
+  never in the loss (there is no clash term in v1 — `training_objective` is
+  reconstruction + no-op + bond/angle restraint, and the only occurrence of
+  "clash" in `losses.py` is a comment explaining why bond geometry must be
+  restrained lest the rule relieve a term that does not exist). Both point at
+  the same two fixes, which is why this is not worth a further probe before
+  trying them.
+
+**The fix this ranks first: per-residue damage.** Damage a random *fraction* of
+residues per sample rather than every one of them, at a concentration drawn as
+now. It is a change to `ChiDataset.sample` and nothing else; it costs no
+compute; it makes the mixed state a training case; and it turns the clamp test
+into a regression test with a pre-registered direction. The clash term is the
+second, and the two are independent.
+
+**One honest limit.** The clamp test varies neighbour *conformation* only. It
+says nothing about whether the rule reads neighbour *identity*, which is the
+question the joint model turns on, and nothing run so far addresses that.
+
+### bestof — the prediction held, and unanimity is a free confidence signal
+
+Measured 2026-11-02, 31329821, `docs/benchmarks/basin_bestof_v5_native.log`.
+Eight independent starts over the same 17,979 residues.
+
+      one seed, the published protocol :  77.5%  (77.3 to 77.7 across seeds)
+      modal well across seeds          :  77.9%
+      any seed right                   :  84.4%  (oracle)
+      every seed right                 :  69.6%
+
+      all 8 starts agree on the well   :  83.5% of residues
+        and there the first seed right :  83.3%
+        where they disagree, right     :  47.0%
+
+**The prediction recorded before it ran was right**, which matters because it
+was the one result that could have contradicted `descent`: "any seed right
+modestly above 77.3 % and unanimity high" — 84.4 % and 83.5 %. The 95 % figure
+that would have made `descent` and `sweep` untenable did not appear.
+
+- **Voting buys nothing.** Modal over eight seeds is +0.4 points. The attractor
+  really is mostly start-independent, so there is no free accuracy here and no
+  case for an ensemble protocol.
+- **Unanimity *is* a usable confidence estimate, and it is free.** 83.3 % right
+  where eight seeds agree against 47.0 % where they do not. Nothing currently
+  asks the rule for a confidence; this is a 36-point separation available from
+  re-running it, with no energy function and no native answer needed. It is the
+  obvious handle for the mutable-identity model, where a confidence ordering is
+  what a sequential decoder needs.
+- The oracle gap (77.5 to 84.4) bounds what *any* restart strategy could win at
+  6.9 points, and nothing cheap gets near it: the modal vote captures 0.4 of
+  those 6.9.
+
+A 30-target, 4-seed replicate (31351486) is on scratch and agrees in shape. Its
+headline reads 81.7 % because it scores a different, smaller target subset —
+**do not compare that number to 77.5 %.**
 
 ### Why v4 looks the way it does
 
