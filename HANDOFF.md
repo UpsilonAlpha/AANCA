@@ -937,6 +937,69 @@ which `aanca.casp.randomised_start` makes a one-argument change. It would be a
 hybrid rather than a method, and it says nothing about whether the rule alone
 is good. Worth knowing anyway.
 
+### v6 answered the clamp test, and the run was stopped at its best — 2026-11-02
+
+`--damage-fractions` worked, and the sign flipped. Clamp on
+`runs/v6_mixed/best.pt` at update 2500 (31417064), against the warm-start
+baseline in `docs/benchmarks/clamp_v5_native_last.log`:
+
+| pinned | v6 native | v6 random | v6 diff | baseline diff |
+|---|---|---|---|---|
+| 0.00 | 77.7 % | — | — | 77.5 % unpinned |
+| 0.25 | 77.6 % | 76.6 % | **+1.0** | **−0.9** |
+| 0.50 | 72.1 % | *pending* | — | −11.5 (native arm 64.2 %) |
+| 0.75 | *pending* | *pending* | — | −20.9 |
+
+Correct neighbours now *help* the free residues instead of hurting them, which
+is the thing the clamp test was built to detect and the entire premise of the
+fix. The half-pinned native arm went 64.2 % → 72.1 %, **+7.9 points**. And no
+regression on the global task, 77.7 % against 77.5 %, which is what the
+duplicated 1.0 slot in the mixture was for.
+
+**But read the 0.25 row with the replicate next to it.** 31422867, the
+`--seed 1` run of the same baseline, gives 76.9 % on the 0.25 native arm where
+seed 0 gave 75.7 % — a **1.2-point seed-to-seed spread**. v6's +1.0 against
+−0.9 is a 1.9-point swing, which is not comfortably outside that. So 0.25 is
+suggestive and 0.50 is decisive, and 0.75 — the worst failure and the
+pre-registered target — was still running when the training was stopped. Both
+CPU jobs were readable mid-flight only because `bunya_cpu.slurm` already
+carried `python -u`; that is the first time that fix paid out.
+
+**The run was stopped on purpose at update 7216**, user's call, because the
+held-out metrics peaked early and gave some back. Warm-started from 15.20
+pooled chi1 / 33.47 kappa-0 chi1 / 36.3 % kappa-0 accuracy; best at update 3000
+with 14.47 / 31.25 / 40.2 %; by update 6500 back to 14.94 / 32.43 / 39.1 %.
+Still ahead of where it started, behind its own peak. `best.pt` is from update
+2500, so the clamp table above is the good checkpoint, not the drifted one.
+Whether the give-back is eval noise at this cadence or the mixture trading the
+global task against the mixed one is not established.
+
+### Two traps paid for on 2026-11-02
+
+**`scancel` on a training job RESUBMITS it.** This nearly happened. SLURM sends
+SIGTERM, `train.py`'s handler finishes the update in flight and exits
+`ckpt.UNFINISHED` = 64, and `bunya_train.slurm` treats 64 as "checkpointed, not
+finished" and submits the next segment — which is correct behaviour for a
+walltime and exactly wrong for a deliberate stop. The clean stop is the **stop
+file**: `touch runs/<tag>/STOP`. It is checked once per update, so it lands
+within one step; train.py exits 0, the chain ends, and the log says so
+explicitly. Observed: `stopped at update 7216 of 20000 by .../runs/v6_mixed/STOP`,
+`train exit : 0`, no resubmission. The script's own comments say all of this
+(`bunya_train.slurm:18-21, 141-152`) — the lesson is to read them before
+reaching for `scancel`, not that anything was wrong.
+
+**A `Write` that says "updated" rather than "created" means the file already
+existed.** `src/aanca/schedule.py` was already the learning-rate schedule
+(`learning_rate(base, update, drops, gamma)`), and writing the new coupling-graph
+module to that path silently destroyed it, along with `tests/test_schedule.py`.
+Nothing caught it until the full suite ran, because the eight failures were in
+`tests/test_train_resume.py` — which imports `learning_rate` via
+`scripts/train.py:57` — and so looked unrelated to anything new. Both files were
+restored verbatim from `cb3231c` (verified by an empty `git diff`) and the new
+module became **`src/aanca/update_schedule.py`**, matching the config field and
+the CLI flag. Check for an existing module before writing a new one, and read
+the word the tool reports back.
+
 ### Inverse folding: the design settled on 2026-11-02, and why
 
 Decided in discussion, not measured. Recorded because three of these are
