@@ -1164,6 +1164,23 @@ explicitly. Observed: `stopped at update 7216 of 20000 by .../runs/v6_mixed/STOP
 (`bunya_train.slurm:18-21, 141-152`) — the lesson is to read them before
 reaching for `scancel`, not that anything was wrong.
 
+**A bare `sbatch scripts/bunya_cpu.slurm` is a coin flip.** It carries no
+`--constraint`, so the epyc5 venv can land on an epyc3 node and die in two
+seconds with SIGILL — **exit 132, an empty `.out`, no traceback**. The CPU
+generation trap was already recorded here for `bunya_fetch.slurm`; it applies
+to every bare CPU submission, and `bunya_submit.sh gpu` is the only path that
+passes the constraint for you. `steric_preflight.py` died this way on bun030
+while two clamp jobs submitted identically in the same hour happened to land on
+bun151 and ran fine, which is exactly why it had not shown up before. Submit
+as:
+
+    sbatch --constraint=$(cat .venv_bunya/arch.txt) scripts/bunya_cpu.slurm ...
+
+A `#SBATCH` directive cannot read `arch.txt`, so this has to be passed at
+submit time; the usage header of `bunya_cpu.slurm` now says so. Worth
+suspecting retrospectively — an earlier CPU diagnostic that "produced nothing"
+may have died this way rather than having had nothing to say.
+
 **The Bunya checkout does not update itself, and a new flag fails at submit.**
 `/scratch/user/uquadhik/AANCA` was sitting at `a2a6111` — two commits behind
 where today started and eleven behind the clash term — so
@@ -1213,6 +1230,72 @@ restored verbatim from `cb3231c` (verified by an empty `git diff`) and the new
 module became **`src/aanca/update_schedule.py`**, matching the config field and
 the CLI flag. Check for an existing module before writing a new one, and read
 the word the tool reports back.
+
+### After inverse folding: backbone degrees of freedom, folding, and folding ddG
+
+User's direction, recorded 2026-11-02 for when inverse folding works. Hand the
+rule control over backbone geometry with its neighbours as well, so the same
+local update rule can fold and can score folding ddG, in the spirit of
+ProteinEBM. Nothing here is built; the point is to record what is already in
+place for it and the two things that are not what they look like.
+
+**Already laid, and more than it seems.** `MOVABLE_BONDS` and `MOVABLE_ANGLES`
+exist and are frozen rather than absent, so the degrees of freedom are
+defined — though note they are *side-chain* internal coordinates, not backbone.
+More importantly the two terms a folding objective cannot do without are now
+written and tested: the steric term (`aanca.steric`) and the bond/angle
+harmonic restraint. A folding model without steric exclusion is hopeless, and
+the restraint is what stops geometry being deformed to relieve a clash. And
+`FeatureTopology` already carries `frame_idx`, `frame_valid` and `has_frame`,
+so the frame representation is in the graph as *input*.
+
+**The lever arm is the real obstacle, and it is a difference in kind.**
+Rotating a chi moves the downstream atoms of one side chain — a bounded, local
+set, which is why a local update rule is coherent at all. Rotating phi at
+residue *i* moves **every atom from *i* to the terminus**, so a 1 degree change
+displaces distant atoms by many angstroms. A rule whose cells each nudged their
+own phi/psi would produce enormous uncoordinated global motion, and the
+"locality" the architecture rests on would be gone.
+
+The literature's answer is not to give cells torsions. AlphaFold2's structure
+module predicts a **rigid-body frame per residue** (translation and rotation in
+SE(3)) and idealises local geometry; frames are independent, so there is no
+lever arm — and AF2 predicts *torsions* only for side chains, which is exactly
+our current setting. RFdiffusion, FrameDiff and Chroma operate on frames too,
+and Rosetta's fragment insertion avoids the lever arm by moving fragments and
+closing loops. So the step is **frames as an output**, not phi/psi, and the
+frame fields above are already the input half of that.
+
+**A code assumption that will silently go invalid.** `clash_loss` derives its
+17 angstrom neighbour cutoff from a *fixed* backbone (CA positions plus a 6.6
+angstrom side-chain reach), and it **drops backbone-backbone pairs** on the
+grounds that those distances are constants no gradient can reach. Both become
+wrong the moment the backbone moves: the pair list has to be rebuilt every
+step rather than once, and backbone-backbone clashes are precisely what folding
+must avoid. Neither failure raises — the term would just quietly stop scoring
+the most important pairs. Whoever unfreezes the backbone has to change those
+two things first.
+
+**What the claim would have to be.** Fixed-backbone packing is scored against
+crystal chis; folding is scored by TM-score, GDT and lDDT against the native
+fold, and the comparison becomes AF2 and ESMFold. Competing on folding accuracy
+is not plausible. What is plausible, and more interesting, is folding as a
+**dynamics** claim — that a local update rule reaches the native fold as a fixed
+point — which is a statement about self-organisation rather than accuracy, and
+is the one thing this architecture could say that a single-pass predictor
+cannot.
+
+**And the ordering is right for a reason worth stating.** On a fixed backbone
+every error is attributable, because the backbone is ground truth: that is what
+makes the clamp test, the basin probes and the per-residue breakdowns
+diagnostic. Unfreeze it and errors entangle — a wrong rotamer and a wrong
+phi/psi produce the same lDDT drop — so all of that measuring power is spent at
+once. Doing inverse folding first keeps it.
+
+Folding ddG then composes with what is already built: the Potts energy gives an
+evaluable scalar, MH at finite temperature gives an ensemble, and free-energy
+differences come out of the ensemble rather than out of an entropic term. That
+is the same chain of reasoning as above, extended from sequence to geometry.
 
 ### Inverse folding: the design settled on 2026-11-02, and why
 

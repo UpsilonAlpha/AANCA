@@ -1,8 +1,19 @@
 #!/bin/bash
 # A diagnostic that does not need a card, run where the queue is short.
 #
-#   sbatch scripts/bunya_cpu.slurm scripts/chi1_histogram.py \
-#       runs/v5_native/best.pt --casp 13 --steps 100 --device cpu
+#   sbatch --constraint=$(cat .venv_bunya/arch.txt) scripts/bunya_cpu.slurm \
+#       scripts/chi1_histogram.py runs/v5_native/best.pt --casp 13 --steps 100
+#
+# **The --constraint is not optional, and leaving it off is a coin flip.** The
+# venv is built for one CPU generation (epyc5); on an epyc3 node the job dies
+# in about two seconds with SIGILL -- exit 132, an empty .out and "Illegal
+# instruction" -- before running any project code. A #SBATCH line cannot read
+# arch.txt, so it has to be passed at submit time, and `bunya_submit.sh gpu`
+# does it for you while a bare sbatch of this script does not. Paid for on
+# 2026-11-02: steric_preflight.py landed on bun030 and died instantly, while
+# two clamp jobs submitted the same way the same hour happened to land on
+# bun151 and ran fine. Earlier CPU diagnostics may have died this way without
+# anyone noticing, since the symptom is an empty log.
 #
 # The GPU QOS has a per-user job limit shared with everything else Ulban
 # runs, so a small diagnostic can sit behind a self-refilling array for
