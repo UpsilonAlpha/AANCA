@@ -974,7 +974,67 @@ Still ahead of where it started, behind its own peak. `best.pt` is from update
 Whether the give-back is eval noise at this cadence or the mixture trading the
 global task against the mixed one is not established.
 
-### Two traps paid for on 2026-11-02
+### The Potts energy — built and validated 2026-11-02, `src/aanca/potts.py`
+
+`E(s) = Σ h_i(s_i) + Σ J_ij(s_i, s_j)`, couplings stored sparsely over an
+explicit edge list with `i < j` (a dense `(n_res, n_res, 20, 20)` is 1.4e10
+entries at 300 residues). `energy`, `delta_energy`, `conditional`,
+`metropolis_ratio`, `gibbs_sweep`, `metropolis_sweep`, `anneal`. `temperature`
+*is* kT and 0 is legal, so a quench is exact ICM. Positions are passed in by
+the caller, so `update_schedule.random_independent_set` can supply them without
+this module importing it.
+
+**The validation that matters.** Against brute-force Boltzmann enumeration on a
+4-position, 3-type system (81 states):
+
+| chain | sweeps | TV distance | iid floor | 
+|---|---|---|---|
+| Gibbs, kT=1 | 20 000 | **0.0104** | 0.0106 |
+| Metropolis, proposal (0.7, 0.2, 0.1) | 40 000 | **0.0192** | 0.0075 |
+
+Gibbs sits *at* the iid floor, so four sequential single-site updates fully
+decorrelate this system. MH is 2.5× the floor, which is the rejection
+autocorrelation. **And the test discriminates**: deleting the Hastings `q`
+ratio — accepting on `exp(-ΔE/kT)` alone with an asymmetric proposal — gives
+TV = **0.35**, eighteen times the threshold. So it really separates a correct
+MH from Gibbs with extra steps, which was the whole point of running MH from a
+deliberately biased proposal. `delta_energy` max error over 400 random moves on
+a 30-residue, 20-type model: 9.5e-7, and the cancellation is in the *reference*.
+
+**Three things wrong with the spec, two of them mine and real.**
+
+*A temperature below the dtype's smallest normal is a quench, not a NaN.*
+"Subtract the max before exponentiating" is not sufficient, and neither is a
+`temperature == 0` guard. `temperature` arrives as a Python float, so 1e-300 is
+genuinely positive and the guard does not fire — but torch casts it to float32
+for the division, where it becomes exactly zero, and the result is 0/0 at the
+best type and -inf at the rest. Every entry comes back NaN at a temperature
+that looks fine. A test at 1e-6 and a test at exactly 0 **both pass**, because
+the bug lives in the gap between them. Fixed by treating any temperature at or
+below `finfo.tiny` as a quench, which is also the honest reading: a kT below the
+dtype's resolution *is* zero here.
+
+*`metropolis_ratio(ΔE, q_old, q_new, T)` is only correct for an independence
+proposal.* The general Hastings correction is `q(old|new)/q(new|old)`; it
+collapses to `q_old/q_new` only because a single-site proposal depends on the
+*rest* of the sequence and not on the value currently at the moved position.
+That holds for a fixed proposal and for a network head conditioned on
+neighbours, so the signature stands — but a future proposal that reads its own
+position's current value would make the function quietly wrong.
+
+*"Annealing finds the global minimum" is not a property of the code.* It is a
+stochastic optimiser, and the hit rate tracks the energy gap and nothing else:
+gaps 0.83/1.72/1.34 → 16/16 starts, gap 0.62 → 11/16, gap 0.11 → 7/16. Four
+schedule shapes including 800 sweeps did not fix the small-gap case and the
+longer ones were sometimes worse. The honest statement is **"annealing finds
+the minimum when the minimum is identifiable"**, and the small-gap behaviour is
+the method being *right* rather than failing — two sequences 0.1 apart in energy
+are nearly equally probable, so picking either is correct. Which is itself an
+argument for finite-temperature sampling over quenching: at kT=1 a
+near-degenerate pair should be equally populated, and that is information the
+quench throws away.
+
+### Three traps paid for on 2026-11-02
 
 **`scancel` on a training job RESUBMITS it.** This nearly happened. SLURM sends
 SIGTERM, `train.py`'s handler finishes the update in flight and exits
@@ -987,6 +1047,28 @@ explicitly. Observed: `stopped at update 7216 of 20000 by .../runs/v6_mixed/STOP
 `train exit : 0`, no resubmission. The script's own comments say all of this
 (`bunya_train.slurm:18-21, 141-152`) — the lesson is to read them before
 reaching for `scancel`, not that anything was wrong.
+
+**A full `clamp_test.py` does not fit in `bunya_cpu.slurm`'s 4-hour walltime.**
+Measured on 31417064: four rows (0.00, 0.25 native, 0.25 random, 0.50 native)
+in 3 h 11 min, so **about 48 minutes per row** at 79 CASP13 targets and 100
+steps. The default `--fractions 0.25 0.5 0.75` is seven rows, which is ~5.6 h —
+so the job is killed with the last two or three rows missing, and 0.75, the row
+with the largest effect and the one worth measuring, is always the one lost.
+31422867 on `bun153` ran at ~90 min/row, nearly twice as slow on identical
+work, so node contention makes it worse and the budget cannot be assumed.
+
+Use `--fractions` to ask for one fraction at a time: 0.00 plus one arm pair is
+three rows, ~2.4 h, comfortably inside the walltime. Submitted that way as
+31480041 (v6 `best.pt`) and 31480042 (v5 `last.pt --seed 1`), both at 0.75. The
+earlier pair was left running rather than cancelled, since the 0.50 random row
+they are working toward completes that comparison and costs nothing on
+`general`.
+
+Incidentally `runs/v6_mixed/best.pt` was still dated 11:34, i.e. update 2500,
+after the run reached 7216 — so 4,700 further updates never produced a new
+best by the quantity it tracks. That is independent support for having stopped
+it, and a caution against the earlier note that update 3000 was the peak:
+whatever `best.pt` scores on did not agree.
 
 **A `Write` that says "updated" rather than "created" means the file already
 existed.** `src/aanca/schedule.py` was already the learning-rate schedule
