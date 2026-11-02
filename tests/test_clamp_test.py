@@ -182,7 +182,7 @@ def test_the_native_arm_holds_pinned_residues_at_their_crystal_conformation(ubiq
     topo, coords = ubiquitin
     rule = _trained_ish()
     with torch.no_grad():
-        packed, frozen = clamp_test.clamped_pack(
+        packed, frozen, _start = clamp_test.clamped_pack(
             rule, coords, topo, _config(), 4, 0.5, "native"
         )
     assert bool(frozen.any()) and not bool(frozen.all())
@@ -197,7 +197,7 @@ def test_the_random_arm_does_not_hold_them_at_native(ubiquitin):
     topo, coords = ubiquitin
     rule = _trained_ish()
     with torch.no_grad():
-        packed, frozen = clamp_test.clamped_pack(
+        packed, frozen, _start = clamp_test.clamped_pack(
             rule, coords, topo, _config(), 4, 0.5, "random"
         )
     held = frozen.unsqueeze(-1) & topo.torsion.chi_mask
@@ -211,10 +211,36 @@ def test_both_arms_pin_the_same_residues(ubiquitin):
     topo, coords = ubiquitin
     rule = _trained_ish()
     with torch.no_grad():
-        _packed_a, first = clamp_test.clamped_pack(
+        _packed_a, first, _sa = clamp_test.clamped_pack(
             rule, coords, topo, _config(), 9, 0.5, "native"
         )
-        _packed_b, second = clamp_test.clamped_pack(
+        _packed_b, second, _sb = clamp_test.clamped_pack(
             rule, coords, topo, _config(), 9, 0.5, "random"
         )
     assert torch.equal(first, second)
+
+
+def test_both_arms_give_the_free_residues_the_same_start(ubiquitin):
+    """What the new 'start' column asserts, and what makes 'moved' comparable.
+
+    The silencing read compares how far each arm *moved* its free residues, so
+    the two arms have to be starting them in the same place. They are: the
+    randomised start is drawn from ``seed`` alone and only the pinned rows are
+    overwritten. Measured rather than assumed, because if it ever stopped
+    holding, 'moved n/r' would be comparing two different experiments.
+    """
+    topo, coords = ubiquitin
+    rule = _trained_ish()
+    with torch.no_grad():
+        _a, frozen, start_native = clamp_test.clamped_pack(
+            rule, coords, topo, _config(), 9, 0.5, "native"
+        )
+        _b, _frozen, start_random = clamp_test.clamped_pack(
+            rule, coords, topo, _config(), 9, 0.5, "random"
+        )
+    free = ~frozen.unsqueeze(-1) & topo.torsion.chi_mask
+    held = frozen.unsqueeze(-1) & topo.torsion.chi_mask
+    native_chis = measure_chis(start_native, topo.torsion)
+    random_chis = measure_chis(start_random, topo.torsion)
+    assert torch.allclose(native_chis[free], random_chis[free], atol=1e-9)
+    assert not torch.allclose(native_chis[held], random_chis[held], atol=1e-2)

@@ -50,6 +50,42 @@ never happens in training.
 **Proline is excluded from the scoring** as in the other diagnostics, but it is
 still eligible to be pinned: it is part of the neighbourhood whether or not the
 three-well model describes it.
+
+---
+
+**The silencing hypothesis, added 2026-11-02 after the 0.75 row.** At 0.75 the
+``native`` arm scores 63.4 % against ``random``'s 75.3 %: being given *correct*
+neighbours is twelve points *worse* than being given wrong ones. Both arms are
+drawn with the same seed, so the pinned set and the scored set are identical
+and the free residues start from the same conformations -- the only difference
+is what the frozen quarter-to-three-quarters is holding. So this is not a
+sampling artefact, and "the rule ignores its neighbours" does not explain it
+either: ignoring them would give zero difference, not a large negative one.
+
+The explanation that does fit is that the rule has learned **"a native-looking
+neighbourhood means you are done"**. The no-op term supervises silence at the
+native fixed point, and in training a neighbourhood only looks native near
+convergence, when the residue itself is already right. Three quarters of the
+structure sitting motionless at its crystal conformation is therefore read as a
+converged state, and the rule stops moving a residue that is still at its
+random start. The ``random`` arm does not trigger it, because a mostly-wrong
+motionless field is what step 0 of every training rollout looks like.
+
+That hypothesis makes a measurable prediction the accuracy columns cannot
+distinguish from ordinary error, so this test now reports, over the same scored
+free residues:
+
+- ``start right`` -- the well-match rate of the randomised *start* itself, the
+  floor both arms are working up from. One number per fraction; the arms share
+  the start.
+- ``moved`` -- mean circular chi1 distance from each free residue's own start.
+  Silencing drives this toward zero.
+- ``stuck`` -- the share of free residues that end in the well they began in.
+
+Under silencing, the ``native`` arm has a much smaller ``moved`` and a much
+larger ``stuck`` than ``random``, and its ``free right`` sits near ``start
+right``. Under genuine-but-wrong co-solving it moves just as much and lands
+somewhere worse, and then the no-op term is not the culprit.
 """
 
 from __future__ import annotations
@@ -102,8 +138,8 @@ def clamped_pack(
     seed: int,
     fraction: float,
     arm: str,
-) -> tuple[torch.Tensor, torch.Tensor]:
-    """``(packed coords, frozen mask)`` for one target.
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """``(packed coords, frozen mask, start coords)`` for one target.
 
     Every residue starts from the benchmark's uniform draw. The pinned ones are
     then moved to the conformation this arm holds them at -- their native one,
@@ -137,23 +173,24 @@ def clamped_pack(
         record=False,
         frozen=frozen,
     )
-    return result.state.coords, frozen
+    return result.state.coords, frozen, start
 
 
 def measure(rule, config, stems, args, fraction: float, arm: str) -> dict:
     """Well-match rate and chi1 MAE over the residues left free."""
-    free_pred, free_native, pinned_moved = [], [], []
+    free_pred, free_native, free_start, pinned_moved = [], [], [], []
     for index, _stem, topo, native_coords in each_target(
         stems, args.backbone, args.device
     ):
         torsion = topo.torsion
         seed = args.seed + index
-        packed, frozen = clamped_pack(
+        packed, frozen, start = clamped_pack(
             rule, native_coords, topo, config, seed, fraction, arm
         )
         scored = chi1_residues(torsion) & ~frozen.cpu()
         free_pred.append(chi1_degrees(packed, torsion)[scored])
         free_native.append(chi1_degrees(native_coords, torsion)[scored])
+        free_start.append(chi1_degrees(start, torsion)[scored])
 
         # The invariant: a pinned residue's chi1 must not have moved. Measured
         # rather than asserted, because a silent failure here would look like
@@ -174,14 +211,24 @@ def measure(rule, config, stems, args, fraction: float, arm: str) -> dict:
         return {}
     pred = torch.cat(free_pred)
     native = torch.cat(free_native)
+    start = torch.cat(free_start)
     native_well, _ = nearest_well(native)
-    right = nearest_well(pred)[0] == native_well
+    pred_well, _ = nearest_well(pred)
+    start_well, _ = nearest_well(start)
+    right = pred_well == native_well
     drift = torch.cat(pinned_moved) if pinned_moved else torch.zeros(1)
     return {
         "n": int(native_well.numel()),
         "right": percent(right),
         "mae": float(circular_error(pred, native).mean()),
         "pinned_drift": float(drift.max()),
+        # The silencing diagnostics. ``start_right`` is a property of the
+        # start and the scored set, so the two arms must agree on it to
+        # within nothing at all -- if they disagree, the arms are not
+        # scoring the same residues and the comparison is void.
+        "start_right": percent(start_well == native_well),
+        "moved": float(circular_error(pred, start).mean()),
+        "stuck": percent(pred_well == start_well),
     }
 
 
@@ -199,7 +246,17 @@ def main() -> int:
         type=float,
         nargs="+",
         default=[0.25, 0.5, 0.75],
-        help="shares of residues to pin; 0 is always run as the anchor",
+        help="shares of residues to pin; 0 is also run unless --no-anchor",
+    )
+    parser.add_argument(
+        "--no-anchor",
+        action="store_true",
+        help=(
+            "skip the 0.00 row. It scores every residue in the benchmark, so "
+            "it costs more than any pinned row and it is the reason a "
+            "seven-row sweep never fitted a 4 h card. 'native - random' does "
+            "not need it; only 'native - anchor' does."
+        ),
     )
     args = parser.parse_args()
 
@@ -239,41 +296,64 @@ def main() -> int:
     print(
         "\nScored on the residues left free. The 0.00 row pins nothing and is"
         "\nthe benchmark's own number, so it anchors the two arms together."
+        "\n'start' is the randomised start's own well-match rate on the same"
+        "\nresidues, 'moved' their mean chi1 distance from that start, and"
+        "\n'stuck' the share that never left the well they began in."
     )
     print(
         "\n  pinned      arm   free right    free MAE   free n   pinned drift"
+        "    start   moved   stuck"
     )
 
-    with torch.no_grad():
-        anchor = measure(rule, config, stems, args, 0.0, "native")
-        if not anchor:
-            print("no usable targets")
-            return 1
+    def show(label: str, arm: str, out: dict) -> None:
+        drift = f"{out['pinned_drift']:11.2e}" if arm == "native" else "          -"
         print(
-            f"   0.00        -   {anchor['right']:9.1f}%  {anchor['mae']:10.2f}"
-            f"  {anchor['n']:7d}              -"
+            f"   {label}  {arm:>7}   {out['right']:9.1f}%"
+            f"  {out['mae']:10.2f}  {out['n']:7d}  {drift}"
+            f"   {out['start_right']:5.1f}%  {out['moved']:6.2f}"
+            f"  {out['stuck']:5.1f}%"
         )
+
+    with torch.no_grad():
+        anchor = {}
+        if not args.no_anchor:
+            anchor = measure(rule, config, stems, args, 0.0, "native")
+            if not anchor:
+                print("no usable targets")
+                return 1
+            show("0.00", "-", anchor)
         rows = {}
         for fraction in args.fractions:
             for arm in ("native", "random"):
                 out = measure(rule, config, stems, args, fraction, arm)
+                if not out:
+                    print("no usable targets")
+                    return 1
                 rows[(fraction, arm)] = out
-                drift = (
-                    f"{out['pinned_drift']:11.2e}" if arm == "native" else "          -"
-                )
-                print(
-                    f"   {fraction:4.2f}  {arm:>7}   {out['right']:9.1f}%"
-                    f"  {out['mae']:10.2f}  {out['n']:7d}  {drift}"
-                )
+                show(f"{fraction:4.2f}", arm, out)
 
     print("\n--- the comparison that decides it ---\n")
-    print("  pinned     native - random    native - anchor")
+    print("  pinned     native - random    native - anchor      moved n/r")
     for fraction in args.fractions:
-        n_arm = rows[(fraction, "native")]["right"]
-        r_arm = rows[(fraction, "random")]["right"]
-        print(
-            f"   {fraction:4.2f}   {n_arm - r_arm:+15.1f}    {n_arm - anchor['right']:+15.1f}"
+        native_row = rows[(fraction, "native")]
+        random_row = rows[(fraction, "random")]
+        n_arm = native_row["right"]
+        r_arm = random_row["right"]
+        raw = (
+            f"{n_arm - anchor['right']:+15.1f}"
+            if anchor
+            else "              -"
         )
+        ratio = native_row["moved"] / max(random_row["moved"], 1e-9)
+        print(
+            f"   {fraction:4.2f}   {n_arm - r_arm:+15.1f}    {raw}"
+            f"    {ratio:13.2f}"
+        )
+        if abs(native_row["start_right"] - random_row["start_right"]) > 0.05:
+            print(
+                "   ^ the arms disagree on 'start', so they are NOT scoring "
+                "the same residues and this row is void"
+            )
 
     print(
         "\nReading it: 'native - random' holds the fraction frozen fixed and"
@@ -285,6 +365,13 @@ def main() -> int:
         "\n\nThe 'pinned drift' column must be ~0: it is the largest distance any"
         "\npinned residue's chi1 moved from where it was held. Anything else"
         "\nmeans the pin leaked and the whole table is void."
+        "\n\n'moved n/r' is the native arm's mean movement over the random"
+        "\narm's. Well below 1 with a negative 'native - random' is the"
+        "\nsilencing result: correct motionless neighbours read as a converged"
+        "\nstate and the rule stops, leaving free residues near their random"
+        "\nstart. Near 1 means the rule moved them just as far and landed"
+        "\nsomewhere worse, which is a different problem and not the no-op"
+        "\nterm's doing."
     )
     return 0
 
