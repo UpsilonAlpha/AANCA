@@ -462,3 +462,137 @@ MOVABLE_ANGLES: dict[str, tuple[tuple[str, str, str, frozenset[str]], ...]] = {
 #: Padding widths for the batched tensors in ``torch_geometry``.
 MAX_BONDS = max(len(v) for v in MOVABLE_BONDS.values())
 MAX_ANGLES = max(len(v) for v in MOVABLE_ANGLES.values())
+
+
+# --- chemistry, for the clash term -------------------------------------------
+#
+# None of the below is used by the torsion machinery. It exists because a steric
+# term needs to know what an atom *is*, and until now nothing in this module did
+# -- it carried names, bonds, angles and symmetry, and no element anywhere.
+
+#: The only elements a standard amino acid's heavy atoms can be.
+ELEMENTS: frozenset[str] = frozenset({"C", "N", "O", "S"})
+
+
+def element(atom_name: str) -> str:
+    """The element of a heavy atom, from the name the PDB gives it.
+
+    The first character of the name is the element for all twenty standard
+    residues, because none of them contains a two-letter element; this is the
+    same shortcut ``scripts/basin_probe.py`` already relies on. It raises on
+    anything else rather than defaulting, because a default would quietly hand
+    a metal or a modified residue carbon's radius and report no problem.
+    """
+    symbol = atom_name.strip()[:1]
+    if symbol not in ELEMENTS:
+        raise ValueError(f"cannot assign an element to atom name {atom_name!r}")
+    return symbol
+
+
+#: Bondi van der Waals radii in angstroms, copied from AlphaFold2's
+#: ``residue_constants.van_der_waals_radius``, which AttnPacker's steric term
+#: uses as well. Copied rather than re-derived on purpose: a clash penalty is
+#: only comparable with the literature's if the radii are the literature's.
+VAN_DER_WAALS_RADIUS: dict[str, float] = {
+    "C": 1.70,
+    "N": 1.55,
+    "O": 1.52,
+    "S": 1.80,
+}
+
+
+def vdw_radius(atom_name: str) -> float:
+    """Van der Waals radius for one heavy atom, in angstroms."""
+    return VAN_DER_WAALS_RADIUS[element(atom_name)]
+
+
+def _clash_adjacency(resname: str) -> dict[str, set[str]]:
+    """:func:`_adjacency` plus the C-terminal OXT, which the bond tables omit.
+
+    OXT is absent from ``_BACKBONE_BONDS`` and :data:`SIDECHAIN_BONDS` because
+    it is never downstream of a chi, which is the only thing those tables are
+    used for. For a steric term the omission is not harmless: without the C-OXT
+    bond, OXT reads as non-bonded to C at 1.25 A and to O at 2.2 A, and every
+    structure with an intact C-terminus would carry two large constant
+    penalties that no rotamer could relieve.
+    """
+    adj = {k: set(v) for k, v in _adjacency(resname).items()}
+    adj.setdefault("OXT", set()).add("C")
+    adj.setdefault("C", set()).add("OXT")
+    return adj
+
+
+def bond_separation(resname: str) -> dict[tuple[str, str], int]:
+    """Bonds between every connected pair of atoms in one residue.
+
+    Breadth-first from each atom over the residue's own bond graph. Ordered
+    pairs, both directions present, so a lookup needs no canonicalisation.
+    """
+    adj = _clash_adjacency(resname)
+    out: dict[tuple[str, str], int] = {}
+    for start in adj:
+        seen = {start: 0}
+        frontier = [start]
+        while frontier:
+            nxt: list[str] = []
+            for u in frontier:
+                for v in adj[u]:
+                    if v not in seen:
+                        seen[v] = seen[u] + 1
+                        nxt.append(v)
+            frontier = nxt
+        for other, distance in seen.items():
+            if other != start:
+                out[(start, other)] = distance
+    return out
+
+
+#: How far apart in the bond graph two atoms must be before the distance
+#: between them is a steric observation rather than a restatement of the bond
+#: geometry.
+#:
+#: A separation of 1 is a bond, 2 is a bond angle and 3 is a torsion, so a
+#: threshold of 4 scores 1-5 pairs and beyond and nothing closer.
+#:
+#: The first two are easy: ``losses.harmonic_restraint`` already holds bond
+#: lengths and angles at the crystal values, so a clash term that also scored
+#: them would be a second, weaker opinion pulling against the first. 1-4 pairs
+#: are the interesting exclusion. Their distance is a pure function of the
+#: torsion, which is the variable being optimised -- so penalising them would
+#: not be a steric observation at all, it would be a hand-rolled torsional
+#: potential disagreeing with the rotamer library about where the wells are.
+#: That is what the reconstruction loss is for. AlphaFold2 draws the same line
+#: by giving within-residue pairs explicit literature bounds instead of vdW
+#: sums. What survives is 1-5 and further: the long side chains folding back on
+#: themselves (ARG, LYS, MET), which no torsion term can see.
+CLASH_MIN_SEPARATION = 4
+
+
+def clash_exempt_pairs(
+    resname: str, separation: int = CLASH_MIN_SEPARATION
+) -> frozenset[tuple[str, str]]:
+    """Atom-name pairs within one residue that the clash term must not score.
+
+    Every pair fewer than ``separation`` bonds apart, in both orders, plus each
+    atom with itself. Pairs with no path between them -- which cannot happen in
+    a standard residue, but would if a bond table were ever incomplete -- are
+    *not* exempt, so an omission shows up as a clash rather than as silence.
+    """
+    if separation < 1:
+        raise ValueError(f"separation must be at least 1, got {separation}")
+    names = (
+        set(BACKBONE_ATOMS)
+        | set(TERMINAL_ATOMS)
+        | set(sidechain_atoms(resname))
+    )
+    out = {(n, n) for n in names}
+    for (u, v), distance in bond_separation(resname).items():
+        if distance < separation:
+            out.add((u, v))
+    return frozenset(out)
+
+
+#: Written out once per residue type, since the breadth-first walk is pure.
+CLASH_EXEMPT_PAIRS: dict[str, frozenset[tuple[str, str]]] = {
+    res: clash_exempt_pairs(res) for res in AA3
+}

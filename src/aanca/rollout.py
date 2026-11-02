@@ -46,6 +46,7 @@ from torch import Tensor
 from . import residue_constants as rc
 from .losses import chi_nll, harmonic_restraint, masked_mean, noop_nll
 from .model import AANCARule
+from .steric import StericTopology, clash_loss, steric_topology
 from .torch_geometry import (
     TorsionTopology,
     apply_internal_deltas,
@@ -70,6 +71,23 @@ class RolloutConfig:
     loss_window: float = 0.5
     bond_stiffness: float = 100.0
     angle_stiffness: float = 10.0
+    #: Weight on the steric term in ``aanca.steric``. 0 reproduces every run
+    #: before 2026-11-02 exactly, and costs nothing when off -- the term is
+    #: skipped rather than multiplied by zero, so neither the pair list nor the
+    #: distances are built.
+    #:
+    #: It needs no interaction with ``bond_geometry``, which is worth recording
+    #: because the comment in ``losses.harmonic_restraint`` reads as though it
+    #: does. The cheat that comment warns about -- relieving a clash by
+    #: stretching a bond, which is cheaper than finding the right rotamer -- is
+    #: only available if the rule can drive bonds, and the restraint that
+    #: forbids it is already wired to fire exactly when ``bond_geometry`` is on.
+    #: With bonds frozen, as in v1, the side chain is rigid and the only way to
+    #: lower this term is to rotate a chi, which is the point.
+    clash_weight: float = 0.0
+    #: Angstroms of overlap allowed before the term charges anything. See
+    #: ``aanca.steric.DEFAULT_TOLERANCE`` for why slack is correct.
+    clash_tolerance: float = 1.5
     #: Select neighbours on the device instead of in NumPy on the host.
     #:
     #: **Not a scientific setting, and deliberately not pinned.** The two
@@ -272,6 +290,11 @@ class ObjectiveTerms:
     reconstruction: Tensor
     noop: Tensor
     restraint: Tensor
+    #: Mean angstroms of van der Waals overlap per supervised atom, *before*
+    #: ``clash_weight``. Reported unweighted on purpose: it is a physical
+    #: quantity that can be compared against a crystal structure's own value,
+    #: which is zero, and multiplying it by the weight would destroy that.
+    clash: Tensor
     supervised_step: int
 
 
@@ -284,6 +307,7 @@ def training_objective(
     generator: torch.Generator | None = None,
     rng: random.Random | None = None,
     noop_weight: float = 1.0,
+    steric: StericTopology | None = None,
 ) -> tuple[ObjectiveTerms, RolloutResult]:
     """The v1 objective: reconstruct from damage, do nothing when already native.
 
@@ -362,13 +386,35 @@ def training_objective(
             config.angle_stiffness,
         )
 
-    total = reconstruction + noop_weight * noop + restraint
+    # Scored on the final state, like the restraint above and for the same
+    # reason: the rollout's answer is where it ends up, and charging an
+    # intermediate state for overlap would penalise passing *through* a clash
+    # on the way to resolving one, which is a legitimate trajectory.
+    clash = torch.zeros((), dtype=reconstruction.dtype, device=mu.device)
+    if config.clash_weight:
+        if steric is None:
+            steric = steric_topology(torsion, native_coords)
+        clash = clash_loss(
+            result.state.coords,
+            torsion,
+            steric,
+            supervised=supervised,
+            tolerance=config.clash_tolerance,
+        )
+
+    total = (
+        reconstruction
+        + noop_weight * noop
+        + restraint
+        + config.clash_weight * clash
+    )
     return (
         ObjectiveTerms(
             total=total,
             reconstruction=reconstruction.detach(),
             noop=noop.detach(),
             restraint=restraint.detach(),
+            clash=clash.detach(),
             supervised_step=supervise_step,
         ),
         result,

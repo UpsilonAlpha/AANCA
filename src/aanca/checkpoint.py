@@ -70,6 +70,7 @@ PINNED = (
     "crop_size", "steps", "steps_max", "truncate", "seed", "pool_probability", "k",
     "native_probability", "noop_weight", "lr", "lr_drop", "lr_gamma",
     "damage_fractions",
+    "clash_weight", "clash_tolerance",
     "split", "structures", "eval_structures",
 )
 

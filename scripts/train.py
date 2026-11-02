@@ -257,6 +257,28 @@ def main() -> int:
         "against a warm start, which is the point -- change it and "
         "--init-from carries the weights, the optimiser and the pool across.",
     )
+    parser.add_argument(
+        "--clash-weight",
+        type=float,
+        default=0.0,
+        help="weight on the steric term (aanca.steric). 0 is off and "
+        "reproduces every run up to v6 exactly; the term is skipped rather "
+        "than multiplied by zero, so it costs nothing when unused. The term "
+        "itself is mean angstroms of van der Waals overlap per supervised "
+        "atom, which reads 0.000 on a crystal structure at the default "
+        "tolerance and 0.049 on one with every chi randomised, so a weight is "
+        "chosen against a quantity with a known scale rather than by feel. "
+        "Not pinned against a warm start.",
+    )
+    parser.add_argument(
+        "--clash-tolerance",
+        type=float,
+        default=1.5,
+        help="angstroms of overlap allowed before the steric term charges "
+        "anything. AlphaFold2's clash_overlap_tolerance. Slack on purpose: "
+        "tighten it and the term stops being a steric constraint and becomes "
+        "a packing-density prior, which is a much stronger claim.",
+    )
     parser.add_argument("--tag", default="run")
     parser.add_argument("--split", default="validation", help="manifest split to draw from")
     parser.add_argument("--device", default="auto", help="auto | cpu | cuda")
@@ -418,13 +440,22 @@ def main() -> int:
         # numbers mean.
         shares = ", ".join(f"{f:g}" for f in args.damage_fractions)
         print(f"damage fractions: {shares} (drawn per sample)")
+    if args.clash_weight:
+        print(
+            f"steric term: weight {args.clash_weight:g}, tolerance "
+            f"{args.clash_tolerance:g} A (0.000 on a crystal structure)"
+        )
 
     n_params = sum(p.numel() for p in rule.parameters())
     on_device = args.neighbours == "device"
     train_config = RolloutConfig(
         steps=args.steps, truncate=args.truncate, k=args.k, cutoff=10.0,
         device_neighbours=on_device,
+        clash_weight=args.clash_weight, clash_tolerance=args.clash_tolerance,
     )
+    # The held-out set is scored by the metrics in ``evaluate``, not by the
+    # training objective, so the steric term is deliberately absent here: an
+    # eval config carrying it would compute the pair list for nothing.
     eval_config = RolloutConfig(
         steps=args.eval_steps, truncate=args.truncate, k=args.k, cutoff=10.0,
         device_neighbours=on_device,
@@ -595,6 +626,10 @@ def main() -> int:
 
     print(f"\n{args.updates - start_update} updates to go (target {args.updates})")
     recent: list[float] = []
+    #: The steric term, unweighted, so the progress line carries a physical
+    #: number. A crystal structure reads 0.000, so this one has an absolute
+    #: target rather than only a direction.
+    recent_clash: list[float] = []
     update = start_update
     for update in range(start_update + 1, args.updates + 1):
         # Set from the update number rather than stepped, so a resume lands on
@@ -739,6 +774,8 @@ def main() -> int:
                 return 1
         if healthy:
             recent.append(float(terms.total.detach()))
+            if args.clash_weight:
+                recent_clash.append(float(terms.clash))
 
         if update % max(args.eval_every // 4, 1) == 0:
             done = update - start_update
@@ -748,6 +785,11 @@ def main() -> int:
                 f"grad {float(grad_norm):>7.3f}  "
                 f"{(time.perf_counter() - started) / done:>5.2f} s/update"
                 + (
+                    f"  clash {sum(recent_clash) / len(recent_clash):>6.4f}"
+                    if recent_clash
+                    else ""
+                )
+                + (
                     f"  [skipped {skipped['update']} updates, "
                     f"{skipped['state']} states]"
                     if skipped["update"] or skipped["state"]
@@ -756,6 +798,7 @@ def main() -> int:
                 flush=True,
             )
             recent.clear()
+            recent_clash.clear()
 
         if update % args.eval_every == 0 or update == args.updates:
             run_evaluation(update)
