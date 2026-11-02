@@ -974,6 +974,43 @@ Still ahead of where it started, behind its own peak. `best.pt` is from update
 Whether the give-back is eval noise at this cadence or the mixture trading the
 global task against the mixed one is not established.
 
+### v7: the clash term in an objective for the first time — 31481510
+
+Submitted 2026-11-02, warm-started from `v6_mixed/last.pt` at update 7216:
+
+    bash scripts/bunya_submit.sh gpu --tag v7_clash --split train \
+      --updates 20000 --eval-every 500 --steps 64 --steps-max 96 \
+      --lr 3e-5 --lr-drop 12000 --lr-gamma 0.3 \
+      --native-probability 0.2 --noop-weight 0 \
+      --damage-fractions 1.0 1.0 0.5 0.2 0.05 \
+      --clash-weight 3.0 \
+      --init-from runs/v6_mixed/last.pt
+
+**The learning rate needed no adjustment this time, and that is worth knowing
+rather than assuming.** v6 was launched at `--lr 3e-5` with its first drop at
+12000 and only reached 7216, so it never dropped and was still training at
+3e-5 when it stopped. Passing 3e-5 again continues at the same rate. The v5→v6
+trap (a warm start restarts the schedule at update 0, so the drops re-apply and
+the old `--lr` is the wrong number) does not bite here *because* the run was
+stopped early — check where the previous run actually got to before reusing its
+rate, rather than copying the flag.
+
+**Why weight 3.0.** The term has a known physical scale: mean angstroms of van
+der Waals overlap per supervised atom, which reads exactly 0.000 on a crystal
+structure and 0.049 on 1UBQ with every chi randomised. A partly-resolved
+rollout state should land around 0.01–0.03, so at weight 3 the term contributes
+roughly 5–15 % of a loss whose magnitude is about 0.5–0.7. Visible, not
+dominant. The progress line prints the term **unweighted** on purpose, so the
+readout is direct: if it falls toward zero the weight was enough, and if it sits
+flat the weight is too small rather than the term being useless.
+
+**Two things to watch on the first eval.** Whether `s/update` moved — the
+steric term adds an all-pairs distance computation over every residue pair
+within 17 A, once per objective call rather than per step, and v6 ran at
+2.82 s/update on a 384-residue crop. And whether the global task regresses:
+`build_eval_set` is untouched, so the held-out curve is still directly
+comparable to v5's and v6's.
+
 ### The Potts energy — built and validated 2026-11-02, `src/aanca/potts.py`
 
 `E(s) = Σ h_i(s_i) + Σ J_ij(s_i, s_j)`, couplings stored sparsely over an
@@ -1047,6 +1084,22 @@ explicitly. Observed: `stopped at update 7216 of 20000 by .../runs/v6_mixed/STOP
 `train exit : 0`, no resubmission. The script's own comments say all of this
 (`bunya_train.slurm:18-21, 141-152`) — the lesson is to read them before
 reaching for `scancel`, not that anything was wrong.
+
+**The Bunya checkout does not update itself, and a new flag fails at submit.**
+`/scratch/user/uquadhik/AANCA` was sitting at `a2a6111` — two commits behind
+where today started and eleven behind the clash term — so
+`--clash-weight 3.0` would have been rejected by argparse after the job had
+queued, waited for a card and started. Nothing warns about this: the submit
+wrapper reads the local tree, and a stale tree is a *valid* tree. `git pull
+--ff-only` on Bunya is a step in launching any run that uses code written since
+the last run, and it is worth doing even when you think you know, because the
+answer here was two commits older than expected.
+
+Pulling mid-flight was safe in this case and is not safe in general: 31417064
+and 31422867 were executing from that checkout. Python had already imported
+everything, so changing the `.py` files under a running process does nothing,
+and every new setting defaults to off — but a job that imports lazily, or a
+pull that changes a default, would not be harmless.
 
 **A full `clamp_test.py` does not fit in `bunya_cpu.slurm`'s 4-hour walltime.**
 Measured on 31417064: four rows (0.00, 0.25 native, 0.25 random, 0.50 native)
