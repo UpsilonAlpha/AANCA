@@ -44,7 +44,15 @@ import torch
 from torch import Tensor
 
 from . import residue_constants as rc
+from .blind import blind_coords
 from .losses import chi_nll, harmonic_restraint, masked_mean, noop_nll
+from .identity import (
+    LIBRARY_SIZE,
+    identity_loss,
+    library_index,
+    straight_through,
+    type_marginal,
+)
 from .model import AANCARule
 from .update_schedule import coupling_graph, random_independent_set
 from .steric import StericTopology, clash_loss, steric_topology
@@ -110,6 +118,28 @@ class RolloutConfig:
     #: Angstroms of overlap allowed before the term charges anything. See
     #: ``aanca.steric.DEFAULT_TOLERANCE`` for why slack is correct.
     clash_tolerance: float = 1.5
+    #: Inverse folding. ``blind`` truncates perception to backbone-and-CB (see
+    #: ``aanca.blind``, which closes the two leaks that are not features), and
+    #: the rule's identity head then has nothing to read but the backbone and
+    #: its neighbours' *currently committed* types. Off reproduces every run
+    #: before 2026-11-02 exactly.
+    blind: bool = False
+    #: How a committed label is drawn from the head's logits each step.
+    #: ``"sample"`` draws from the head's softmax, ``"argmax"`` takes the mode.
+    #: Both commit a hard label and pass a straight-through gradient. Named for
+    #: what it does rather than "gumbel", because a Gumbel-argmax draw *is* a
+    #: draw from the softmax and its temperature does not sharpen the choice --
+    #: see ``aanca.identity``. ``identity_temperature`` is the one that does.
+    identity_sampling: str = "sample"
+    #: Divides the logits before sampling. 1.0 samples from the head's own
+    #: distribution; towards 0 it quenches to the mode.
+    identity_temperature: float = 1.0
+    #: What the labels start as. ``"masked"`` starts every residue at the
+    #: all-zero one-hot, which is an unknown token and leaves the keep-current
+    #: term contributing nothing, so step 1 is a draw from the head's prior.
+    #: ``"native"`` starts from the true sequence, which is the fixed-point
+    #: case: the rule must *stay*.
+    identity_start: str = "masked"
     #: Select neighbours on the device instead of in NumPy on the host.
     #:
     #: **Not a scientific setting, and deliberately not pinned.** The two
@@ -129,10 +159,28 @@ class RolloutState:
     coords: Tensor
     hidden: Tensor
     step: int = 0
+    #: ``(R, 54)`` straight-through one-hot over the (type, chi1 well) library:
+    #: the identity each residue is currently committing to. ``None`` when the
+    #: identity head is off, which is the whole v1 path.
+    #:
+    #: It is *soft* on the backward pass on purpose. The label committed here is
+    #: an input at the next step, so this tensor is the only route by which a
+    #: later step's loss reaches the head that chose the label -- which is what
+    #: makes a ripple trainable rather than merely observable.
+    identity: Tensor | None = None
+    #: The logits the last step produced, kept so the loss can see them without
+    #: a second forward pass.
+    identity_logits: Tensor | None = None
 
     def detached(self) -> "RolloutState":
         return RolloutState(
-            coords=self.coords.detach(), hidden=self.hidden.detach(), step=self.step
+            coords=self.coords.detach(),
+            hidden=self.hidden.detach(),
+            step=self.step,
+            identity=None if self.identity is None else self.identity.detach(),
+            identity_logits=(
+                None if self.identity_logits is None else self.identity_logits.detach()
+            ),
         )
 
 
@@ -154,13 +202,59 @@ class RolloutResult:
 
 
 def initial_state(
-    coords: Tensor, rule: AANCARule, dtype: torch.dtype = torch.float32
+    coords: Tensor,
+    rule: AANCARule,
+    dtype: torch.dtype = torch.float32,
+    identity: Tensor | None = None,
 ) -> RolloutState:
     return RolloutState(
         coords=coords,
         hidden=rule.initial_hidden(coords.shape[0], coords.device, dtype),
         step=0,
+        identity=identity,
     )
+
+
+def initial_identity(
+    topo: FeatureTopology,
+    coords: Tensor | None = None,
+    start: str = "masked",
+    generator: torch.Generator | None = None,
+    dtype: torch.dtype = torch.float32,
+) -> Tensor:
+    """``(R, 54)`` one-hot over the library to begin a rollout from.
+
+    - ``"masked"`` -- all zeros. Not a library entry at all but an *unknown*
+      token: the keep-current term has nothing to hold, so step 1 is a draw
+      from the head's own prior. This is the inverse-folding start.
+    - ``"native"`` -- the true sequence and its true chi1 wells, which needs
+      ``coords``. The fixed-point case: the rule must stay where it is, and a
+      run that drifts off the native sequence has failed a test it should pass
+      trivially.
+    - ``"random"`` -- a uniform draw over all 54 entries. The analogue of the
+      randomised chi start, and the hardest of the three.
+    """
+    n = topo.n_residues
+    device = topo.atom_mask.device
+    if start == "masked":
+        return torch.zeros(n, LIBRARY_SIZE, device=device, dtype=dtype)
+    if start == "native":
+        if coords is None:
+            raise ValueError("identity_start 'native' needs the native coordinates")
+        chi1 = torch.rad2deg(measure_chis(coords, topo.torsion)[:, 0])
+        index = library_index(topo.torsion.resnames, chi1)
+    elif start == "random":
+        draws = torch.randint(
+            LIBRARY_SIZE, (n,), generator=generator, dtype=torch.long
+        )
+        index = draws.to(device)
+    else:
+        raise ValueError(
+            f"unknown identity_start {start!r}; expected 'masked', 'native' "
+            "or 'random'"
+        )
+    one_hot = torch.zeros(n, LIBRARY_SIZE, device=device, dtype=dtype)
+    return one_hot.scatter_(-1, index.unsqueeze(-1), 1.0)
 
 
 def update_mask(
@@ -185,6 +279,7 @@ def step_once(
     config: RolloutConfig,
     mask: Tensor,
     frozen: Tensor | None = None,
+    generator: torch.Generator | None = None,
 ) -> tuple[RolloutState, Tensor, Tensor]:
     """One application of the rule. Returns ``(new_state, mu, log_kappa)``.
 
@@ -204,12 +299,25 @@ def step_once(
     the coordinates alone leaves every input on-distribution except the one
     under test.
     """
+    coords_seen = state.coords
+    aa_onehot = None
+    if state.identity is not None:
+        # The ripple's one and only pathway: each residue perceives its
+        # neighbours' *committed* types, not the native ones, and the gradient
+        # of this step's loss runs back through the labels they committed last
+        # step to the head that chose them.
+        aa_onehot = type_marginal(state.identity)
+        if config.blind:
+            coords_seen = blind_coords(state.coords, topo)
+
     graph = build_graph(
-        state.coords.to(config.feature_dtype),
+        coords_seen.to(config.feature_dtype),
         topo,
         k=config.k,
         cutoff=config.cutoff,
         device_neighbours=config.device_neighbours,
+        aa_onehot=aa_onehot,
+        blind=config.blind,
     )
     node = graph.node_features.to(torch.float32)
 
@@ -238,7 +346,40 @@ def step_once(
     coords = apply_internal_deltas(
         state.coords, topo.torsion, chi=chi, angle=angle, bond=bond
     )
-    return RolloutState(coords=coords, hidden=hidden, step=state.step + 1), mu, log_kappa
+
+    identity, logits = state.identity, None
+    if state.identity is not None:
+        logits = rule.identity_logits(node, hidden, state.identity)
+        if logits is None:
+            raise ValueError(
+                "the rollout carries an identity state but the rule has no "
+                "identity head; build it with AANCARule(identity=True)"
+            )
+        if config.identity_sampling not in ("sample", "argmax"):
+            raise ValueError(
+                f"unknown identity_sampling {config.identity_sampling!r}; "
+                "expected 'sample' or 'argmax'"
+            )
+        scaled = logits / max(config.identity_temperature, 1e-6)
+        drawn = straight_through(
+            scaled, generator=generator, sample=config.identity_sampling == "sample"
+        )
+        # Gated like the coordinates, for the same reason: a residue that is
+        # not ticking has not decided anything, and a frozen one is being held
+        # at a known label on purpose.
+        identity = torch.where(move, drawn, state.identity)
+
+    return (
+        RolloutState(
+            coords=coords,
+            hidden=hidden,
+            step=state.step + 1,
+            identity=identity,
+            identity_logits=logits,
+        ),
+        mu,
+        log_kappa,
+    )
 
 
 def rollout(
@@ -287,7 +428,9 @@ def rollout(
                 "expected 'bernoulli' or 'independent'"
             )
         seen = state.coords
-        state, mu, log_kappa = step_once(rule, state, topo, config, mask, frozen)
+        state, mu, log_kappa = step_once(
+            rule, state, topo, config, mask, frozen, generator
+        )
 
         if record:
             with torch.no_grad():
@@ -335,6 +478,9 @@ class ObjectiveTerms:
     #: quantity that can be compared against a crystal structure's own value,
     #: which is zero, and multiplying it by the weight would destroy that.
     clash: Tensor
+    #: Mean negative log likelihood of the native (type, chi1 well) label at
+    #: the final state, before ``identity_weight``. Zero when the head is off.
+    identity: Tensor
     supervised_step: int
 
 
@@ -348,6 +494,7 @@ def training_objective(
     rng: random.Random | None = None,
     noop_weight: float = 1.0,
     steric: StericTopology | None = None,
+    identity_weight: float = 0.0,
 ) -> tuple[ObjectiveTerms, RolloutResult]:
     """The v1 objective: reconstruct from damage, do nothing when already native.
 
@@ -375,7 +522,17 @@ def training_objective(
     supervise_step = sample_loss_step(config, rng)
     result = rollout(
         rule,
-        initial_state(damaged, rule),
+        initial_state(
+            damaged,
+            rule,
+            identity=(
+                initial_identity(
+                    topo, native_coords, config.identity_start, generator
+                )
+                if identity_weight
+                else None
+            ),
+        ),
         topo,
         config,
         generator=generator,
@@ -442,11 +599,30 @@ def training_objective(
             tolerance=config.clash_tolerance,
         )
 
+    # Inverse folding. Supervised at the *final* state only, which is the
+    # fixed-point claim in its discrete form: whatever order the labels were
+    # decided in and however they rippled, the sequence the rollout settles on
+    # has to be the native one. Supervising every step instead would reward the
+    # rule for guessing the answer before its neighbourhood could have told it,
+    # which is the prefix trap one representation up.
+    identity = torch.zeros((), dtype=reconstruction.dtype, device=mu.device)
+    if identity_weight:
+        logits = result.state.identity_logits
+        if logits is None:
+            raise ValueError(
+                "identity_weight is set but the rollout produced no identity "
+                "logits -- build the rule with AANCARule(identity=True)"
+            )
+        native_chi1 = torch.rad2deg(native_chis[:, 0])
+        target = library_index(torsion.resnames, native_chi1)
+        identity = identity_loss(logits, target, supervised)
+
     total = (
         reconstruction
         + noop_weight * noop
         + restraint
         + config.clash_weight * clash
+        + identity_weight * identity
     )
     return (
         ObjectiveTerms(
@@ -455,6 +631,7 @@ def training_objective(
             noop=noop.detach(),
             restraint=restraint.detach(),
             clash=clash.detach(),
+            identity=identity.detach(),
             supervised_step=supervise_step,
         ),
         result,

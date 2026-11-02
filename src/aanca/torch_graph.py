@@ -446,17 +446,39 @@ def cosine_envelope(distances: Tensor, cutoff: float) -> Tensor:
     return 0.5 * (1.0 + torch.cos(torch.pi * scaled))
 
 
-def node_features(coords: Tensor, topo: FeatureTopology) -> Tensor:
+def node_features(
+    coords: Tensor,
+    topo: FeatureTopology,
+    aa_onehot: Tensor | None = None,
+    blind: bool = False,
+) -> Tensor:
     """``(n_res, 32)``: residue one-hot, chis as sin/cos pairs, and the chi mask.
 
     Chis go in as sin/cos so the representation is continuous across the +-pi
     wrap; a raw angle would put a discontinuity in the middle of the input.
+
+    ``aa_onehot`` replaces the topology's native one-hot with the identity the
+    rule is *currently* committing to. Pass a straight-through one-hot, not a
+    hard one: it is the only route by which a later step's loss reaches the
+    head that chose the label, and therefore the only thing that makes a ripple
+    differentiable.
+
+    ``blind`` zeroes all three chi blocks -- the sin and cos pairs *and the
+    mask*. The mask has to go too: how many chis a residue has is a function of
+    its type, so leaving it in hands a rule that is supposed to be inferring
+    the type a 20-way narrowing of the answer. Use it with
+    :func:`aanca.blind.blind_coords`, which closes the two leaks that are not
+    features at all.
     """
-    chis = measure_chis(coords, topo.torsion)
+    types = (topo.aa_onehot if aa_onehot is None else aa_onehot).to(coords.dtype)
     mask = topo.torsion.chi_mask.to(coords.dtype)
+    if blind:
+        zero = torch.zeros_like(mask)
+        return torch.cat([types, zero, zero, zero], dim=-1)
+    chis = measure_chis(coords, topo.torsion)
     return torch.cat(
         [
-            topo.aa_onehot.to(coords.dtype),
+            types,
             torch.sin(chis) * mask,
             torch.cos(chis) * mask,
             mask,
@@ -592,6 +614,8 @@ def build_graph(
     backbone_block: Tensor | None = None,
     fixed_backbone: bool = True,
     device_neighbours: bool = False,
+    aa_onehot: Tensor | None = None,
+    blind: bool = False,
 ) -> TorchGraph:
     """Select neighbours and featurise. Differentiable except for the selection.
 
@@ -615,7 +639,7 @@ def build_graph(
         neighbours=neighbours,
         edge_mask=edge_mask,
         envelope=envelope,
-        node_features=node_features(coords, topo),
+        node_features=node_features(coords, topo, aa_onehot, blind),
         edge_features=features,
         feature_slices=slices,
     )

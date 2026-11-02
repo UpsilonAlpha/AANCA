@@ -280,6 +280,56 @@ def main() -> int:
         "a packing-density prior, which is a much stronger claim.",
     )
     parser.add_argument(
+        "--identity-weight",
+        type=float,
+        default=0.0,
+        help="weight on the inverse-folding term: the negative log likelihood "
+        "of the native (amino-acid type, chi1 well) label at the rollout's "
+        "FINAL state, over the 54-entry joint library (aanca.identity). 0 is "
+        "off and builds no head at all. Non-zero also turns on --blind, "
+        "because predicting a residue's identity from a structure that still "
+        "contains its side chain is not a task. Scale: ln 54 = 3.99 is what "
+        "an uninformative head costs, so anything above ~4 is worse than "
+        "guessing. Pinned against a warm start -- a checkpoint without the "
+        "head cannot be resumed with it.",
+    )
+    parser.add_argument(
+        "--identity-keep",
+        type=float,
+        default=8.0,
+        help="initial strength of the identity head's keep-current logit "
+        "(aanca.model.IDENTITY_KEEP_INIT). The discrete analogue of the delta "
+        "head's identity initialisation: 8 holds a label with 98 percent "
+        "probability, so an untrained rule cannot scramble a sequence it was "
+        "handed. Right for --identity-start native, a liability for masked, "
+        "where it pins whatever step 1 guessed -- use about 2 there. "
+        "Learnable from where it starts. Pinned against a warm start.",
+    )
+    parser.add_argument(
+        "--identity-start",
+        choices=("masked", "native", "random"),
+        default="masked",
+        help="what the labels start as each rollout. 'masked' is the unknown "
+        "token and the real task; 'native' is the fixed-point case, where the "
+        "rule must stay on a sequence that is already right; 'random' is the "
+        "analogue of the randomised chi start.",
+    )
+    parser.add_argument(
+        "--identity-temperature",
+        type=float,
+        default=1.0,
+        help="Boltzmann temperature on the identity logits before a label is "
+        "drawn. 1.0 samples the head's own distribution, towards 0 quenches "
+        "to the mode. This is the temperature that sharpens the choice -- the "
+        "Gumbel one does not, see aanca.identity.",
+    )
+    parser.add_argument(
+        "--identity-sampling",
+        choices=("sample", "argmax"),
+        default="sample",
+        help="draw each step's label from the softmax, or take its mode.",
+    )
+    parser.add_argument(
         "--update-schedule",
         choices=("bernoulli", "independent"),
         default="bernoulli",
@@ -397,7 +447,9 @@ def main() -> int:
         )
         return 0
 
-    rule = AANCARule().to(device)
+    rule = AANCARule(
+        identity=bool(args.identity_weight), identity_keep=args.identity_keep
+    ).to(device)
     optimiser = torch.optim.Adam(rule.parameters(), lr=args.lr)
     pool = SamplePool(capacity=256, seed=args.seed)
     history: list[dict] = []
@@ -476,14 +528,31 @@ def main() -> int:
             f"{args.clash_tolerance:g} A (0.000 on a crystal structure)"
         )
 
+    if args.identity_weight:
+        print(
+            f"inverse folding: identity weight {args.identity_weight:g}, "
+            f"start {args.identity_start}, T {args.identity_temperature:g}, "
+            f"{args.identity_sampling}; perception truncated to backbone+CB "
+            f"(ln 54 = 3.99 is an uninformative head)"
+        )
+
     n_params = sum(p.numel() for p in rule.parameters())
     on_device = args.neighbours == "device"
+    identity_kwargs = dict(
+        # Blindness is not a separate flag: an identity run without it is
+        # measuring a readout of the answer, so the two are one decision.
+        blind=bool(args.identity_weight),
+        identity_start=args.identity_start,
+        identity_temperature=args.identity_temperature,
+        identity_sampling=args.identity_sampling,
+    )
     train_config = RolloutConfig(
         steps=args.steps, truncate=args.truncate, k=args.k, cutoff=10.0,
         device_neighbours=on_device,
         clash_weight=args.clash_weight, clash_tolerance=args.clash_tolerance,
         update_schedule=args.update_schedule,
         coupling_radius=args.coupling_radius,
+        **identity_kwargs,
     )
     # The held-out set is scored by the metrics in ``evaluate``, not by the
     # training objective, so the steric term is deliberately absent here: an
@@ -496,6 +565,7 @@ def main() -> int:
         device_neighbours=on_device,
         update_schedule=args.update_schedule,
         coupling_radius=args.coupling_radius,
+        **identity_kwargs,
     )
     if on_device:
         print(
@@ -667,6 +737,7 @@ def main() -> int:
     #: number. A crystal structure reads 0.000, so this one has an absolute
     #: target rather than only a direction.
     recent_clash: list[float] = []
+    recent_identity: list[float] = []
     update = start_update
     for update in range(start_update + 1, args.updates + 1):
         # Set from the update number rather than stepped, so a resume lands on
@@ -747,6 +818,7 @@ def main() -> int:
             generator=generator,
             rng=rng,
             noop_weight=args.noop_weight,
+            identity_weight=args.identity_weight,
         )
         optimiser.zero_grad()
         terms.total.backward()
@@ -813,6 +885,8 @@ def main() -> int:
             recent.append(float(terms.total.detach()))
             if args.clash_weight:
                 recent_clash.append(float(terms.clash))
+            if args.identity_weight:
+                recent_identity.append(float(terms.identity))
 
         if update % max(args.eval_every // 4, 1) == 0:
             done = update - start_update
@@ -827,6 +901,11 @@ def main() -> int:
                     else ""
                 )
                 + (
+                    f"  id {sum(recent_identity) / len(recent_identity):>5.3f}"
+                    if recent_identity
+                    else ""
+                )
+                + (
                     f"  [skipped {skipped['update']} updates, "
                     f"{skipped['state']} states]"
                     if skipped["update"] or skipped["state"]
@@ -836,6 +915,7 @@ def main() -> int:
             )
             recent.clear()
             recent_clash.clear()
+            recent_identity.clear()
 
         if update % args.eval_every == 0 or update == args.updates:
             run_evaluation(update)

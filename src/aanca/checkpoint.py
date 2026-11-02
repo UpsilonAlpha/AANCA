@@ -72,6 +72,10 @@ PINNED = (
     "damage_fractions",
     "clash_weight", "clash_tolerance",
     "update_schedule", "coupling_radius",
+    # The identity head's existence is a *shape* difference, not a setting:
+    # a checkpoint written without it has no weights to load into one.
+    "identity_weight", "identity_start", "identity_temperature",
+    "identity_sampling", "identity_keep",
     "split", "structures", "eval_structures",
 )
 
