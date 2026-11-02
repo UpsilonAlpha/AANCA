@@ -77,7 +77,11 @@ class StericTopology:
     exempt: Tensor
     linkage: Tensor
     partner: Tensor
-    ca_index: Tensor
+    #: The atom each residue's neighbour-list distance is measured from, and
+    #: how far that atom may sit from where the CA is. Zero for a real CA; see
+    #: :func:`steric_topology` for why it is ever anything else.
+    anchor_index: Tensor
+    anchor_slack: Tensor
 
     @property
     def n_residues(self) -> int:
@@ -93,7 +97,8 @@ class StericTopology:
                     "exempt",
                     "linkage",
                     "partner",
-                    "ca_index",
+                    "anchor_index",
+                    "anchor_slack",
                 )
             }
         )
@@ -143,7 +148,8 @@ def steric_topology(
     backbone = torch.zeros(n_res, MAX_ATOMS, dtype=torch.bool)
     exempt = torch.zeros(n_res, MAX_ATOMS, MAX_ATOMS, dtype=torch.bool)
     linkage = torch.zeros(n_res, MAX_ATOMS, dtype=torch.bool)
-    ca_index = torch.zeros(n_res, dtype=torch.long)
+    anchor_index = torch.zeros(n_res, dtype=torch.long)
+    anchor_slack = torch.zeros(n_res, dtype=dtype)
     sg_index = torch.full((n_res,), -1, dtype=torch.long)
     fixed = rc.BACKBONE_ATOMS | rc.TERMINAL_ATOMS
 
@@ -151,9 +157,33 @@ def steric_topology(
         zip(torsion.resnames, torsion.atom_names, strict=True)
     ):
         index = {name: i for i, name in enumerate(names)}
-        if "CA" not in index:
-            raise ValueError(f"residue {r} ({resname}) has no CA")
-        ca_index[r] = index["CA"]
+        # The neighbour list is anchored on CA, but **a residue in the training
+        # set need not have one**. v7's first training update died here on
+        # "residue 149 (GLU) has no CA" after the warm start had already
+        # loaded, because the two complete crystal structures the tests use
+        # (1UBQ, 193L) cannot produce the case. The rest of the pipeline
+        # already tolerates incomplete residues -- that is what
+        # ``FeatureTopology.virtual_cb`` and ``fallback_idx`` are for -- so
+        # raising here made the steric term stricter than the model it serves.
+        #
+        # Falling back costs a little cutoff margin rather than correctness:
+        # N and C sit at most 1.52 A from CA and CB at most 1.53, so a fallback
+        # anchor is within 2.5 A of where the CA is. That slack is added to the
+        # pair test per residue instead of being absorbed into a bigger global
+        # cutoff, so an ordinary residue pays nothing for a broken neighbour.
+        for name, slack in (("CA", 0.0), ("N", 2.5), ("C", 2.5), ("CB", 2.5)):
+            if name in index:
+                anchor_index[r] = index[name]
+                anchor_slack[r] = slack
+                break
+        else:
+            if not names:
+                raise ValueError(f"residue {r} ({resname}) has no atoms at all")
+            # Nothing recognisable: anchor on whatever is there and widen the
+            # slack to the furthest a side-chain atom can be from CA, so the
+            # pair list is still a superset rather than silently lossy.
+            anchor_index[r] = 0
+            anchor_slack[r] = 6.6
         for i, name in enumerate(names):
             radii[r, i] = rc.vdw_radius(name)
             backbone[r, i] = name in fixed
@@ -184,7 +214,8 @@ def steric_topology(
         exempt=exempt,
         linkage=linkage,
         partner=partner,
-        ca_index=ca_index,
+        anchor_index=anchor_index,
+        anchor_slack=anchor_slack,
     ).to(torsion.atom_mask.device)
 
 
@@ -266,8 +297,13 @@ def clash_loss(
     # bookkeeping decision and not part of the function being differentiated.
     with torch.no_grad():
         rows = torch.arange(torsion.n_residues, device=device)
-        ca = coords.detach()[rows, steric.ca_index]
-        near = torch.cdist(ca, ca) <= cutoff
+        anchor = coords.detach()[rows, steric.anchor_index]
+        # The bound is per pair, not global: a residue whose anchor is not a
+        # real CA carries its own slack, so one broken residue widens only the
+        # rows and columns it appears in.
+        slack = steric.anchor_slack.to(coords.dtype)
+        allowed = cutoff + slack.unsqueeze(-1) + slack.unsqueeze(-2)
+        near = torch.cdist(anchor, anchor) <= allowed
         near &= torch.triu(torch.ones_like(near), diagonal=1)
         near &= supervised.unsqueeze(-1) | supervised.unsqueeze(-2)
         pairs = near.nonzero(as_tuple=False)

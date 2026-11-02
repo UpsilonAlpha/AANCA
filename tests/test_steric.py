@@ -325,6 +325,37 @@ def test_an_unsupervised_pair_is_not_scored(ubiquitin):
     assert part != full
 
 
+def test_a_residue_with_no_ca_falls_back_instead_of_raising(ubiquitin):
+    """The training set contains incomplete residues; the test structures do not.
+
+    v7's first training update died on "residue 149 (GLU) has no CA" after the
+    warm start had loaded and the update-0 evaluation had run — a failure no
+    test here could produce, because 1UBQ and 193L are complete. The rest of
+    the pipeline already tolerates incomplete residues (``virtual_cb``,
+    ``fallback_idx`` exist for exactly that), so raising made the steric term
+    stricter than the model it serves.
+
+    The fallback costs cutoff margin rather than correctness, and the margin is
+    charged per residue: a broken residue widens only the pairs it appears in,
+    so an ordinary pair is scored against the same bound as before.
+    """
+    import dataclasses
+
+    torsion, native = ubiquitin
+    names = list(torsion.atom_names)
+    victim = 5
+    assert "CA" in names[victim]
+    names[victim] = tuple(n for n in names[victim] if n != "CA")
+    broken = dataclasses.replace(torsion, atom_names=tuple(names))
+
+    steric = steric_topology(broken, native)
+    assert float(steric.anchor_slack[victim]) == 2.5
+    others = torch.arange(broken.n_residues) != victim
+    assert float(steric.anchor_slack[others].max()) == 0.0
+    # And it still scores a crystal structure at exactly zero.
+    assert float(clash_loss(native, broken, steric)) == 0.0
+
+
 def test_a_wrong_coordinate_shape_is_refused(ubiquitin):
     torsion, native = ubiquitin
     steric = steric_topology(torsion, native)
