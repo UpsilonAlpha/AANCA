@@ -937,6 +937,168 @@ which `aanca.casp.randomised_start` makes a one-argument change. It would be a
 hybrid rather than a method, and it says nothing about whether the rule alone
 is good. Worth knowing anyway.
 
+### Inverse folding: the design settled on 2026-11-02, and why
+
+Decided in discussion, not measured. Recorded because three of these are
+decisions against an alternative that looked better, and the reasons will not
+be recoverable from the code.
+
+**The architecture is already fixed-backbone.** The rule only drives chis; the
+backbone is input. So inverse folding is not a new setting, it is this setting
+with identity unfrozen.
+
+**The averaging problem — why identity must not be a soft simplex.** The
+closest prior art to this architecture is SCMF (Koehl & Delarue 1994), which
+reaches a fixed point by purely local field updates, exactly as we do. Its
+failure is specific: the field residue *i* feels averages the pairwise energies
+over neighbour *j*'s *distribution*, `E_eff(i,r) = E_self(i,r) + Σ_j Σ_s p_j(s)
+E_pair(i,r; j,s)`. Steric exclusion is a hard pairwise constraint, so averaging
+over a distribution turns "forbidden with one of *j*'s rotamers" into
+"half-forbidden", and the converged field has minima that correspond to no
+realisable joint structure. It is worst in tight cores, where the coupling is
+strongest.
+
+It does not bite us *now* because the cell state is a single concrete
+conformation with actual coordinates, and messages carry realised geometry
+rather than an average over options — the discrete, joint regime. That is why
+the clamp test below could show an 18-point effect at all.
+
+It would bite the moment identity is carried as a soft 20-way simplex, which is
+the natural differentiable thing to do with an NCA output neuron. A cell that
+is 40 % TRP and 30 % GLY broadcasts a field no residue exerts, and inter-type
+steric differences are far larger than between rotamers of one type, so the
+smearing is worse than in the case SCMF is already known to fail at. **So
+identity is discrete in the forward pass**, sampled or argmaxed with a
+straight-through or Gumbel-softmax gradient.
+
+**The output is one joint categorical over (type, rotamer), not two heads.**
+The cell *is* its position, so it never outputs that. What it needs is a
+distribution over type-and-conformation jointly — which is precisely Rosetta's
+rotamer set, where one move is "position *i* becomes rotamer *r* of type *t*".
+Three things follow at once: discrete, so no mean-field smearing; joint, so
+type and conformation cannot disagree; and **the atom-set problem disappears**,
+because each library entry is a complete side chain with known atoms, so no
+union-of-atoms mask (which would name the residue and leak the answer) and no
+truncation to CB. The cost is the continuous output that AttnPacker and DiffPack
+established as the advantage over binned methods, so the head is
+classification *plus* regression: logits over (type, well) and a continuous
+residual within the chosen well. The von Mises head is already the regression
+half; only the selector above it is missing.
+
+New convergence diagnostic required. `mean_abs_delta` decaying stops meaning
+anything once a discrete label can flip between steps — the continuous part can
+be settling while the labels churn. The replacement is **the fraction of
+positions whose label changed this sweep, which must decay to zero**. It is the
+same diagnostic the ripple needs, so it is one piece of machinery.
+
+**PottsMPNN, corrected.** It does *not* replace the single pass. It uses
+ProteinMPNN's featurisation and GNN encoder, trained to emit a Potts model
+(fields and couplings) alongside single-site probabilities, building on
+COORDinator; generation is still the autoregressive decoder, and the Potts
+model scores variants and drives a local optimisation that sweeps in the
+generation order until no favourable substitution remains. That is iterated
+conditional modes at zero temperature, initialised from an autoregressive
+sample — published precedent for the shape of the N→C-then-ripple scheme rather
+than a competitor to it. Separately, "order-agnostic" belongs to ProteinMPNN
+itself, which samples the decoding order from all permutations during training;
+so no order is privileged, and the defect that survives is the narrower one that
+*within* a sample, early positions commit and are never revised.
+
+**A fixed point is not an energy, which is why the explicit energy is needed.**
+An update map `x ← f(x)` descends a scalar only if its Jacobian is symmetric,
+which a generic net's is not — so our converged state is the fixed point of a
+field that is not curl-free, i.e. the minimum of nothing. The oscillation risk
+is the observable symptom. **Decision: a Potts energy**, `E(s) = Σ h_i(s_i) +
+Σ J_ij(s_i,s_j)`, with the parameters predicted from the backbone. Chosen over
+an MD forcefield (enthalpy of one conformation, solvation-dominated, too stiff
+to evaluate per move, and never fit for design — Rosetta's statistical hybrid
+exists because pure physics underperforms here) and over a learned scalar
+energy, for one structural reason: **a single-position move changes only the
+terms involving *i*, so ΔE is O(neighbours)**, and that is exactly what both
+Metropolis–Hastings acceptance and point-mutant ΔΔG need. Pairwise additivity
+is an approximation and three-body packing is real — which is the division of
+labour, since the AANCA supplies the joint geometry-aware refinement a Potts
+model cannot express, and the Potts model supplies the evaluable scalar we
+cannot produce.
+
+**Entropy comes out of the ensemble, not out of a term.** With an enthalpic
+energy and a valid MH chain at finite temperature, free-energy differences are
+estimable from the sampled ensembles by standard means. Anneal to zero and that
+is thrown away; run at finite *T* and it is free. This is the concrete reason to
+pay for MH rather than stopping at annealed Gibbs. It also rehabilitates SCMF:
+its mean-field marginals *are* a free-energy estimate, and side-chain
+conformational entropy falls straight out of them. Averaging is wrong for
+finding a structure and right for scoring one.
+
+**Dropped: the fractional-position morphogen gradient.** Absolute index lets
+the rule memorise "position 47 of this protein is LEU" — a shortcut that works
+on the training set, generalises nowhere, shows up in no aggregate metric, and
+is incoherent under cropping, since residue 47 of a crop is residue 203 of the
+protein. The legitimate version is relative offset, and it is already in:
+`torch_graph.py:538-541` one-hots the residue offset clamped to ±16 as an edge
+feature, the same design as ProteinMPNN. If the gradient is ever wanted, the
+form to add is capped distance to the nearest terminus computed from the full
+chain, which is bounded and not a position index.
+
+### The update schedule: a colouring cannot be fixed, so the set is drawn per step
+
+Implemented 2026-11-02, `src/aanca/schedule.py`, default off.
+
+Gibbs sampling requires the cells updated together to be conditionally
+independent given the rest, and two residues in contact are the opposite of
+that. The Bernoulli mask ticks half the protein at once, which is synchronous
+mean field, and strongly coupled neighbours under synchronous updates oscillate
+rather than converge.
+
+The obvious fix — colour the interaction graph once, update one class per step
+— does not work here, and the reason is worth keeping. A colouring has to be
+proper for the graph message passing actually uses, and `torch_graph` selects
+neighbours by **minimum heavy-atom distance**, which moves when a side chain
+moves. Colouring a conservative superset is worse: a side-chain atom reaches
+~6.6 Å from its CA, so "could ever fall inside the 10 Å cutoff" means CA–CA
+within 23 Å, which on a 128-residue crop is every pair — the superset graph is
+complete and wants one residue per step.
+
+So the set is drawn **fresh per step**: a random greedy maximal independent set
+of the current coupling graph. Exactly proper, because it is computed from the
+geometry in hand; freshly random, so there is no fixed partition and no phase
+for a cell to learn through its persistent hidden state; and no colour
+bookkeeping, since one maximal independent set *is* one colour class.
+
+The coupling graph is deliberately **not** the message-passing graph. Gibbs
+independence is a property of the energy, not of the perception radius: two
+residues 9 Å apart exchange messages but their side chains cannot touch, so
+they are conditionally independent for packing and may tick together. That
+distinction is worth a factor of 2.5, measured on native structures:
+
+| coupling radius | mean degree | set size (1UBQ, 76 res) | colours per sweep |
+|---|---|---|---|
+| 5 Å (contact) | 9.5 | 13.6 (17.9 %) | 8–9 |
+| 6 Å | 11.3 | 11.9 (15.7 %) | 9–11 |
+| 8 Å | 19.8 | 7.9 (10.4 %) | 13–15 |
+| 10 Å (perception) | 28.1 | 6.2 (8.2 %) | 20–21 |
+
+193L (129 residues) at 5 Å: degree 10.6, sets 21.4 residues, 9–10 colours. At
+10 Å the coupling graph's mean degree equals the k=64 message graph's edges per
+residue exactly, 28.1 and 33.9, since both use the same distance measure.
+
+**So an exact schedule is affordable**: 8–10 colours per sweep means a 30-step
+rollout is about three sweeps. And the comparison that matters for the
+oscillation worry: the Bernoulli mask at 0.5 ticks 38–64 residues per step
+where independence allows 13–21, so the current schedule updates about three
+times more residues than it may.
+
+Not yet measured: whether the independent schedule helps *repacking*, which it
+need not — the reconstruction task is not a sampler and the Bernoulli mask is
+what v1–v6 were trained with. The default stays `bernoulli` and the stream is
+bit-identical, so this is a switch to test rather than a change to absorb.
+
+A trap worth recording for when the cell gets to choose anything about its own
+turn: selection may depend on the current state only, never on the value being
+proposed. A cell that decides it is its turn *because* of what it wants to
+become destroys the chain's stationary distribution. Rosetta picks positions
+uniformly at random for exactly this reason.
+
 ### The clamp test — the rule reads its neighbours, and reads them wrong
 
 Measured 2026-11-02, 31346329, `docs/benchmarks/clamp_v5_native.log`. This is
