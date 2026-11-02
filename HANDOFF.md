@@ -1231,6 +1231,49 @@ module became **`src/aanca/update_schedule.py`**, matching the config field and
 the CLI flag. Check for an existing module before writing a new one, and read
 the word the tool reports back.
 
+### Inverse folding is wired and running — v8_if, 2026-11-02
+
+`--identity-weight` turns on the head, the ripple and the blinding together.
+Built tonight, 701 tests green, launched as **v8_if (31516313)**, 24 h
+segments, chained, stopped with `touch runs/v8_if/STOP`.
+
+**The head.** One joint categorical over the 54-entry (type, chi1 well)
+library, not separate type and rotamer heads. Its neutral element is **keep**,
+not uniform: a zeroed head plus a keep-current logit holds the present label,
+which is the delta head's identity initialisation transposed to a discrete
+label. Without it an untrained rule resamples the whole sequence from a
+uniform distribution thirty times over and diverges before learning anything.
+
+**The ripple.** The committed label goes forward as a straight-through one-hot
+in `node_features`' 20-dim type block. That is its only pathway, and the
+straight-through form is the only reason it is *trainable* rather than merely
+observable: as a hard index the chain would stop at every commitment and the
+loss could never reach the head that chose the label. Its gradient horizon is
+`config.truncate` -- 12 steps by default -- because the rollout detaches at
+truncation boundaries. Labels are gated by the same mask as the geometry, so
+with `--update-schedule independent` the sequence is being decided by a
+chromatic Gibbs sweep, which is what that schedule was built for.
+
+**Blinding has to happen to the coordinates, and that is the trap.** Zeroing
+the chi channels and the side-chain edge block is not enough. Neighbour
+selection and the envelope are both *minimum heavy-atom* distances, so the
+graph knows how far a side chain reaches even when no feature says so, and a
+rule could narrow its own identity to TRP or ARG off either. `aanca.blind`
+therefore moves every atom beyond CB onto its residue's CB. `tests/test_blind.py`
+asserts the whole claim in one line -- randomise every chi and the neighbour
+list, envelope, edge features and node features must not change by one bit --
+with a companion test that the *unblinded* envelope does change, so the first
+test is capable of failing.
+
+**The keep strength is the one setting that needed measuring.** At the default
+8.0 a masked-start run spends its early updates unlearning its own prior: step
+1 draws a label from nothing, and from step 2 the keep term pins 98 % on that
+guess. Measured on 8 validation structures: keep 8.0 gave identity NLL
+6.59 -> 6.47 over 40 updates, still far above the uninformative ln 54 = 3.99.
+Keep 2.0 gave **4.02 -> 3.76 over 80 updates** -- below the floor, i.e. the
+head is reading real signal. v8_if runs at 2.0. A *native*-start run wants the
+strong keep, because there the stability is the point.
+
 ### The 0.75 clamp row — the sign is still wrong, and halving it is the result
 
 31480041, `runs/v6_mixed/best.pt` at update 2500, CASP13, 79 targets, 100
@@ -1329,6 +1372,70 @@ weighting changes the state the term is measured at — but the absolute level
 is the point, and it is the same order either way. The global task is intact
 (`drift from a native start: 0.0222 A mean`) and the step cost settled at
 3.59 s/update.
+
+### Growing a protein de novo, and why it is not diffusion, 2026-11-02
+
+User's question: this sounds similar to diffusion, which is the state of the
+art. It is not the same thing, and the difference is the part worth keeping.
+
+**Three ways they differ, and only the third is a disadvantage.**
+
+1. *What varies along the trajectory.* Diffusion varies the **noise** on a
+   fixed node set -- every residue is present at step 0 and the trajectory is
+   a prescribed schedule from noise to structure. Growth varies the
+   **support**: which cells exist at all.
+2. *Who decides the schedule.* Diffusion's is imposed and the network is told
+   where it is -- DiffPack takes the noise level as conditioning. An NCA
+   cannot be told: no step index, no noise level, which is this project's
+   scientific claim (§1). So a growth NCA is not a diffusion model with a
+   different schedule; it has to decide locally when a neighbour wakes up,
+   which is a strictly harder problem and a different one.
+3. *Where the distribution comes from.* Diffusion has a tractable objective
+   and a sampling procedure with guarantees. Growth has neither. This is the
+   same gap as "a fixed point is not an energy" (see the Potts section): a
+   grown structure is a sample from whatever the rule happens to do, with no
+   density attached. For design that matters less than designability; for
+   folding ddG it matters completely, which is what the Potts and MH
+   machinery is for.
+
+**What growth buys that diffusion does not.** Variable length by construction
+-- a diffusion model fixes N and needs length conditioning or padding.
+O(surface) work per step while the structure is small instead of O(N). A model
+that can **extend** an existing structure, which is the practically valuable
+case (growing a binder onto a target, closing a loop, fusing a domain) and
+which diffusion reaches only through inpainting. And one rule at every stage,
+because there is no t to condition on.
+
+**How it would be built here, concretely.**
+
+- Pre-allocate N slots, as ``aanca.blind`` and the alive-mask discussion
+  above require. Carry an alive mask ``a`` in ``{0,1}^N``; hidden state exists
+  for every slot, coordinates only for the live ones.
+- Seed one residue (or several, which is nucleation) at a reference frame.
+- Each step: the live set runs the ordinary rule; every live cell also emits
+  an **activation logit** for its dormant sequence-neighbours -- one new head,
+  built exactly like the identity head; a newly woken residue is placed from
+  its activating neighbour's frame plus ideal bond geometry and a predicted
+  phi/psi. That is the one place a torsion is unavoidable and also the one
+  place there is nothing downstream of it, so the lever arm is zero at birth.
+  Relaxation then continues over everything alive, which is the "grow while
+  relaxing" the user asked for.
+- Loss on the completed state only, with the frontier excluded -- the prefix
+  trap again. The clash term stops being nearly inactive here and becomes
+  essential: growing into occupied space is *the* failure mode, and it is why
+  that term was built now rather than later.
+- The plumbing is already most of the way there. ``supervised`` is a
+  per-residue gate on the loss, ``frozen`` is a per-residue gate on geometry,
+  and ``step_once`` takes both. An alive mask is a third gate of the same
+  shape.
+- For refinement, EGNCA's coordinate update (relative-vector sums, no
+  torsions, no lever arm) is the natural operator, and DGCA is the only prior
+  art for a node-adding graph CA.
+
+**What will bite, in order:** no handedness in torsion-space growth, so
+mirror folds without an explicit chirality term; no energy, so "grown" says
+nothing about whether the result is a protein; and the distribution problem
+above, which is the one diffusion solves and this does not.
 
 ### Growth should be spatial, not sequential — and EGNCA says how, 2026-11-02
 
