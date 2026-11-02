@@ -1274,6 +1274,59 @@ Keep 2.0 gave **4.02 -> 3.76 over 80 updates** -- below the floor, i.e. the
 head is reading real signal. v8_if runs at 2.0. A *native*-start run wants the
 strong keep, because there the stability is the point.
 
+### Silencing confirmed: correct neighbours tell the rule it is finished — 31515295
+
+v5_native at 0.75 pinned, with the diagnostic columns, `--no-anchor`
+(2026-11-02). The prediction was that the native arm's free residues would
+barely move; they barely move.
+
+```
+  pinned      arm   free right    free MAE   free n   pinned drift    start   moved   stuck
+   0.75   native        54.2%       58.50     4540     0.00e+00    33.5%   46.58   68.7%
+   0.75   random        75.1%       34.34     4540            -    33.5%   89.17   35.2%
+
+  pinned     native - random      moved n/r
+   0.75             -20.9              0.52
+```
+
+`native - random` reproduces the original -20.9 exactly, so dropping the
+anchor row perturbed nothing. Both arms report the same `start` (33.5 %), so
+they are scoring the same residues from the same conformations. And then:
+
+- **moved n/r = 0.52.** Given correct motionless neighbours the rule moves its
+  free residues *half as far*.
+- **stuck 68.7 % against 35.2 %.** Two thirds of the free residues never leave
+  the well they were randomly started in, against one third when the frozen
+  neighbours are wrong.
+- The accuracy gap is therefore not "it solved them worse". From a 33.5 %
+  floor the random arm reached 75.1 % and the native arm 54.2 %: it closed
+  about a third of the distance, because it stopped.
+
+**So the rule has learned "a native-looking neighbourhood means you are
+done".** The no-op term supervises silence at the native fixed point, and in
+training a neighbourhood only looks native when the residue itself is also
+right -- those two conditions never came apart, so the rule reads the
+neighbourhood and infers its own state. It is a *correct* inference about the
+training distribution and a wrong one about the clamp.
+
+This explains the whole table's shape, including the sign flip. At 0.25 pinned
+the neighbourhood does not look converged enough to trigger it; at 0.75 it
+does. And it explains why `--damage-fractions` helped (-20.9 -> -11.9) without
+fixing it: damage is drawn uniformly per residue, so "my neighbours are native
+and I am not" stays rare at any fraction.
+
+**The next experiment follows directly, and it is cheap.** The no-op term is
+applied to a whole undamaged structure. Make it per-residue instead: damage a
+small fraction, then require silence on the *undamaged* residues and motion on
+the damaged ones, in the same step. That severs the correlation the rule is
+exploiting at its source, rather than diluting it. `ObjectiveTerms.noop`
+already computes a masked mean, so the change is the mask.
+
+Worth noting what this does *not* say: the rule may still read neighbour
+conformations perfectly well and merely be gated by a bad stopping rule. The
+clamp test cannot separate those, because a silenced rule and a blind one give
+the same accuracy. A per-residue no-op would separate them.
+
 ### The 0.75 clamp row — the sign is still wrong, and halving it is the result
 
 31480041, `runs/v6_mixed/best.pt` at update 2500, CASP13, 79 targets, 100
