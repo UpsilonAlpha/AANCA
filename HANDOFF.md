@@ -1231,6 +1231,106 @@ module became **`src/aanca/update_schedule.py`**, matching the config field and
 the CLI flag. Check for an existing module before writing a new one, and read
 the word the tool reports back.
 
+### The clash term is nearly inactive at the rule's own converged states
+
+Measured 2026-11-02 from v7 (31482842) at update 125, the first time the term
+had ever been in an objective: **clash 0.0007** angstroms of overlap per atom
+at tolerance 1.5, against a loss of −0.628. At `--clash-weight 3.0` that is
+**0.3 % of the objective** — the term was effectively switched off. Relaunched
+as `v7b_clash` (31484745) at weight 50, which puts it near 5 %. Cost: 2.82 →
+**3.82 s/update**, about 35 %, for one all-pairs distance computation per
+objective call.
+
+**This is evidence against the clash hypothesis for the clamp failure, and it
+should be read that way.** Two explanations predicted that table: the mixed
+state being off-distribution, and the absence of a steric term. If the rule's
+converged states carry 0.0007 angstroms of overlap per atom then steric
+interpenetration is not what it is getting wrong — there is almost nothing for
+a clash term to remove. The off-distribution explanation, which
+`--damage-fractions` addresses and which already moved the clamp numbers
+(+1.0 at a quarter pinned, +7.9 on the half-pinned native arm), looks like the
+real one.
+
+So the honest expectation for v7b is small. The term is still worth having —
+it is a correctness constraint, it is the first component of an explicit
+energy, and a folding objective cannot do without it — but it is not the
+second half of the clamp fix, and the number says so before a run was spent
+assuming it.
+
+Caveat on the measurement: 0.0007 is the mean over supervised atoms at the
+*final* rollout state, averaged over a mixture that is 40 % globally damaged.
+It does not establish that the residual overlap is uncorrelated with the
+errors, only that there is little of it.
+
+### Growing the backbone N to C — what it fixes and what it breaks
+
+User's suggestion, recorded 2026-11-02. Nothing built.
+
+**It dissolves the lever arm by construction, which is the real attraction.**
+The objection to backbone torsions is that rotating phi at residue *i* moves
+every atom from *i* to the terminus. In a *growing* chain the newest residue
+has nothing downstream of it, so placing its phi/psi is a bounded local
+operation at the moment it is made. That is a genuinely different resolution
+from the frame representation, which avoids the lever arm by not using torsions
+at all.
+
+**But it breaks the ripple, and that asymmetry is the thing to understand.**
+The fix for single-pass identity decoding was to let committed residues revise
+themselves in light of their neighbours. That does **not** transfer to backbone
+torsions: re-deciding an identity at position *i* changes only position *i*'s
+atoms, while re-deciding phi at *i* moves the entire C-terminal remainder. So
+Gibbs-over-neighbourhoods generalises to sequence and fails for backbone
+torsion, for exactly the reason growth works in the first place. Growth buys a
+cheap forward pass and gives up refinement — which is the defect it was
+supposed to cure.
+
+The resolution is that growth and frames are not competing proposals:
+**growth is an initialisation strategy, frames are the refinement
+representation.** Rosetta reaches the same split from the other side, moving
+fragments and then closing loops.
+
+**The strongest version is growth and relaxation running concurrently** — new
+cells appearing at the growing end while every placed cell keeps updating —
+rather than grow-then-refine. That is what co-translational folding actually
+is, it is what an NCA is naturally good at, and it is literally Growing Neural
+CA, which starts from a single seed cell. Worth noting our present model is a
+*fixed-size* CA, so this would make the architecture more faithful to its
+namesake, not less.
+
+**The biophysical motivation is weaker than it sounds, which is worth knowing
+before leaning on it.** For elongation factor G, folding runs *counter* to
+synthesis: a strictly sequential pathway initiating from the **C-terminus**
+while translation proceeds N to C. So "N to C because that is how the ribosome
+does it" conflates synthesis order with folding order, and they can be
+opposite. Separately, structural asymmetry along sequences has been linked to
+vectorial translation, with slow-folding sections toward the N terminus and
+fast-folding toward the C.
+
+**Prior art says autoregressive-over-angles is not where the field landed.**
+PB-GPT generates backbones one residue at a time over internal angles and bond
+lengths via codebook indices. More tellingly, the FoldingDiff work used an
+autoregressive transformer over backbone angles as a *baseline* — i.e. the
+diffusion approach was the contribution and the autoregressive one was the
+thing it beat. Neither is a growth model in the co-translational sense; no
+source was found for one.
+
+**A supervision trap, and this codebase already contains the lesson.** The
+native conformation of a *prefix* is not well defined: a 50-residue prefix of a
+300-residue protein does not adopt its final conformation in isolation, because
+it is stabilised by contacts that do not exist yet. Supervising prefixes
+against the final crystal coordinates asks for something physically wrong.
+`rollout.training_objective` already says this about crops — the boundary shell
+is excluded because "its native torsions depend on contacts that were cropped
+away and asking for them is unlearnable rather than merely hard." Same error
+class, and the fix has the same shape: supervise only what has complete
+perception, or only the final state.
+
+Two smaller things: growth in torsion space can produce mirror-image folds, so
+it needs a handedness term; and growth is inherently serial, so a 300-residue
+protein costs 300 sequential placements per structure, which throws away the
+parallelism that is an NCA's main computational appeal unless the concurrent
+formulation above is used.
+
 ### After inverse folding: backbone degrees of freedom, folding, and folding ddG
 
 User's direction, recorded 2026-11-02 for when inverse folding works. Hand the
