@@ -1231,6 +1231,65 @@ module became **`src/aanca/update_schedule.py`**, matching the config field and
 the CLI flag. Check for an existing module before writing a new one, and read
 the word the tool reports back.
 
+### The 0.75 clamp row — the sign is still wrong, and halving it is the result
+
+31480041, `runs/v6_mixed/best.pt` at update 2500, CASP13, 79 targets, 100
+steps, `--fractions 0.75`. This is the pre-registered target row: the worst
+failure in the v5 table (-20.9) and the one a 4 h walltime lost every time the
+full seven-row sweep was run.
+
+```
+  pinned      arm   free right    free MAE   free n   pinned drift
+   0.00        -        77.7%       31.50    17979              -
+   0.75   native        63.4%       47.48     4540     0.00e+00
+   0.75   random        75.3%       34.31     4540            -
+
+  pinned     native - random    native - anchor
+   0.75             -11.9              -14.3
+```
+
+`pinned drift` is exactly zero, so the pin held and the table is valid.
+
+**-20.9 to -11.9.** The damage-fraction fix moved the worst row by nine
+points and did not fix it: with three quarters of the structure pinned, the
+rule still does *worse* when the frozen neighbours are correct than when they
+are random, by twelve points. That is far outside the 1.2-point seed spread
+measured at 0.25, so it is not noise. The whole-table picture is now a
+monotone one — at 0.25 the sign has flipped positive (+1.0), at 0.50 it is
+clearly positive (+7.9), at 0.75 it is still badly negative — which reads as
+"the fix works to the extent that the clamped state still resembles something
+the rule was trained on, and 0.75 pinned does not".
+
+Note the 0.00 anchor is unchanged at 77.7 %, so none of this is bought with
+global accuracy.
+
+The seed-1 replicate of the v5 row (31480042) **did not produce it**: the log
+ends after the 0.00 row with no `exit` line, i.e. killed on walltime. The
+0.00 row alone costs most of the budget. A replicate of the 0.75 row needs
+`--fractions 0.75` *without* the anchor, or a longer card.
+
+### The steric preflight's inventory — the fallback is load-bearing, the radii are right
+
+31484703 on bun158, `--limit 600 --seed 0` over the train split.
+
+- 23,761 listed, **23,760 present on disk** — one structure in the manifest
+  has no file. Harmless (every consumer re-roots through `on_disk`), worth
+  knowing.
+- 600 sampled, **585 checked, 15 raised** — and all fifteen are the dataset's
+  own filters, not the steric code: `min_residues` 40, mostly nucleic-acid
+  complexes that pass the manifest's polymer-monomer count with almost no
+  protein (1AMT yields 33 standard amino acids). The training loader rejects
+  these too, so they are not a steric finding at all.
+- **13 residues with no CA** across 585 structures. The anchor fallback added
+  after v7's crash is therefore load-bearing: without it v7 would have died
+  again, on a different structure, several hours in.
+- **0 unassignable atom names** in 585 structures. The element assignment
+  covers the real data, not just 1UBQ and 193L.
+- **7 of 585 structures score above zero**, worst 0.000430 A/atom. Three
+  orders of magnitude below the 1.5 A tolerance's own scale, and consistent
+  with crystal strain rather than a wrong radius or a missing exemption. The
+  radii and the 1-5 exemption rule are correct on real chemistry.
+
 ### The clash term is nearly inactive at the rule's own converged states
 
 Measured 2026-11-02 from v7 (31482842) at update 125, the first time the term
@@ -1261,6 +1320,126 @@ Caveat on the measurement: 0.0007 is the mean over supervised atoms at the
 *final* rollout state, averaged over a mixture that is 40 % globally damaged.
 It does not establish that the residual overlap is uncorrelated with the
 errors, only that there is little of it.
+
+**v7b confirmed it at weight 50** (31484745, update 6250): `clash 0.0004`
+against `loss -0.462`, i.e. the weighted term is about 4 % of the objective
+and the overlap it has to work with is 4e-4 A/atom. Not a controlled
+comparison with v7's 0.0007 — that was update 125 at weight 3, and the
+weighting changes the state the term is measured at — but the absolute level
+is the point, and it is the same order either way. The global task is intact
+(`drift from a native start: 0.0222 A mean`) and the step cost settled at
+3.59 s/update.
+
+### Growth should be spatial, not sequential — and EGNCA says how, 2026-11-02
+
+User's correction of the section below: sequential may not be the best approach;
+grow instead over the distance-based ProteinMPNN graph, the way an NCA
+originally works. Evaluated against the §1 prior art, in particular
+**E(n)-equivariant Graph NCA** (arXiv 2301.10497, TMLR 2024). Nothing built.
+
+**Why synthesis order is not folding order.** Three separate reasons, and they
+matter because the N-to-C proposal borrows its authority from the ribosome.
+
+1. *Synthesis imposes a causal filter, not an order.* A contact between residue
+   10 and residue 290 cannot exist before 290 is made. That constrains which
+   contacts are **available** — a downward-closed set of prefixes — and says
+   nothing about which available contact forms next. The order within the
+   available set is the landscape's business.
+2. *The landscape orders foldons by native structure, not sequence index.*
+   Cytochrome c is five cooperative units whose assembly order comes from
+   "the same interactions that join the foldons in the native protein", earlier
+   ones templating later ones. Nothing in that ordering is sequence position.
+3. *The rate comparison decides whether the filter is even active.* The HemK
+   N-terminal domain folds at ~5 ms⁻¹ while translation runs at ~3.6 aa/s —
+   four orders of magnitude. The chain is therefore at quasi-equilibrium given
+   the residues it has, not being placed one residue at a time. And EF-G's
+   domain stays unfolded until the whole domain is synthesised and *then* folds
+   from the C-terminus: folding waited for everything, then ran backwards.
+
+So an N-to-C loop hard-codes a filter we do not need (we are given the whole
+sequence; we are not transcribing in real time) and on top of that imposes an
+order nature does not use. Keep chain connectivity, discard the order.
+
+**The substrate pre-exists — that is what the original NCA actually does.**
+Growing NCA does not create cells. The lattice is complete from step 0 and
+every cell already has its neighbours; growth is an **alive mask** (alive if
+any cell in the 3x3 has alpha > 0.1; dead cells have their state vector
+zeroed) spreading from one central seed. Transplanted correctly, the protein
+substrate is the **N residue slots**, which we know, with sequence edges
+present from step 0 and *coordinates* absent. A dormant residue is live in the
+graph and in hidden-state space and has no position; it acquires one when
+activated.
+
+That is also the resolution of the chicken-and-egg: a distance graph needs
+coordinates and growth produces coordinates, so a residue cannot be placed by
+the graph it is about to join. Under the alive mask it does not have to be —
+it is placed by messages over edges that already exist, which is exactly how a
+dead NCA cell comes alive from its living neighbours.
+
+**And then growth need not be sequential at all, which is the real payoff.**
+With an alive mask the order is chosen by the rule rather than by a loop: seed
+anywhere, or at several places, and expand where the living cells are
+confident. That is nucleation-condensation and foldon assembly, i.e. what the
+biology does. It keeps the lever-arm relief — a residue on a *spatial*
+frontier has few spatial neighbours, same as one on a sequence frontier — with
+no claim that growth order equals sequence order. It is also **parallel**: a
+spatial frontier activates O(surface) cells per step where a sequence prefix
+activates exactly one, which removes the "300 serial placements" objection in
+the section below.
+
+**What EGNCA actually establishes, and what it does not.**
+
+- *It is not a growth model, despite the name.* Its node set is fixed
+  throughout and it never adds nodes; pattern formation starts from **random
+  Gaussian coordinates on a given graph** with hidden features at 1, and there
+  is no seed node. So it is relaxation-from-noise on a given topology — the
+  "growing" half of Growing NCA is simply absent from the graph-NCA
+  literature. The nearest thing is **DGCA** (Developmental Graph Cellular
+  Automata), where nodes divide on their own and their neighbours' states, and
+  which explicitly contrasts itself with graph-CA work "focused on
+  self-organization rather than growth ... with a fixed number of nodes". DGCA
+  is discrete structure only — no geometry. So node-addition growth on a
+  *geometric* graph is genuinely open, and genuinely unsolved.
+- *Rebuilding the graph every step is demonstrated.* Their Boids task takes
+  the graph as "a fixed-radius nearest neighbourhood of the nodes at each time
+  step". That is direct evidence on §11's open design decision ("the contact
+  graph changes as coordinates move"): rebuild-per-step works in an
+  equivariant NCA. Their caveat is error accumulation in chaotic dynamics.
+- *Their coordinate update is a third option alongside torsions and frames.*
+  EGNN: `x_i <- x_i + mean_j (x_i - x_j) phi(m_ij)` — coordinates move along
+  weighted sums of relative position vectors. No torsions, no frames, **no
+  lever arm at all**, and E(n)-equivariant by construction. It is also the
+  only one of the three validated inside an NCA. The price is that the output
+  is a free 3-vector per node, so bond lengths, angles and chirality are not
+  guaranteed and need geometric terms — we have the restraint machinery and
+  now the clash term — and it abandons our present invariant-features choice.
+- *Their stability apparatus is ours already*: pool replay, replacing the
+  highest-loss pool state with a fresh one, local and global perturbations,
+  15-25 step BPTT, PairNorm/NodeNorm with tanh and skip connections. No formal
+  guarantee; stable attractors reported past t = 15; exploding gradients
+  reported as the main training difficulty.
+- *One of their limitations does not bite us, which is a point in favour.*
+  Their pattern loss needs a 1-to-1 correspondence between initial and target
+  nodes, which makes it non-permutation-invariant and causes abrupt early
+  dynamics; they propose optimal transport. For a protein the correspondence
+  is free — residue *i* is residue *i*.
+
+**The supervision trap survives the change, and we already own the fix.** A
+growing spatial ball has the same ill-defined native as a growing sequence
+prefix, and it is literally the same problem as the crop boundary shell:
+`rollout.training_objective` excludes that shell because "its native torsions
+depend on contacts that were cropped away and asking for them is unlearnable
+rather than merely hard". A grown spatial ball **is** a crop, and
+`RepackingDataset.load_crop(i, seed_residue=...)` already grows one from a
+seed residue. The machinery for "spatially grown subset with a frontier"
+exists in this repo.
+
+**If and when this is built**, the shape is: alive mask over pre-allocated
+residue slots, seeded spatially rather than at the N terminus, graph rebuilt
+per step (EGNCA's Boids precedent), coordinates by EGNN-style relative-vector
+updates rather than torsions, frontier shell excluded from supervision. It
+sits downstream of the backbone escalation, which is downstream of inverse
+folding.
 
 ### Growing the backbone N to C — what it fixes and what it breaks
 
