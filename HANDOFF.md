@@ -1004,12 +1004,91 @@ dominant. The progress line prints the term **unweighted** on purpose, so the
 readout is direct: if it falls toward zero the weight was enough, and if it sits
 flat the weight is too small rather than the term being useless.
 
+**First attempt, 31481510, died on the first training update** with
+`ValueError: residue 149 (GLU) has no CA`, raised by `steric_topology` — after
+the warm start had loaded and the update-0 evaluation had run (pooled chi1
+14.81, correctly reproducing v6's last state, so the warm start itself was
+right). **A training residue need not have a backbone.** 1UBQ and 193L are
+complete, so no test in `tests/test_steric.py` could produce the case, and the
+rest of the pipeline already tolerates incomplete residues — that is what
+`FeatureTopology.virtual_cb` and `fallback_idx` exist for. Raising made the
+steric term stricter than the model it serves.
+
+Fixed by falling back to N, C or CB, each carrying 2.5 Å of extra neighbour-list
+slack **charged per residue** rather than absorbed into a wider global cutoff,
+so an ordinary pair is still scored against the 17 Å bound. A residue with no
+recognisable backbone atom at all anchors on its first real atom with 6.6 Å of
+slack, which keeps the pair list a superset instead of silently lossy.
+
+**The general lesson, and `scripts/steric_preflight.py` is the response.** Two
+complete crystal structures cannot generate the training set's failure modes,
+so a test suite built on them certifies nothing about the real data. Finding
+those modes one per GPU queue cycle — queue, wait for a card, load the warm
+start, run an eval, crash on one residue — is the thing to avoid. The preflight
+walks a whole split on CPU and reports every problem at once: anything that
+raises, every residue with no CA, every unassignable atom name, and what each
+native structure actually scores (which must be 0.000, so anything above it is
+a radius or an exemption wrong on chemistry the test structures lack).
+Submitted as 31482841 alongside the v7 resubmission 31482842, rather than
+gating on it, since another crash costs one update and the chain stops on exit
+1 anyway.
+
 **Two things to watch on the first eval.** Whether `s/update` moved — the
 steric term adds an all-pairs distance computation over every residue pair
 within 17 A, once per objective call rather than per step, and v6 ran at
 2.82 s/update on a 384-residue crop. And whether the global task regresses:
 `build_eval_set` is untouched, so the held-out curve is still directly
 comparable to v5's and v6's.
+
+### The identity library — 54 entries, and the Gumbel temperature is not the one you think
+
+Built 2026-11-02, `src/aanca/identity.py`, 28 tests. One joint categorical over
+(type, chi1 well), derived from `rotamers.WELL_NAMES` and `rc.num_chi` rather
+than hardcoded: 17 types × 3 wells + 3 chi-less types × 1 = **54**.
+
+**PRO is a chi-less type in this codebase**, which is easy to get wrong.
+`residue_constants` detects its CA–CB bond as lying in a ring and puts it in
+`RIGID_RESIDUES`, so `num_chi("PRO") == 0` and its `chi_mask` is all-False.
+It gets one trivial entry, like ALA and GLY. Giving it three would waste two
+indices the head can never populate; dropping it would shift every index above
+it. Hence 54 and not 55 or 57, and there is a test asserting the chi-less set
+is exactly `{ALA, GLY, PRO}`.
+
+**chi1 only, deliberately.** The full chi tuple is `3**num_chi` per type, so
+ARG and LYS are 81 each and a complete enumeration is ~400 entries, the large
+majority sterically impossible and essentially unpopulated in any real training
+set — the rare ones would be learned from a handful of examples apiece. The
+selector's job is the type plus the gross chi1 branch that decides where the
+side chain points; chi2 onward is the von Mises head's half of the
+classification-plus-regression split. If it is ever deepened it should be
+deepened *per type* (chi1 × chi2 for aromatics and branched residues), not
+uniformly.
+
+**The Gumbel-softmax temperature does not sharpen the choice.** This corrects
+advice given earlier in the same discussion, where "anneal the temperature to
+zero so it becomes iterated conditional modes" was said without distinguishing
+two different temperatures. `argmax((logits + g) / τ)` **does not depend on τ**:
+the committed label is a draw from `softmax(logits)` at every temperature, and
+τ controls only how much of the returned vector's mass sits on the winner —
+i.e. the bias and variance of the gradient estimator. Verified directly: with
+one fixed seed, τ from 0.01 to 100 gives the *identical* argmax while the mean
+max component goes 0.9934 → 0.0194.
+
+So the two temperatures are separate knobs and both are needed. The
+**Boltzmann** temperature divides the logits or energies before the softmax and
+is what actually sharpens the decision toward the argmax — that is
+`potts.conditional(..., temperature)`, and it is what "anneal to zero → ICM"
+means. The **Gumbel** τ is only the relaxation. Two consequences: annealing τ
+is not annealing the sampler, and **a falling `label_churn` curve must not be
+attributed to a τ anneal**, because τ does not change the distribution of
+choices at all. Mixing these up would produce a convergence curve that looks
+like progress and is an artefact.
+
+Also worth keeping: `type_nll` sums over a type's wells in log space with a
+`(54, 20)` membership mask and `logsumexp`, not by exponentiating and
+scatter-adding. A well whose probability underflows to zero in float32 would
+make its type's log read `-inf`, and a correct type whose wells are all
+individually small is exactly the case that loss exists to score.
 
 ### The Potts energy — built and validated 2026-11-02, `src/aanca/potts.py`
 
