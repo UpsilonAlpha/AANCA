@@ -110,7 +110,14 @@ print('gpu        :', torch.cuda.is_available(),
 # launched with srun would never see the warning and would be killed outright
 # at the walltime with its last interval unsaved. The trap turns SLURM's
 # warning into train.py's clean stop.
-python scripts/train.py "$@" --device "${DEVICE}" --threads "${THREADS}" \
+# ``-u`` for the same reason ``bunya_cpu.slurm`` carries it: the .out is the
+# only window into a running segment, and block-buffered stdout makes a
+# healthy job indistinguishable from a hung one. On 2 Nov the v6 segment's
+# .out sat two evals behind what ``runs/<tag>/history.json`` already recorded,
+# which cost a wrong "it has stalled" reading. The history file is written at
+# every eval and is the authoritative progress source either way, but the two
+# should not disagree.
+python -u scripts/train.py "$@" --device "${DEVICE}" --threads "${THREADS}" \
     --max-seconds "${BUDGET}" &
 CHILD=$!
 forward() { kill -"$1" "${CHILD}" 2>/dev/null || true; }

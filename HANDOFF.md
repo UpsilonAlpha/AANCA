@@ -1240,6 +1240,50 @@ in checkpoints already written.
   optimiser, no pool, no args — and `--init-from` would refuse it. So
   `clamp_test` is also run on `last.pt`, to make the before/after exact rather
   than approximately exact.
+  **It mattered more than it looked** (31355896,
+  `docs/benchmarks/clamp_v5_native_last.log`). `last.pt` is *worse* on this
+  axis than the measured `best.pt`, and not marginally:
+
+        pinned      best.pt    last.pt
+         0.25          +0.5       -0.9
+         0.50          -6.9      -11.5
+         0.75         -18.1      -20.9
+
+  So the pre-fine-tune baseline is **-20.9**, not -18.1. Scoring the
+  fine-tuned weights against the `best.pt` table would have credited the fix
+  with about 3 points it did not earn. The two checkpoints are 500 updates
+  apart and differ by 0.5 deg of pooled chi1 MAE, which is eval noise; that
+  the clamp table moves 2.8 points over the same gap says this measurement is
+  the more sensitive of the two, and that a single clamp run is not a tight
+  number. Worth a seed replicate before any claim rests on a few points of it.
+
+**Where it got to.** Segment 1 is 31355895 on an MI355X, 2.9 s/update, so
+20,000 updates is about 16 h and fits one 24 h segment. Through update 3,000,
+read from `runs/v6_mixed/history.json`:
+
+      update   pooled chi1   acc all   kappa 0 chi1   kappa 0 acc
+           0         15.20      73.3          33.47          36.3
+         500         14.77      74.1          32.11          38.7
+        1500         14.68      74.2          31.63          39.5
+        2500         14.47      74.8          31.27          40.2
+        3000         14.56      74.3          31.25          39.8
+
+The update-0 row reproduces v5's own update-60,000 eval exactly (15.198),
+which is the check that the warm start really loaded those weights and not
+something else. **No regression on the global task** — the worry that bought
+1.0 its duplicate slot in the mixture. kappa 0 is the benchmark's own
+condition and it improves by 2.2 deg and 3.5 accuracy points, and pooled chi1
+passes v5's all-time best of 14.69 by update 1,500. That is the fine-tune
+paying for itself before the clamp test has even been re-run; whether it pays
+on the thing it was *for* is 31417064, on `runs/v6_mixed/best.pt`.
+
+**A trap this run walked into, now fixed.** `bunya_train.slurm` ran
+`python scripts/train.py` without `-u`, so the `.out` sat two evals behind
+`history.json` and looked for a few minutes like a stalled job. The `.out` is
+the only window into a running segment and block buffering makes a healthy job
+indistinguishable from a hung one -- the same lesson `bunya_cpu.slurm` already
+carried, in the one place it had not been applied. `history.json` is written at
+
 
 ### v5: the fixed point as a training case — `--native-probability`
 

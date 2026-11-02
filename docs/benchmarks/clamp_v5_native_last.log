@@ -1,0 +1,36 @@
+host : bun156
+run  : scripts/clamp_test.py runs/v5_native/last.pt
+
+clamp: runs/v5_native/last.pt at update 60000, CASP13, 79 targets, 100 steps, cpu
+
+Scored on the residues left free. The 0.00 row pins nothing and is
+the benchmark's own number, so it anchors the two arms together.
+
+  pinned      arm   free right    free MAE   free n   pinned drift
+   0.00        -        77.5%       31.88    17979              -
+   0.25   native        75.7%       33.59    13530     0.00e+00
+   0.25   random        76.6%       32.44    13530            -
+   0.50   native        64.2%       46.03     9046     0.00e+00
+   0.50   random        75.8%       33.49     9046            -
+   0.75   native        54.2%       58.50     4540     0.00e+00
+   0.75   random        75.1%       34.34     4540            -
+
+--- the comparison that decides it ---
+
+  pinned     native - random    native - anchor
+   0.25              -0.9               -1.8
+   0.50             -11.5              -13.3
+   0.75             -20.9              -23.3
+
+Reading it: 'native - random' holds the fraction frozen fixed and
+varies only whether the frozen conformations are correct, so it is
+the co-solving signal with the quieter-neighbourhood effect divided
+out. Near zero at every fraction means the rule is not reading its
+neighbours' side chains and 77.3 % is a per-residue marginal.
+'native - anchor' is the raw gain, which includes both effects.
+
+The 'pinned drift' column must be ~0: it is the largest distance any
+pinned residue's chi1 moved from where it was held. Anything else
+means the pin leaked and the whole table is void.
+
+exit : 0
