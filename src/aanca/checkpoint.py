@@ -71,6 +71,7 @@ PINNED = (
     "native_probability", "noop_weight", "lr", "lr_drop", "lr_gamma",
     "damage_fractions",
     "clash_weight", "clash_tolerance",
+    "update_schedule", "coupling_radius",
     "split", "structures", "eval_structures",
 )
 

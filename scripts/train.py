@@ -279,6 +279,31 @@ def main() -> int:
         "tighten it and the term stops being a steric constraint and becomes "
         "a packing-density prior, which is a much stronger claim.",
     )
+    parser.add_argument(
+        "--update-schedule",
+        choices=("bernoulli", "independent"),
+        default="bernoulli",
+        help="which residues tick per step. 'bernoulli' is the independent "
+        "coin per residue that every run up to v6 used, and reproduces its "
+        "stream exactly. 'independent' draws a fresh random maximal "
+        "independent set of the coupling graph, so no two residues that could "
+        "touch update from the same stale neighbourhood -- chromatic Gibbs, "
+        "which is what a sequential identity decoder will need. Measured at "
+        "8-10 colours per sweep on 1UBQ and 193L, against 38-64 residues per "
+        "step under Bernoulli, so the exact schedule is about three times "
+        "slower per sweep and affordable (aanca.update_schedule).",
+    )
+    parser.add_argument(
+        "--coupling-radius",
+        type=float,
+        default=5.0,
+        help="minimum heavy-atom distance, in angstroms, within which two "
+        "residues may not tick together under --update-schedule independent. "
+        "Contact, not perception: two residues 9 A apart exchange messages but "
+        "their side chains cannot touch, so they are conditionally independent "
+        "for packing. Using the 10 A perception cutoff here instead costs a "
+        "factor of 2.5 in colours per sweep for nothing.",
+    )
     parser.add_argument("--tag", default="run")
     parser.add_argument("--split", default="validation", help="manifest split to draw from")
     parser.add_argument("--device", default="auto", help="auto | cpu | cuda")
@@ -440,6 +465,11 @@ def main() -> int:
         # numbers mean.
         shares = ", ".join(f"{f:g}" for f in args.damage_fractions)
         print(f"damage fractions: {shares} (drawn per sample)")
+    if args.update_schedule != "bernoulli":
+        print(
+            f"update schedule: {args.update_schedule}, coupling radius "
+            f"{args.coupling_radius:g} A (a fresh random set every step)"
+        )
     if args.clash_weight:
         print(
             f"steric term: weight {args.clash_weight:g}, tolerance "
@@ -452,13 +482,20 @@ def main() -> int:
         steps=args.steps, truncate=args.truncate, k=args.k, cutoff=10.0,
         device_neighbours=on_device,
         clash_weight=args.clash_weight, clash_tolerance=args.clash_tolerance,
+        update_schedule=args.update_schedule,
+        coupling_radius=args.coupling_radius,
     )
     # The held-out set is scored by the metrics in ``evaluate``, not by the
     # training objective, so the steric term is deliberately absent here: an
     # eval config carrying it would compute the pair list for nothing.
+    # The schedule *is* carried over, unlike the steric term: evaluating under
+    # a different update rule than the one trained on would measure a rule on
+    # dynamics it never saw.
     eval_config = RolloutConfig(
         steps=args.eval_steps, truncate=args.truncate, k=args.k, cutoff=10.0,
         device_neighbours=on_device,
+        update_schedule=args.update_schedule,
+        coupling_radius=args.coupling_radius,
     )
     if on_device:
         print(

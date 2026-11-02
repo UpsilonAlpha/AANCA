@@ -46,6 +46,7 @@ from torch import Tensor
 from . import residue_constants as rc
 from .losses import chi_nll, harmonic_restraint, masked_mean, noop_nll
 from .model import AANCARule
+from .update_schedule import coupling_graph, random_independent_set
 from .steric import StericTopology, clash_loss, steric_topology
 from .torch_geometry import (
     TorsionTopology,
@@ -62,6 +63,27 @@ from .torch_graph import FeatureTopology, build_graph
 class RolloutConfig:
     steps: int = 30
     update_probability: float = 0.5
+    #: ``"bernoulli"`` -- each residue ticks independently with
+    #: ``update_probability``, which is what v1 through v6 trained with and
+    #: what this still defaults to, so an existing run reproduces exactly.
+    #:
+    #: ``"independent"`` -- a fresh random maximal independent set of the
+    #: coupling graph ticks, so no two residues that could touch ever update
+    #: from the same stale neighbourhood. That is chromatic Gibbs, and it is
+    #: the schedule an identity decoder needs; see ``aanca.update_schedule``
+    #: for why
+    #: it is drawn per step rather than from a colouring fixed once.
+    #:
+    #: Measured on native 1UBQ and 193L: at ``coupling_radius`` 5 A the sets
+    #: hold 17 % of the protein and a full sweep takes 8-10 colours, against
+    #: 20-24 colours if the perception radius were used as the coupling graph.
+    #: The Bernoulli mask at 0.5 ticks about three times more residues than
+    #: independence allows, which is the quantity the oscillation worry is
+    #: about.
+    update_schedule: str = "bernoulli"
+    #: Minimum heavy-atom distance within which two residues may not tick
+    #: together. Contact, not perception -- see ``aanca.update_schedule``.
+    coupling_radius: float = 5.0
     truncate: int = 12
     k: int = 64
     cutoff: float = 10.0
@@ -243,9 +265,27 @@ def rollout(
     chi_mask = topo.torsion.chi_mask
 
     for step in range(config.steps):
-        mask = update_mask(
-            topo.n_residues, config.update_probability, state.coords.device, generator
-        )
+        if config.update_schedule == "independent":
+            # Recomputed each step on purpose: the coupling graph is a function
+            # of the coordinates, so a set drawn once stops being independent
+            # as the side chains move. Drawing it fresh also means there is no
+            # fixed partition for a cell to learn as a phase.
+            mask = random_independent_set(
+                coupling_graph(state.coords, topo, config.coupling_radius),
+                generator,
+            )
+        elif config.update_schedule == "bernoulli":
+            mask = update_mask(
+                topo.n_residues,
+                config.update_probability,
+                state.coords.device,
+                generator,
+            )
+        else:
+            raise ValueError(
+                f"unknown update_schedule {config.update_schedule!r}; "
+                "expected 'bernoulli' or 'independent'"
+            )
         seen = state.coords
         state, mu, log_kappa = step_once(rule, state, topo, config, mask, frozen)
 
