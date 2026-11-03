@@ -3742,3 +3742,39 @@ wait and a dead chain.
 The lesson is narrower than "test on the target hardware" and more useful: **a convention that is
 deliberately device-independent needs one place where that independence is implemented**, or every
 call site re-decides it and the ones that are never exercised decide wrong.
+
+### The clash term costs five points of accuracy — the matched comparison — 2026-11-03
+
+The previous section left this open and said not to compare v7b with v5. The comparison that *is*
+valid is v7b against **v6_mixed (31355895)**, which shares the split, the pool and the held-out set by
+construction — `split`, `structures` and `eval_structures` are all in `WARM_START_MUST_MATCH`, and
+v7b was warm-started from v6's own checkpoint.
+
+| | kappa 0 chi1 | kappa 0 acc | pooled chi1 | pooled acc | pooled RMSD | clash |
+|---|---|---|---|---|---|---|
+| **v6_mixed**, 7,000 updates | 32.42° | **39.1 %** | 14.95° | 74.2 % | 0.496 Å | not measured |
+| **v7b_clash**, 20,000 updates, weight 50 | 36.65° | **33.8 %** | 16.36° | 72.4 % | 0.532 Å | **0.0004 Å** |
+
+**The steric term at weight 50 costs 5.3 points of kappa-0 accuracy** — the headline number, from a
+fully randomised start — along with 4.2° of chi1 MAE and 0.036 Å of RMSD. What it buys is 0.0004 Å of
+mean overlap per supervised atom against a crystal structure's 0.000, so the packing it produces is
+physically valid where v6's was not measured to be.
+
+**The direction of the comparison makes it stronger, not weaker.** v7b ran 13,000 updates *more* than
+v6 and is worse on every accuracy column. And v6's own best checkpoint was at update 2,500, earlier
+than the 7,000-update eval quoted here, so v6 at its best is better still than the row above. There is
+no reading of this where the clash term is free.
+
+**The missing data point is the weight.** v7 ran at `--clash-weight 3.0` and was never evaluated: job
+31481510 exited 1 and 31482842 exited 0 without reaching an eval, so the weight-3 arm produced no
+numbers at all. Weight 50 was chosen because the term was "nearly inactive" at 3 — but nearly
+inactive is not the same as useless, and 0.0004 Å of residual overlap suggests the term is being
+pushed far past the point where it has done its job. **The experiment is a weight sweep at 3, 10 and
+50 from the same v6 checkpoint**, scoring kappa-0 accuracy against mean overlap, to find the knee. One
+of those three points already exists.
+
+Worth saying plainly what this does to the headline claim: a packing model that is 5 points less
+accurate but produces no steric clashes may well be the better model, since a clashing side chain is
+wrong in a way an accuracy metric does not charge for. But that is an argument for reporting both
+numbers together and for finding the cheapest weight that clears the clash, not for taking 50 and the
+accuracy loss as settled.
