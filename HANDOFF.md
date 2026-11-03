@@ -3385,18 +3385,49 @@ to:
   because the seed's position sets the order rather than the N terminus; and both arms advance at
   once, so half the steps of a unidirectional sweep. Already supported and measured at 0 junctions.
   Still O(N) steps.
-* **Nucleation from a spatial neighbour** — the fix for the de novo gauge freedom and the most
-  autonomous addition. Let a dormant slot be woken by any alive residue that is *spatially* near
-  rather than only covalently adjacent, and place it from that residue's frame. Then every segment's
-  pose is connected to the original seed through a chain of placements, segments are commensurable
-  from birth, and the gauge freedom disappears. Local, parallel, chosen by the rule, and not
-  synthesis order.
+* **Nucleation by an existing residue** — the fix for the de novo gauge freedom and the most
+  autonomous addition. An earlier version of this paragraph called it "nucleation from a spatial
+  neighbour", **which is incoherent and worth leaving corrected rather than deleted**: a dormant slot
+  has no coordinates, so it has no spatial neighbours, and "spatially near a dormant slot" is
+  undefined. That is the same chicken-and-egg that forced the alive-set-is-sequence-segments design
+  in the first place — a residue cannot be placed by the graph it is about to join.
 
-  It also fixes the concrete autonomy deficit that exists right now: `frontier` only extends existing
-  segments, so the rule **cannot choose** how many segments there are. Seeds are a hyperparameter.
-  The trade between completion speed, which wants many seeds, and closure difficulty, which wants
-  few, is therefore set by hand where it should be learned — and the reach restraint already supplies
-  exactly the pressure that would teach it, if the rule had the means to act on it.
+  The coherent version: the relation does not exist before the birth, the birth *creates* it. An
+  alive residue places a newborn at a slot it chooses **by index**, at a free spatial offset from its
+  own frame. Four differences from the mechanism as built, where `frontier` is
+  `alive[:-1] & links & ~alive[1:]` and so licenses a birth on **covalent** adjacency alone:
+
+  1. the choice of *which* slot — currently one or two options, `i ± 1`; then a range;
+  2. the offset is not a peptide bond — CA–CA is currently pinned to 3.804 Å by construction, while
+     a nucleation offset would be free within a cap;
+  3. the newborn starts a segment rather than extending one;
+  4. and the point: the new segment's pose is fixed relative to its placer, so segments are
+     commensurable from birth and the gauge freedom disappears.
+
+  **The trade, which the first version did not price.** This swaps a six-degree-of-freedom geometric
+  indeterminacy for a *discrete* choice of index, and a wrong index is a topological error that
+  relaxation cannot fix — unlike a wrong offset, which it can. The reach restraint does give gradient
+  on whether the resulting closures are feasible, so it is not unsupervised, but it is a harder kind
+  of error to be wrong about.
+
+  It would also fix the concrete autonomy deficit that exists right now: `frontier` only extends
+  existing segments, so the rule **cannot choose** how many segments there are. Seeds are a
+  hyperparameter — `seed_alive` draws random slots and `park_coords` leaves them at their *native*
+  coordinates, so even their relative poses come from the crystal rather than from any decision. The
+  trade between completion speed, which wants many seeds, and closure difficulty, which wants few, is
+  therefore set by hand where it should be learned, and the reach restraint already supplies exactly
+  the pressure that would teach it, if the rule had the means to act on it.
+
+**The step count decides whether any of this is needed, and it is arithmetic worth doing before
+building.** One seed growing both ways has no gauge freedom at all and nothing to choose, so it is
+the cheapest coherent de novo option — its only cost is step count. Births arrive at roughly
+`2 × p_tick × p_wake ≈ 1` per step for one segment, so a 384-residue crop needs ~770 steps against
+~50 at eight seeds (`N / (2k × 0.49)`). At ~13 ms a step with device neighbour selection that is
+~10 s per rollout against ~0.7 s, and 60,000 updates turn 12 hours into 170. Early steps are cheaper
+because few residues are alive — which is the O(surface) saving finally showing up as wall-clock — so
+call it half. **Multi-seed growth is therefore not a nicety but the difference between a feasible run
+and an infeasible one at realistic sizes**, which means de novo growth has to either nucleate or
+accept the gauge freedom. Measure the real per-step cost on a growth rollout before choosing.
 
 **One correction.** An analytical loop closure step was called "a step outside the NCA" earlier.
 That is wrong on the locality axis: closing a three-residue bridge is a local solve over a seven-atom
