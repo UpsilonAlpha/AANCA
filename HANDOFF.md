@@ -3906,3 +3906,91 @@ concurrently by construction.
 Worth generalising: any test that writes to a fixed path outside `tmp_path` is a test that cannot be
 run twice at once, and the failure it produces will look like a bug in the thing under test rather
 than in the harness.
+
+### The hole head reaches 0.95 Å, and the circle is why that number means something
+
+`hole_v2` finished: 12,000 updates, 84.5 min on a CPU, no rollout.
+
+```
+  mask          fused   centroid    gain  per-witness  witnesses   top-1
+  hole         1.96 A     3.00 A   +1.04       6.54 A       16.2  44.0%
+  frontier     1.17 A     4.54 A   +3.37       5.25 A        8.9  38.0%
+```
+
+**Two predictions of mine were wrong, both in the useful direction.**
+
+First, the frontier case is *not* harder — it is **better**, 1.17 Å against the surrounded case's
+1.96 Å, consistently over the last three evals. I had expected it to be the real difficulty twice
+over, on the grounds that a hole on the boundary of a partial structure has half the witnesses (8.9
+against 16.2) and they are all on one side. The witness count is not what limits the answer.
+Sequence-local context is: a frontier hole's witnesses are mostly its own chain neighbours, which
+carry the 3.8 Å spacing and the Ramachandran constraint, while a surrounded hole's include many
+spatially near but sequence-distant residues that say little about exactly where it goes. **That is
+good news for growth specifically, because growth is always at a frontier and always extends from
+sequence-local context.**
+
+Second, I predicted the error would split sharply by secondary structure. It does not.
+
+### The circle, which is the right denominator
+
+A hole whose two covalent neighbours exist is not free in three dimensions. Its CA must sit 3.804 Å
+from each, so it lies on a **circle** of radius `sqrt(3.804² − (d/2)²)` where `d` is the
+CA(i−1)–CA(i+1) distance. Measured over 68,277 residues in 143 structures: **2.26 Å mean, 2.47 Å
+median**. So reaching 0.6 Å is not about shrinking a spherical error — it is about knowing *where on
+the circle*, which is what phi and psi determine.
+
+`scripts/hole_by_structure.py`, binning by `d` (which separates the regular conformations without
+needing DSSP — helix near 5.4, extended near 6.7):
+
+| conformation | d range | fused error | circle r | ratio | n |
+|---|---|---|---|---|---|
+| alpha helix | 5.2–5.9 | **0.88 Å** | 2.61 Å | **2.98** | 172 |
+| irregular | 5.9–6.4 | 0.93 Å | 2.19 Å | 2.36 | 39 |
+| extended | 6.4–7.1 | 1.13 Å | 1.76 Å | 1.57 | 84 |
+| near collinear | 7.1–7.6 | 0.99 Å | 1.21 Å | 1.23 | 14 |
+| **all bonded** | | **0.95 Å** | | | 313 |
+| *excluded: chain ends and breaks* | | *4.42 Å* | *none* | *—* | *35* |
+
+**0.95 Å on any properly bonded position**, and the error is strikingly *uniform* across real
+conformations — 0.88 to 1.13 Å. The prediction that structured regions would be far better than loops
+is simply not borne out. What the error splits by is not conformation but **whether the hole has a
+chain to be constrained by at all**: the 35 excluded holes average 4.42 Å, and at a tenth of the
+sample they were dragging the aggregate from 0.95 to 1.30 Å.
+
+So against the peptide bond's ~0.6 Å tolerance
+(`scripts/peptide_shell_probe.py`), the head is short by a factor of about **1.6**, not the 2.8 the
+unfiltered aggregate implied. Density-driven growth is closer to viable than the first numbers said.
+
+### The remaining question, sharpened
+
+The helix ratio of 2.98 is the informative one: on the conformation where phi and psi are most tightly
+pinned, the head is three times tighter than chain geometry alone. On extended backbone it is 1.57 —
+but the circle there is already small (1.76 Å), so there is less to win and the absolute error is
+similar. The head is therefore not failing in any particular conformation; it is uniformly about a
+factor of 1.6 from where it needs to be.
+
+That makes `--hops` the right next experiment rather than a better loss or more data: the
+architecture's claim is "one hop per step, depth comes from time", so on a task with no time, hops
+*are* depth. **Run `--hops 3` at the same budget.** If it closes the 1.6× then a growth rollout needs
+a few relaxation steps per birth, which is unsurprising and fine. If it does not, one hop's
+neighbourhood genuinely does not determine a residue's position to peptide-bond precision, and growth
+would need the geometry to settle over several steps before a newborn's bond could be trusted.
+
+### A pattern worth naming
+
+Four measurements today were wrong in a way that looked like a result, and all four were caught the
+same way — by interrogating a number that did not make sense rather than by a test:
+
+* the hole metric, where **every closed-form baseline beat the trained head**, because the unweighted
+  per-witness error mostly measured how far the witnesses were;
+* the growth balance probe, which reported **completion's gradient as identical to FAPE's**, because
+  FAPE was the one unweighted term and so could not be switched off;
+* the park-distance hypothesis, which was mine and which the measurement **disproved** — FAPE's clamp
+  has zero gradient beyond 10 Å, so a residue parked 500 Å away contributes nothing;
+* and this table's "very extended" bin, which read **3.70 Å and a ratio of 0.33** — apparently three
+  times worse than chain geometry — because it was collecting chain breaks, where there is no circle
+  and nothing to be measured against.
+
+The common shape: a quantity whose name implies it isolates something, which does not. None of the
+809 tests could have caught any of them, because each one computes exactly what it was written to
+compute.
