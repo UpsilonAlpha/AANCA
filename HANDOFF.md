@@ -4109,15 +4109,32 @@ The 00:17 checkup's first probe reported the GPU check as `still queued` and `v8
 results treated an HTTP 404 and a `TypeError: Failed to fetch` the same way — so "the job log does not
 exist yet" and "I cannot see anything at all" produced the same string.
 
-**The fix is a control request for a file known to be absent.** A working route answers 404 for a
-missing file; a dead route raises a network error for *everything*. Measured: the real file, a second
-attempt at it, and a deliberately nonexistent path all raised `Failed to fetch`, which is what
-established the route rather than the files was gone. `BUNYA_BROWSER_SHELL.md` already says a 404 with
-body "Not found" means the route worked and the file is missing — this is that rule turned into a
-probe instead of a thing to remember.
+**A control request for a file known to be absent is part of the fix, and on its own it is not
+enough.** A working route answers 404 for a missing file; a dead route raises a network error for
+*everything*. Measured: the real file, a second attempt at it, and a deliberately nonexistent path all
+raised `Failed to fetch`, which is what established that the route rather than the files was gone.
 
-Then the supplied refresh link redirected to `iam.rcc.uq.edu.au`, which is the unambiguous expiry
-signal, as against the dead-read-path case the same document warns reads identically.
+**But the 01:17 round found the case that control misses, and it is the one this document already
+warns about.** After the previous round navigated the read tab to the refresh link and it redirected
+to sign-in, the tab sat on `iam.rcc.uq.edu.au`. The read idiom is relative to `location.pathname`, so
+every fetch then resolved against the **IAM origin** — and both the real file and the control came
+back a clean **HTTP 404**. No network error at all. Read only the real file's 404 and the conclusion
+is "route fine, file missing"; read the control too and the conclusion is "route fine, both files
+missing", which is just as wrong.
+
+So the probe needs a third element, and it is the cheapest of the three: **check
+`location.origin` against the one you expect.** The full test is
+
+* `location.origin` is `https://onbunya.rcc.uq.edu.au` — otherwise you are reading the wrong site and
+  nothing else in the probe means anything;
+* a known file returns 200 with plausible content;
+* a known-absent file returns 404 rather than a network error.
+
+**And expiry is confirmed by navigation, not by a read.** The authoritative test is to point a tab at
+the code-server URL and see where it lands: `iam.rcc.uq.edu.au` is expiry, code-server is a live
+session whose read path you have broken yourself. Prefer a spare tab for that, per the "never navigate
+the tab you read through" rule — though when the read tab is already stranded on the sign-in page it
+is useless as a read path and navigating it costs nothing.
 
 **What expiry does and does not stop.** Submitted SLURM jobs are separate jobs and are unaffected;
 anything under `/scratch` survives. So 31739839 and 31739848 run or have run regardless, and the chain
