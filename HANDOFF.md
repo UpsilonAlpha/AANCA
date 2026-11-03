@@ -2894,3 +2894,76 @@ explicit in a rotation, which is strictly more general and strictly harder to re
 field's own direction is towards joint sequence-structure generation with identity resolved
 *during* the trajectory, which is an independent argument for joining the identity head to growth
 next.
+
+### Identity joined to growth — the sequence is grown too — 2026-11-03
+
+`growth_objective(identity_weight=...)` with a rule built `AANCARule(growth=True, identity=True)`
+and a `RolloutConfig(blind=True, growth=...)`. This is the step that makes growth de novo rather
+than regrowth of a known chain, and most of it was already built — `blind.py` collapses side chains
+onto CB, `identity.type_loss` marginalises the library over chi1 wells, `step_once` gates geometry
+and labels through the same masks. What had to be added was three things, and each of them closes a
+leak rather than adding a mechanism.
+
+**A newborn arrives unlabelled.** `initial_identity` gained an `alive` argument that forces every
+dormant slot to the all-zero unknown token *whatever* `identity_start` says — including `"native"`,
+which is the one that would hand over the answer, and `"random"`, which is subtler: a random label
+is still a commitment the rule never made. A newborn inherits its slot's row, so the first thing it
+does once it can perceive anything is draw a label from its neighbourhood. That is the ripple.
+
+**A blind growth rollout holds no side chains at all**, not merely none it can see. This was the
+real leak and it is worth being explicit about why masking perception was not enough: a newborn's
+non-backbone atoms arrive by rigid transform from its parked pose, so they are its *native* amino
+acid's atoms sitting in the state — invisible to the graph under `blind`, and still read by the
+clash term, by FAPE if it ever scored them, and by any later reader who forgets. A blind growth step
+now collapses them onto CB in the **state**. Gated on growth and not on `blind` alone, because a
+blind *packing* rollout is placing side chains and must keep them. Asserted two ways: collapsing the
+grown structure again changes nothing, and — the headline — **randomising every native chi before
+growth leaves the grown backbone bit-identical**, which is the growth analogue of
+`tests/test_blind.py`.
+
+**The loss is on the type marginal, not the joint label.** Growth runs at backbone-and-CB
+resolution, so there is no side chain to carry a chi1, and supervising the joint (type, chi1 well)
+entry would ask the rule to commit to a conformation the structure cannot express. `type_loss` was
+already there for exactly this. The joint head is unchanged and its well half is simply unsupervised
+during growth, which is the right division: packing supervises it already. The floor is **ln 20 =
+3.00** rather than ln 54 = 3.99, and an untrained head measures 3.13.
+
+**A structural consequence, found by asserting and worth knowing.** Under blind growth the **chi
+head receives exactly zero gradient**, and that is correct rather than broken: with every
+side-chain atom collapsed onto CB, the chi1 axis CA-CB passes through all of them, so a chi rotation
+is the identity map. It confirms the representation really is backbone-and-CB. It also means
+**growth and packing cannot share one rollout** — in the representation growth needs there is
+nothing for the packing head to move — so composing them is a two-stage pipeline, not a joint
+objective. That answers a question the previous section left open by putting it off.
+
+**Untrained baseline, 60 steps on 1UBQ, Cartesian birth, mean of 3 seeds:**
+
+```
+background composition: 11.8% (LEU, the most frequent type)
+
+  birth       seeds   mode         alive      bond      fape   CA rmsd  recovery
+  cartesian     1   C-ward only    6.6%    0.0055    0.3263      1.79     16.7%
+  cartesian     1   both ways     11.0%    0.0085    0.5037      3.97      9.4%
+  cartesian     2   both ways     21.5%    0.0067    0.7168      6.26     13.5%
+  cartesian     4   both ways     38.6%    0.0539    0.7468      6.10     10.2%
+  cartesian     8   both ways     56.6%    3.8697    0.7206      5.22      7.0%
+```
+
+**Read the recovery column against the background, not against zero.** 1UBQ is 11.8 % leucine, so
+"guess LEU everywhere" scores 11.8 %, and the untrained rule's 7–17 % is **at or below chance** —
+which is what a zeroed identity head must give. The spread is small-sample noise: at 6.6 % alive
+there are five residues, so one correct is 20 %. The probe prints the background for this reason;
+without it the column reads as though an untrained rule were already doing something.
+
+The number to beat, from the comparison plan recorded earlier: ProteinMPNN ~58 %, PottsMPNN ~44 %,
+and whatever RFD4-Proteina reports. Those are on large held-out sets with a given backbone, so a
+single-protein de novo number is not comparable to them yet — it is a plumbing baseline, and the
+comparable run needs the held-out split.
+
+**Still unbuilt, deliberately.** Nothing materialises a side chain from a committed label; that
+needs either ideal coordinates per residue type, which this project does not have, or a second
+packing pass over the grown backbone, which it does. The output of growth-with-identity is a
+**backbone and a sequence** — which is exactly what RFdiffusion plus ProteinMPNN produce between
+them, and what RFD4-Proteina produces directly — and placing the side chains afterwards is the
+existing rule's job. The composition is the next measurement, and the finding above says it has to
+be a pipeline.

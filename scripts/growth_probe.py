@@ -49,8 +49,10 @@ from aanca.growth import (
     peptide_bond_restraint,
     seed_alive,
 )
+from aanca.identity import library_index, type_index, type_marginal
 from aanca.model import AANCARule
-from aanca.rollout import RolloutConfig, initial_state, rollout
+from aanca.rollout import RolloutConfig, initial_identity, initial_state, rollout
+from aanca.torch_geometry import measure_chis
 from aanca.structure import load_protein
 from aanca.torch_graph import feature_topology
 
@@ -94,15 +96,18 @@ def lever_arm(topo, coords, links) -> dict[str, list[float]]:
     return out
 
 
-def grow(rule, topo, native, links, config, seed) -> dict[str, float]:
+def grow(rule, topo, native, links, config, seed, identity=False) -> dict[str, float]:
     generator = torch.Generator().manual_seed(seed)
     alive = seed_alive(
         topo.n_residues, config.growth.seeds, generator, native.device
     )
+    start = None
+    if identity:
+        start = initial_identity(topo, native, "masked", generator, alive=alive)
     with torch.no_grad():
         result = rollout(
             rule,
-            initial_state(native, rule, alive=alive),
+            initial_state(native, rule, identity=start, alive=alive),
             topo,
             config,
             generator=generator,
@@ -110,12 +115,21 @@ def grow(rule, topo, native, links, config, seed) -> dict[str, float]:
         )
         final = result.state
         scored = final.alive & topo.supervised_mask
-        return {
+        out = {
             "alive": completion(final.alive),
             "bond": float(peptide_bond_restraint(final.coords, topo, final.alive, links)),
             "fape": float(fape(final.coords, native, topo, scored)),
             "rmsd": float(backbone_rmsd(final.coords, native, topo, scored)),
         }
+        if identity:
+            chi1 = torch.rad2deg(measure_chis(native, topo.torsion)[:, 0])
+            target = library_index(topo.torsion.resnames, chi1)
+            predicted = type_marginal(
+                torch.softmax(final.identity_logits, dim=-1)
+            ).argmax(-1)
+            right = (predicted == type_index(target)) & scored
+            out["recovery"] = float(right.sum() / scored.sum().clamp_min(1))
+        return out
 
 
 def main() -> int:
@@ -132,6 +146,14 @@ def main() -> int:
         help="how a newborn is placed. The two are initialised to the same "
         "helical reference birth, so running both is a comparison of what is "
         "learnable rather than of where they start.",
+    )
+    parser.add_argument(
+        "--identity",
+        action="store_true",
+        help="grow the sequence too: the rule is blind beyond CB, the state "
+        "holds no side chains at all, and a newborn arrives unlabelled. Adds "
+        "a sequence-recovery column, which is the number ProteinMPNN (~58 %), "
+        "PottsMPNN (~44 %) and RFD4-Proteina report.",
     )
     parser.add_argument(
         "--checkpoint",
@@ -170,13 +192,31 @@ def main() -> int:
     else:
         print("untrained rule (the baseline)\n")
 
+    if args.identity:
+        # Without this the recovery column is unreadable. "Guess the most
+        # frequent type everywhere" is the only baseline a sequence model has
+        # to beat before its number means anything, and on a single small
+        # protein it is high: 1UBQ is 11.8 % leucine.
+        from collections import Counter
+
+        counts = Counter(topo.torsion.resnames)
+        common, hits = counts.most_common(1)[0]
+        print(
+            f"background composition: {hits / topo.n_residues:.1%} "
+            f"({common}, the most frequent type) -- recovery below this is "
+            "worse than guessing\n"
+        )
+
     print(f"Growth over {args.steps} steps, mean of {args.repeats} seeds")
     print(
         "  birth       seeds   mode         alive      bond      fape   CA rmsd"
+        + ("  recovery" if args.identity else "")
     )
     modes = ("torsion", "cartesian") if args.birth == "both" else (args.birth,)
     for mode in modes:
-        rule = AANCARule(growth=True, birth=mode)
+        rule = AANCARule(
+            growth=True, birth=mode, identity=args.identity, identity_keep=2.0
+        )
         if args.checkpoint:
             rule.load_state_dict(ckpt.rule_weights(loaded), strict=False)
         rule.eval()
@@ -190,12 +230,13 @@ def main() -> int:
                 steps=args.steps,
                 truncate=args.steps,
                 k=args.k,
+                blind=args.identity,
                 growth=GrowthConfig(
                     seeds=n_seeds, cward_only=cward_only, birth=mode
                 ),
             )
             runs = [
-                grow(rule, topo, native, links, config, seed)
+                grow(rule, topo, native, links, config, seed, args.identity)
                 for seed in range(args.repeats)
             ]
             mean = {k: sum(r[k] for r in runs) / len(runs) for k in runs[0]}
@@ -204,6 +245,7 @@ def main() -> int:
                 f"  {mode:<12s}{n_seeds:>3d}   {label:<12s}"
                 f"{mean['alive']:>7.1%}{mean['bond']:>10.4f}"
                 f"{mean['fape']:>10.4f}{mean['rmsd']:>10.2f}"
+                + (f"{mean['recovery']:>10.1%}" if args.identity else "")
             )
 
     print(

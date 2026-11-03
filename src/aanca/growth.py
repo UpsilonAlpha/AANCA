@@ -487,6 +487,20 @@ class GrowthTerms:
     alive_fraction: float
     #: CA RMSD after superposition, Angstrom. Reporting only.
     rmsd: float
+    #: Mean cross-entropy of the *type marginal* at the final state, before
+    #: ``identity_weight``. The type and not the joint (type, chi1 well):
+    #: growth runs at backbone-and-CB resolution, so there is no side chain to
+    #: carry a chi1 and supervising one would ask the rule to commit to a
+    #: conformation the structure cannot express. The joint head is unchanged
+    #: and its well half is simply unsupervised here, which is the right
+    #: division of labour -- packing supervises it already. ln 20 = 3.00 is the
+    #: uninformative floor.
+    identity: Tensor
+    #: Fraction of alive residues whose most likely type is the native one.
+    #: This is sequence recovery, and it is the number ProteinMPNN (~58 %),
+    #: PottsMPNN (~44 %) and RFD4-Proteina report -- so it is the one to quote,
+    #: alongside the chi accuracy nobody else has.
+    recovery: float
 
 
 def growth_objective(
@@ -497,6 +511,8 @@ def growth_objective(
     generator: torch.Generator | None = None,
     bond_weight: float = 1.0,
     completion_weight: float = 1.0,
+    identity_weight: float = 0.0,
+    identity_start: str = "masked",
 ) -> tuple[GrowthTerms, object]:
     """Supervised regrowth: from a seed, rebuild the native backbone.
 
@@ -523,9 +539,28 @@ def growth_objective(
     Side chains are out of scope here on purpose: ``rollout.training_objective``
     already supervises chis, and joining the two objectives is a decision to
     take with a measurement rather than by putting them in the same function.
+
+    **With ``identity_weight`` the sequence is grown too**, which is what makes
+    this de novo rather than regrowth of a known chain. It turns on
+    ``config.blind`` implicitly through the caller and three things follow.
+    The newborn arrives *unlabelled*, because
+    :func:`rollout.initial_identity` forces every dormant slot to the unknown
+    token. The state holds no side chains at all, because a blind growth step
+    collapses them onto CB -- so a newborn is no longer secretly its native
+    amino acid, which was the leak this closes. And the loss is on the **type
+    marginal**, not the joint label, for the reason given at
+    :attr:`GrowthTerms.identity`.
+
+    What remains unbuilt, and deliberately: nothing materialises a side chain
+    from a committed label. The output is a backbone and a sequence, which is
+    what RFdiffusion plus ProteinMPNN produce between them and what
+    RFD4-Proteina produces directly; placing the side chains afterwards is the
+    existing packing rule's job, and composing the two is its own measurement.
     """
     from .fape import backbone_rmsd, fape as fape_loss
-    from .rollout import initial_state, rollout
+    from .identity import library_index, type_index, type_loss, type_marginal
+    from .rollout import initial_identity, initial_state, rollout
+    from .torch_geometry import measure_chis
 
     growth = config.growth
     if growth is None:
@@ -535,9 +570,16 @@ def growth_objective(
         topo.n_residues, growth.seeds, generator, native_coords.device
     )
     links = growth_links(topo)
+    identity_start_state = None
+    if identity_weight:
+        identity_start_state = initial_identity(
+            topo, native_coords, identity_start, generator, alive=alive
+        )
     result = rollout(
         rule,
-        initial_state(native_coords, rule, alive=alive),
+        initial_state(
+            native_coords, rule, identity=identity_start_state, alive=alive
+        ),
         topo,
         config,
         generator=generator,
@@ -565,10 +607,31 @@ def growth_objective(
     else:
         completion_term = torch.zeros((), device=logits.device, dtype=logits.dtype)
 
+    identity_term = torch.zeros((), device=fape.device, dtype=fape.dtype)
+    recovery = float("nan")
+    if identity_weight:
+        logits = final.identity_logits
+        if logits is None:
+            raise ValueError(
+                "identity_weight is set but the rollout produced no identity "
+                "logits -- build the rule with AANCARule(identity=True) and "
+                "pass a RolloutConfig with blind=True"
+            )
+        native_chi1 = torch.rad2deg(measure_chis(native_coords, topo.torsion)[:, 0])
+        target = library_index(topo.torsion.resnames, native_chi1)
+        identity_term = type_loss(logits, target, scored)
+        with torch.no_grad():
+            predicted = type_marginal(torch.softmax(logits, dim=-1)).argmax(-1)
+            right = predicted == type_index(target)
+            recovery = float(
+                (right & scored).sum() / scored.sum().clamp_min(1)
+            )
+
     total = (
         fape
         + bond_weight * bond.to(fape.dtype)
         + completion_weight * completion_term.to(fape.dtype)
+        + identity_weight * identity_term.to(fape.dtype)
     )
     return (
         GrowthTerms(
@@ -578,6 +641,8 @@ def growth_objective(
             completion=completion_term.detach(),
             alive_fraction=completion(final.alive),
             rmsd=float(backbone_rmsd(final.coords, native_coords, topo, scored).detach()),
+            identity=identity_term.detach(),
+            recovery=recovery,
         ),
         result,
     )

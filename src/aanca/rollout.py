@@ -271,6 +271,7 @@ def initial_identity(
     start: str = "masked",
     generator: torch.Generator | None = None,
     dtype: torch.dtype = torch.float32,
+    alive: Tensor | None = None,
 ) -> Tensor:
     """``(R, 54)`` one-hot over the library to begin a rollout from.
 
@@ -283,6 +284,9 @@ def initial_identity(
       trivially.
     - ``"random"`` -- a uniform draw over all 54 entries. The analogue of the
       randomised chi start, and the hardest of the three.
+
+    ``alive`` forces every dormant slot to the unknown token regardless, which
+    is what a growth rollout needs; see the comment at the return.
     """
     n = topo.n_residues
     device = topo.atom_mask.device
@@ -304,7 +308,17 @@ def initial_identity(
             "or 'random'"
         )
     one_hot = torch.zeros(n, LIBRARY_SIZE, device=device, dtype=dtype)
-    return one_hot.scatter_(-1, index.unsqueeze(-1), 1.0)
+    one_hot.scatter_(-1, index.unsqueeze(-1), 1.0)
+    if alive is not None:
+        # A dormant slot has no identity, whatever ``start`` says. This is what
+        # makes a newborn arrive *unlabelled*: it inherits its slot's row, and
+        # a row of zeros is the unknown token, so the first thing it does once
+        # it can perceive anything is draw a label from its neighbourhood. Any
+        # other choice would hand it the answer -- "native" most obviously,
+        # but "random" too, since a random label is still a commitment the
+        # rule never made.
+        one_hot = torch.where(alive.unsqueeze(-1), one_hot, torch.zeros_like(one_hot))
+    return one_hot
 
 
 def update_mask(
@@ -448,6 +462,20 @@ def step_once(
             birth_mode=growth.birth,
         )
         coords = correct_oxygens(coords, topo, alive, links)
+        if config.blind:
+            # **A blind growth rollout holds no side chains at all**, not even
+            # ones it cannot see. A newborn's non-backbone atoms arrive by
+            # rigid transform from its parked pose, so without this they are
+            # its *native* amino acid's atoms sitting in the state -- invisible
+            # to perception under ``blind``, and still read by the clash term,
+            # by anything downstream, and by any later reader who forgets.
+            # Collapsing them onto CB in the state makes the representation
+            # honestly backbone-and-CB, which is what lets the identity head
+            # choose the type rather than confirm it.
+            #
+            # Gated on growth, not on ``blind`` alone: a blind *packing*
+            # rollout is placing side chains and must keep them.
+            coords = blind_coords(coords, topo)
 
     identity, logits = state.identity, None
     if state.identity is not None:
