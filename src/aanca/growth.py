@@ -114,6 +114,60 @@ class GrowthConfig:
     max_translation: float = 0.3
 
 
+# -- term weights, measured rather than chosen ----------------------------
+#
+# ``scripts/growth_balance_probe.py``, 1UBQ at 6 seeds over 30 steps, each term
+# alone with every other weight zeroed. The gradient norm each induces on the
+# activation head, against FAPE's 1.83e1:
+#
+#     term          value   activation      birth      frame   identity
+#     fape         0.6558     1.83e+01   1.37e-01   1.07e+00   0.00e+00
+#     bond         0.7719     8.69e+02   1.97e+00   1.10e+01   0.00e+00
+#     reach        0.1676     2.26e+02   7.24e-01   1.88e+00   0.00e+00
+#     completion   2.1269     7.17e-01   0.00e+00   0.00e+00   0.00e+00
+#     identity     3.1214     0.00e+00   0.00e+00   0.00e+00   2.08e-01
+#
+# So the weights below are what equalises each term's gradient against FAPE's.
+# All four defaults were 1.0 and were wrong by one to two orders of magnitude,
+# **in both directions**: the peptide restraint was 47 times too strong and
+# completion 27 times too weak.
+#
+# **This corrects a claim recorded earlier in HANDOFF.md.** That said completion
+# dominated early training and would need lowering, on the grounds that its
+# *value* was 2.13 against FAPE's 0.56. A term's value is not its influence: in
+# gradient, completion is 0.72 against FAPE's 18.3. The 4.8e2 activation
+# gradient quoted there belonged to the reach term, which was on by default.
+#
+# Two things the table shows that are not about weights. Completion gives
+# gradient to the activation head and *exactly zero* to the others, and identity
+# only to the identity head -- clean confirmation that each term is wired to the
+# head it is about. And the activation head receives two orders of magnitude
+# more gradient than the birth head from every term, which is structural rather
+# than a fault: a frontier residue decides whether to wake on every step, while
+# the birth head only matters on the steps where a birth happens.
+#
+# A hypothesis tested and disproved, recorded so it is not re-tried: the
+# activation head's gradient is **not** inflated by ``PARK_SPACING``. The
+# straight-through gate's derivative is ``placed - parked``, which is ~500 A, so
+# it looked like an artefact of an arbitrary constant -- but FAPE clamps at 10 A
+# and a clamp has zero gradient beyond it, so a residue parked 500 A away
+# contributes nothing. Measured flat at 1.8e1 for spacings of 500, 100 and 20 A.
+#
+# **These balance the terms at initialisation and nowhere else**, which is the
+# limit worth stating: three of the four heads are zeroed and the structure is
+# barely grown. The reach term reads 0.168 here and only bites once a closure is
+# foreclosed, so it is the one most likely underweighted; the bond term reads
+# 0.772 and should shrink as the chain improves. Re-measure a few thousand
+# updates in, and watch the alive fraction on the first run -- completion at 27
+# is a large change in the direction of growing faster.
+BOND_WEIGHT = 0.022
+REACH_WEIGHT = 0.086
+COMPLETION_WEIGHT = 27.2
+#: Measured at 93.7. Left for the caller because ``identity_weight`` defaults
+#: to 0 -- the identity track is opt-in, not a weight to tune by default.
+IDENTITY_WEIGHT = 93.7
+
+
 def seed_alive(
     n_residues: int,
     seeds: int = 1,
@@ -699,11 +753,12 @@ def growth_objective(
     topo: FeatureTopology,
     config,
     generator: torch.Generator | None = None,
-    bond_weight: float = 1.0,
-    completion_weight: float = 1.0,
+    bond_weight: float = BOND_WEIGHT,
+    completion_weight: float = COMPLETION_WEIGHT,
     identity_weight: float = 0.0,
     identity_start: str = "masked",
-    reach_weight: float = 1.0,
+    reach_weight: float = REACH_WEIGHT,
+    fape_weight: float = 1.0,
 ) -> tuple[GrowthTerms, object]:
     """Supervised regrowth: from a seed, rebuild the native backbone.
 
@@ -829,8 +884,14 @@ def growth_objective(
                 (right & scored).sum() / scored.sum().clamp_min(1)
             )
 
+    # ``fape_weight`` exists so FAPE can be switched *off*, which it could not
+    # be while it was the one unweighted term. That made
+    # ``scripts/growth_balance_probe.py`` unable to isolate any other term --
+    # every row measured "FAPE plus that term" and reported it as the term --
+    # and gradient norms do not decompose linearly, so the difference could not
+    # be taken afterwards either. Nothing should ever set it to 0 in training.
     total = (
-        fape
+        fape_weight * fape
         + bond_weight * bond.to(fape.dtype)
         + completion_weight * completion_term.to(fape.dtype)
         + identity_weight * identity_term.to(fape.dtype)

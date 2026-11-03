@@ -73,8 +73,15 @@ def main() -> int:
     from aanca.structure import load_protein
     from aanca.torch_graph import feature_topology
 
-    topo_cpu, coords_cpu = feature_topology(load_protein(path))
-    topo = topo_cpu.to(device) if hasattr(topo_cpu, "to") else topo_cpu
+    # **Built on the device, not moved to it.** ``FeatureTopology`` has no
+    # ``.to()`` -- only the ``TorsionTopology`` inside it does -- so a
+    # ``hasattr`` guard silently left the whole topology on the CPU while the
+    # coordinates went to the card, and five of these ten checks failed with
+    # "found at least two devices" on the first GPU run. That was this script's
+    # bug, not the library's: ``scripts/train.py`` never moves a topology
+    # either, it passes ``device`` to ``RepackingDataset`` and the topology is
+    # constructed there. Do the same.
+    topo, coords_cpu = feature_topology(load_protein(path), device=device)
     coords = coords_cpu.to(device)
     # **A CPU generator on purpose**, which is the whole point: this project
     # draws every random choice on the CPU so a run's stream is a property of

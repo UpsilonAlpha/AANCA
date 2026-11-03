@@ -3778,3 +3778,59 @@ accurate but produces no steric clashes may well be the better model, since a cl
 wrong in a way an accuracy metric does not charge for. But that is an argument for reporting both
 numbers together and for finding the cheapest weight that clears the clash, not for taking 50 and the
 accuracy loss as settled.
+
+### The growth weights were wrong by two orders of magnitude, in both directions — 2026-11-03
+
+`scripts/growth_balance_probe.py`. Measured before the first growth training run rather than after
+it. Each term alone, every other weight zeroed, 1UBQ at 6 seeds over 30 steps, mean of 3:
+
+```
+  term            value   activation       birth       frame    identity
+  fape           0.6558     1.83e+01    1.37e-01    1.07e+00    0.00e+00
+  bond           0.7719     8.69e+02    1.97e+00    1.10e+01    0.00e+00
+  reach          0.1676     2.26e+02    7.24e-01    1.88e+00    0.00e+00
+  completion     2.1269     7.17e-01    0.00e+00    0.00e+00    0.00e+00
+  identity       3.1214     0.00e+00    0.00e+00    0.00e+00    2.08e-01
+```
+
+All four weights were 1.0. Equalising each term's gradient against FAPE's gives **bond 0.022, reach
+0.086, completion 27.2, identity 93.7** — so the peptide restraint was **47 times too strong** and
+completion **27 times too weak**. Applied as the new defaults.
+
+**This corrects a claim recorded earlier in this document.** The growth section said completion
+dominated early training and would need lowering, because its *value* was 2.13 against FAPE's 0.56. A
+term's value is not its influence: in gradient, completion is 0.72 against FAPE's 18.3 — it was 25
+times too weak, the opposite of what was written. The 4.8e2 activation gradient quoted there belonged
+to the **reach** term, which was on by default and which I had attributed to completion.
+
+**A probe that could not measure what it named, caught the same way as the hole metric.** The first
+version of this probe reported completion's gradient as *identical to FAPE's to three figures* —
+because it was FAPE's. FAPE was the one term in `growth_objective` with no weight, so it could not be
+switched off, every row measured "FAPE plus that term", and gradient norms do not decompose linearly
+so the difference could not be taken afterwards either. `fape_weight` exists now for that reason
+alone; nothing in training should ever set it to 0.
+
+**A hypothesis tested and disproved, recorded so it is not re-tried.** The activation head's gradient
+looked like an artefact of `PARK_SPACING`: the straight-through gate's derivative is
+`placed − parked`, which is about 500 Å, so an arbitrary constant appeared to be setting the scale of
+a learned decision. It is not. FAPE clamps at 10 Å and a clamp has **zero** gradient beyond it, so a
+residue parked 500 Å away contributes nothing at all. Measured flat at 1.8e1 for spacings of 500, 100
+and 20 Å.
+
+**What the table shows beyond the weights.** Completion gives gradient to the activation head and
+*exactly zero* to the others; identity only to the identity head. That is clean confirmation each term
+is wired to the head it is about — and it would have shown a mis-wiring immediately. And the
+activation head receives two orders of magnitude more gradient than the birth head from **every**
+term, which is structural rather than a fault: a frontier residue decides whether to wake on every
+step, while the birth head only matters on the steps where a birth actually happens. The consequence
+to expect is that a growth run learns *when* to grow long before it learns *where* to put things.
+
+**The limit, stated loudly.** These balance the terms at initialisation and nowhere else — three of
+the four heads are zeroed and the structure is barely grown. The reach term reads 0.168 here and only
+bites once a closure is foreclosed, so it is the one most likely underweighted; the bond term reads
+0.772 and should shrink as the chain improves. Re-measure a few thousand updates in. And watch the
+alive fraction on the first run: completion at 27.2 is a large change in the direction of growing
+faster, and nothing yet says the other terms can keep up with it.
+
+One cosmetic consequence: with identity at 93.7 the *total* is around 350 and its magnitude means
+nothing. Read the per-term columns, not the total.
