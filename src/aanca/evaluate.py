@@ -50,7 +50,14 @@ from torch import Tensor
 from .data import RepackingDataset, von_mises_deltas
 from .metrics import BenchmarkRow, Convention, benchmark_table
 from .model import AANCARule
-from .rollout import RolloutConfig, initial_state, rollout
+from .identity import (
+    identity_loss,
+    library_index,
+    type_index,
+    type_loss,
+    type_marginal,
+)
+from .rollout import RolloutConfig, initial_identity, initial_state, rollout
 from .torch_geometry import apply_chi_deltas, measure_chis, wrap_to_pi
 from .torch_graph import FeatureTopology
 
@@ -123,6 +130,26 @@ class EvalResult:
     #: Should decay. Oscillation here is a fixed-point failure the headline
     #: accuracy can hide.
     convergence: list[float] = field(default_factory=list)
+    #: Fraction of positions whose committed label changed, at each rollout
+    #: step, averaged over cases. Empty unless the identity head is on.
+    #:
+    #: Reported next to ``convergence`` because neither is readable without the
+    #: other once a label can flip: a plateau in ``|delta|`` with *high* churn is
+    #: the labels refusing to settle and the geometry chasing them, which is the
+    #: ripple failing to converge; the same plateau with *low* churn is the
+    #: geometry oscillating on its own, which is a different fault. v8c_if
+    #: plateaued at 21 deg a step and could not be told apart, because nothing
+    #: called ``identity.label_churn``.
+    churn: list[float] = field(default_factory=list)
+    #: Held-out identity numbers, present only when the rule has the head.
+    #: ``identity_nll`` is over the joint 54-entry library, whose uninformative
+    #: floor is ln 54 = 3.99; ``type_nll`` marginalises over the chi1 wells and
+    #: so floors at ln 20 = 3.00; ``recovery`` is the fraction of supervised
+    #: positions whose most likely *type* is the native one, which is the
+    #: quantity ProteinMPNN (~58 %) and PottsMPNN (~44 %) report.
+    identity_nll: float | None = None
+    type_nll: float | None = None
+    recovery: float | None = None
     #: Max coordinate drift in Angstrom over a rollout started from native,
     #: worst case over the evaluation set. A guard, not a trend: it is a max
     #: over atoms of a max over structures, so one side chain flipping a
@@ -149,6 +176,15 @@ class EvalResult:
         if self.convergence:
             trace = "  ".join(f"{v:.1f}" for v in self.convergence)
             lines.append(f"mean |delta| per step (deg): {trace}")
+        if self.churn:
+            trace = "  ".join(f"{v:.2f}" for v in self.churn)
+            lines.append(f"label churn per step (must decay to 0): {trace}")
+        if self.identity_nll is not None:
+            lines.append(
+                f"identity: joint NLL {self.identity_nll:.3f} (floor ln 54 = "
+                f"3.99), type NLL {self.type_nll:.3f} (floor ln 20 = 3.00), "
+                f"sequence recovery {self.recovery:.1%}"
+            )
         lines.append(
             f"drift from a native start: {self.native_drift_mean:.4f} A mean, "
             f"{self.native_drift:.3f} A worst atom"
@@ -176,24 +212,67 @@ def evaluate(
     try:
         by_level: dict[str, list] = {}
         curves: list[list[float]] = []
+        churn_curves: list[list[float]] = []
         input_mae_num: dict[str, float] = {}
         input_mae_den: dict[str, int] = {}
         drift = 0.0
+        identity_nll_total = 0.0
+        type_nll_total = 0.0
+        recovered_num = 0.0
+        recovered_den = 0.0
+        identity_cases = 0
 
         for case in cases:
             topo, torsion = case.topology, case.topology.torsion
+            # **Carry the labels when the rule has an identity head.** Until
+            # v8c_if finished there was no held-out identity number of any
+            # kind: this called ``initial_state`` without an identity, so the
+            # eval never exercised the head, and the only evidence the head had
+            # learned was the ``id`` column in the progress line -- which is a
+            # running mean over *training* updates. With 400 structures seen
+            # about fifty times each under different crops, "this backbone is
+            # structure X, whose residue 47 is LEU" is a memorisable fact, so a
+            # training-set NLL is exactly the number that cannot settle the
+            # question it was being used to settle.
+            start_identity = (
+                initial_identity(
+                    topo, case.native, config.identity_start,
+                    torch.Generator().manual_seed(case.mask_seed),
+                )
+                if getattr(rule, "identity", False)
+                else None
+            )
             result = rollout(
                 rule,
-                initial_state(case.damaged, rule),
+                initial_state(case.damaged, rule, identity=start_identity),
                 topo,
                 config,
                 generator=torch.Generator().manual_seed(case.mask_seed),
             )
+            if start_identity is not None and result.state.identity_logits is not None:
+                supervised = topo.supervised_mask
+                chi1 = torch.rad2deg(measure_chis(case.native, torsion)[:, 0])
+                target = library_index(torsion.resnames, chi1)
+                identity_nll_total += float(
+                    identity_loss(result.state.identity_logits, target, supervised)
+                )
+                type_nll_total += float(
+                    type_loss(result.state.identity_logits, target, supervised)
+                )
+                predicted_type = type_marginal(
+                    torch.softmax(result.state.identity_logits, dim=-1)
+                ).argmax(-1)
+                right = (predicted_type == type_index(target)) & supervised
+                recovered_num += float(right.sum())
+                recovered_den += float(supervised.sum())
+                identity_cases += 1
             predicted = result.state.coords
             label = f"kappa {case.concentration:g}"
             by_level.setdefault(label, []).append((predicted, case.native, topo))
             curves.append([torch.rad2deg(torch.tensor(v)).item()
                            for v in result.mean_abs_delta])
+            if result.label_churn:
+                churn_curves.append(list(result.label_churn))
 
             # How far the input already was. Restricted to supervised residues
             # so the baseline and the prediction are scored on the same set.
@@ -221,6 +300,16 @@ def evaluate(
             width = min(len(c) for c in curves)
             out.convergence = [
                 sum(c[step] for c in curves) / len(curves) for step in range(width)
+            ]
+        if identity_cases:
+            out.identity_nll = identity_nll_total / identity_cases
+            out.type_nll = type_nll_total / identity_cases
+            out.recovery = recovered_num / max(recovered_den, 1.0)
+        if churn_curves:
+            width = min(len(c) for c in churn_curves)
+            out.churn = [
+                sum(c[step] for c in churn_curves) / len(churn_curves)
+                for step in range(width)
             ]
 
         # "Does it stay": one rollout per distinct structure from native.

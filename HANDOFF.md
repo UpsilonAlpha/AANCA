@@ -4185,3 +4185,63 @@ witness wrong in the same direction. Common-mode error is exactly what produces 
 average away over witnesses, so it survives into the 90th percentile while the mean looks healthy.
 The two measurements are describing the same thing from different ends, and together they say the
 remaining work is to remove a correlated bias, not to reduce an average.
+
+### Inverse folding ran, and there was no held-out number to judge it by — 2026-11-04
+
+Both jobs finished while the code-server session was expired.
+
+**GPU check 31739839: 11/11 paths on cuda, exit 0.** All three stacked device faults are closed and
+confirmed on the MI355X, including the eval path added after the third.
+
+**v8c_if 31739848: completed.** 20,000 updates, 418.6 min, exit 0, empty `.err` —
+`--split train --update-schedule independent --identity-weight 1.0 --identity-keep 2.0
+--identity-start masked --noop-weight 0 --native-probability 0.2`, 212,035 parameters, from scratch.
+
+**The identity head learned something real.** The `id` column fell **3.908 at update 50 → 2.243 at
+20,000**, against the uninformative floor of **ln 54 = 3.99** that the run's own header prints. A
+perplexity of e^2.243 ≈ 9.4 over 54 library entries. (A note in the hourly checkup prompt said this
+column must fall below ln 20 = 3.00; that was wrong — ln 20 is the *type-marginal* floor used in
+`growth_objective`, while `training_objective` scores the joint 54-entry label and floors at ln 54.)
+
+**But that number is a training-set running mean, and there was no held-out identity measurement at
+all.** `evaluate` called `initial_state(case.damaged, rule)` with no identity, so the eval never
+carried labels, never exercised the head, and reported nothing about it. Every eval table v8c_if
+printed is packing-only. With 400 structures seen about fifty times each under different crops, "this
+backbone is structure X, whose residue 47 is LEU" is a memorisable fact — so a training-set NLL is
+precisely the number that cannot settle the question it was being used to settle.
+
+Fixed: the eval now carries an identity when the rule has the head and reports **joint NLL** (floor
+ln 54 = 3.99), **type-marginal NLL** (floor ln 20 = 3.00) and **sequence recovery** — the last being
+the quantity ProteinMPNN (~58 %) and PottsMPNN (~44 %) report, so the comparison plan recorded earlier
+finally has a number to fill in. Verified on a 4-update rule: joint 4.085, type 3.150, recovery 4.5 %,
+all sitting just *above* their floors and below background composition, which is what "learned
+nothing yet" should look like.
+
+**`label_churn` existed and was never called from anywhere.** It is wired in now, per step, through
+`RolloutResult` and into the eval report. That matters because of the next finding.
+
+### The rollout does not settle, and until now it could not be told why
+
+v8c_if's `mean |delta| per step` runs **43° → 21° and plateaus**. v7b's decayed monotonically to
+1.1°. A plateau is the oscillation risk this project has worried about since `docs/PLAN_V1.md` — "does
+it decay, or oscillate as some Graph NCA rules do?" — and it is the first run where it is visible.
+
+**And `mean |delta|` alone cannot diagnose it once a discrete label can flip between steps**, which
+the design note has said from the start: the continuous part can be settling while the labels churn,
+so the geometry is chasing a target that keeps moving. A plateau with *high* churn is the ripple
+failing to converge; the same plateau with *low* churn is the geometry oscillating on its own. Those
+need opposite fixes and were indistinguishable, because nothing called `label_churn`.
+
+Measured on an untrained rule for calibration: churn sits at **~0.45 per step and does not decay**,
+which is what a non-converging ripple looks like. Whether v8c_if's trained head churns that much is
+the question its checkpoint can now answer, and the next run answers for itself.
+
+**What is not a valid comparison, stated because it is tempting.** v8c_if's packing numbers — kappa-0
+chi1 89.3°, accuracy 4.5 %, pooled 50.4° — look catastrophic against v7b's 36.7° and 33.8 %. They are
+not comparable. `--identity-weight` truncates perception to **backbone and CB** (the header says so),
+so this rule cannot see side chains at all while v7b can, and it trained from scratch for 20,000
+updates where v7b inherited a chain going back to v1. The same applies to "drift from a native start"
+of 0.514 Å: with `--identity-start masked` a native-start rollout is re-deciding the sequence, so its
+side chains *should* move. Three of the standard diagnostics mean something different under an
+identity run, and the honest position is that the only interpretable numbers from v8c_if are the
+identity NLL trajectory and the `|delta|` plateau.

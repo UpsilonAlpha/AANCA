@@ -64,6 +64,7 @@ from .losses import chi_nll, harmonic_restraint, masked_mean, noop_nll
 from .identity import (
     LIBRARY_SIZE,
     identity_loss,
+    label_churn,
     library_index,
     straight_through,
     type_marginal,
@@ -232,6 +233,20 @@ class RolloutResult:
     mean_abs_delta: list[float] = field(default_factory=list)
     #: Mean kappa at each step, as a confidence trace.
     mean_kappa: list[float] = field(default_factory=list)
+    #: Fraction of supervised positions whose committed label changed, per step.
+    #: Empty when the identity head is off.
+    #:
+    #: **The diagnostic ``mean_abs_delta`` stops being sufficient for once a
+    #: discrete label can flip between steps**, and the design note has said so
+    #: since identity was designed: the continuous part can be settling while
+    #: the labels churn, so a decaying ``|delta|`` no longer means the system is
+    #: converging. ``identity.label_churn`` was written for this and was never
+    #: called from anywhere until v8c_if's ``|delta|`` plateaued at 21 deg a
+    #: step and there was no way to tell which half was responsible.
+    #:
+    #: It must decay to zero. A plateau at a nonzero value is a limit cycle, not
+    #: slow convergence.
+    label_churn: list[float] = field(default_factory=list)
     #: ``(mu, log_kappa, coords_seen)`` at the supervised step, if one was asked
     #: for. ``coords_seen`` is the rule's *input* at that step, which is what the
     #: target delta has to be measured from -- scoring against the final
@@ -580,6 +595,9 @@ def rollout(
                 "expected 'bernoulli' or 'independent'"
             )
         seen = state.coords
+        previous_labels = (
+            None if state.identity is None else state.identity.argmax(dim=-1)
+        )
         state, mu, log_kappa = step_once(
             rule, state, topo, config, mask, frozen, generator
         )
@@ -592,6 +610,16 @@ def rollout(
                 result.mean_kappa.append(
                     float(masked_mean(torch.exp(log_kappa), chi_mask))
                 )
+                if previous_labels is not None and state.identity is not None:
+                    result.label_churn.append(
+                        float(
+                            label_churn(
+                                previous_labels,
+                                state.identity.argmax(dim=-1),
+                                topo.supervised_mask,
+                            )
+                        )
+                    )
 
         if supervise_step is not None and step == supervise_step:
             result.supervised = (mu, log_kappa, seen)
