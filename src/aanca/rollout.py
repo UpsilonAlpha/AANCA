@@ -45,6 +45,19 @@ from torch import Tensor
 
 from . import residue_constants as rc
 from .blind import blind_coords
+from .growth import (
+    GrowthConfig,
+    alive_topology,
+    correct_oxygens,
+    frontier,
+    give_birth,
+    growth_links,
+    limit_births,
+    park_coords,
+    rigid_relax,
+    seed_alive,
+    straight_through_bernoulli,
+)
 from .losses import chi_nll, harmonic_restraint, masked_mean, noop_nll
 from .identity import (
     LIBRARY_SIZE,
@@ -140,6 +153,13 @@ class RolloutConfig:
     #: ``"native"`` starts from the true sequence, which is the fixed-point
     #: case: the rule must *stay*.
     identity_start: str = "masked"
+    #: Growing a protein rather than packing one. ``None`` is off and is the
+    #: whole v1-through-v8 path: no alive mask, no frontier, no extra heads
+    #: touched. When set, the rollout carries an alive mask, dormant residues
+    #: are removed from perception entirely, and each step may give birth --
+    #: see ``aanca.growth`` for why the alive set is a union of sequence
+    #: segments and why relaxation is a frame update rather than a torsion.
+    growth: "GrowthConfig | None" = None
     #: Select neighbours on the device instead of in NumPy on the host.
     #:
     #: **Not a scientific setting, and deliberately not pinned.** The two
@@ -171,6 +191,16 @@ class RolloutState:
     #: The logits the last step produced, kept so the loss can see them without
     #: a second forward pass.
     identity_logits: Tensor | None = None
+    #: ``(R,)`` bool: which slots exist yet. ``None`` when growth is off, which
+    #: is not the same as all-true -- an all-true mask still pays for the
+    #: topology rebuild and the edge masking, so the v1 path keeps ``None``.
+    alive: Tensor | None = None
+    #: ``(R, 2)`` raw activation logits from the last step, N-ward then C-ward,
+    #: kept for the same reason ``identity_logits`` is: the objective reads
+    #: them at the final state without a second forward pass. See
+    #: ``growth.growth_objective`` for why the final state is the right place
+    #: to supervise them and not every step.
+    activation_logits: Tensor | None = None
 
     def detached(self) -> "RolloutState":
         return RolloutState(
@@ -180,6 +210,14 @@ class RolloutState:
             identity=None if self.identity is None else self.identity.detach(),
             identity_logits=(
                 None if self.identity_logits is None else self.identity_logits.detach()
+            ),
+            # Not detached: a bool mask carries no gradient, and cloning it per
+            # truncation boundary would only hide aliasing bugs.
+            alive=self.alive,
+            activation_logits=(
+                None
+                if self.activation_logits is None
+                else self.activation_logits.detach()
             ),
         )
 
@@ -206,12 +244,24 @@ def initial_state(
     rule: AANCARule,
     dtype: torch.dtype = torch.float32,
     identity: Tensor | None = None,
+    alive: Tensor | None = None,
 ) -> RolloutState:
+    """The state a rollout begins from.
+
+    ``alive`` turns growth on, and the coordinates are parked as they go in:
+    every dormant residue is translated out of reach, so the start state
+    contains the native structure only for the seeds. Parking here rather than
+    in the caller means there is no window in which a growth rollout holds the
+    answer it is supposed to be building.
+    """
+    if alive is not None:
+        coords = park_coords(coords, alive)
     return RolloutState(
         coords=coords,
         hidden=rule.initial_hidden(coords.shape[0], coords.device, dtype),
         step=0,
         identity=identity,
+        alive=alive,
     )
 
 
@@ -299,6 +349,16 @@ def step_once(
     the coordinates alone leaves every input on-distribution except the one
     under test.
     """
+    alive = state.alive
+    if alive is not None:
+        # Dormant residues are removed from perception rather than hidden
+        # inside it: no atoms in the mask, so neighbour selection never sees
+        # them and ``pair_min_distances`` treats every pair with one as
+        # unreachable. The parking in ``growth.park_coords`` is the second
+        # layer, which makes a missed mask loud instead of plausible.
+        topo = alive_topology(topo, alive)
+        links = growth_links(topo)
+
     coords_seen = state.coords
     aa_onehot = None
     if state.identity is not None:
@@ -321,12 +381,18 @@ def step_once(
     )
     node = graph.node_features.to(torch.float32)
 
+    # A dormant residue that was forced into a neighbour list as a sequence
+    # neighbour still occupies a slot; this is what stops it being a sender.
+    edge_mask = graph.edge_mask
+    if alive is not None:
+        edge_mask = edge_mask & alive[graph.neighbours]
+
     mu, log_kappa, new_hidden = rule(
         node,
         state.hidden,
         graph.edge_features.to(torch.float32),
         graph.neighbours,
-        graph.edge_mask,
+        edge_mask,
         graph.envelope.to(torch.float32),
     )
 
@@ -335,6 +401,8 @@ def step_once(
 
     # The cell ticks under ``mask``; its atoms move under ``mask & ~frozen``.
     moving = mask if frozen is None else (mask & ~frozen)
+    if alive is not None:
+        moving = moving & alive
     move = moving.unsqueeze(-1)
 
     chi = torch.where(move, mu, torch.zeros_like(mu)).to(state.coords.dtype)
@@ -346,6 +414,39 @@ def step_once(
     coords = apply_internal_deltas(
         state.coords, topo.torsion, chi=chi, angle=angle, bond=bond
     )
+
+    activation = None
+    if alive is not None and config.growth is not None:
+        growth = config.growth
+        activation, torsions, axis_angle, translation = rule.growth_outputs(
+            node, hidden
+        )
+        # Relax first, then give birth, so a newborn is placed off its
+        # parent's *current* frame rather than off a stale one. The two are
+        # one step of the same rule either way; the order only decides whether
+        # a birth sees this step's correction or the last one's.
+        coords = rigid_relax(coords, axis_angle, translation, topo, moving)
+
+        nward, cward = frontier(alive, links, growth.cward_only)
+        nward = limit_births(nward & moving, growth.max_births, generator)
+        cward = limit_births(cward & moving, growth.max_births, generator)
+        sample = growth.activation == "sample"
+        if growth.activation not in ("sample", "threshold"):
+            raise ValueError(
+                f"unknown growth activation {growth.activation!r}; expected "
+                "'sample' or 'threshold'"
+            )
+        wake = straight_through_bernoulli(activation, sample, generator)
+        coords, alive = give_birth(
+            coords,
+            topo,
+            alive,
+            links,
+            torch.where(nward, wake[:, 0], torch.zeros_like(wake[:, 0])),
+            torch.where(cward, wake[:, 1], torch.zeros_like(wake[:, 1])),
+            torsions,
+        )
+        coords = correct_oxygens(coords, topo, alive, links)
 
     identity, logits = state.identity, None
     if state.identity is not None:
@@ -376,6 +477,8 @@ def step_once(
             step=state.step + 1,
             identity=identity,
             identity_logits=logits,
+            alive=alive,
+            activation_logits=activation,
         ),
         mu,
         log_kappa,
@@ -495,6 +598,7 @@ def training_objective(
     noop_weight: float = 1.0,
     steric: StericTopology | None = None,
     identity_weight: float = 0.0,
+    frozen: Tensor | None = None,
 ) -> tuple[ObjectiveTerms, RolloutResult]:
     """The v1 objective: reconstruct from damage, do nothing when already native.
 
@@ -502,6 +606,36 @@ def training_objective(
     was by the delta that would actually have taken it to the native torsions.
     The no-op term runs *one* step on the undamaged structure and requires a
     zero update with high confidence.
+
+    ``frozen`` pins those residues' *geometry* for the whole rollout while they
+    keep ticking and keep being scored -- see :func:`step_once`. It is the
+    clamp test's own intervention, used as a training case rather than only as
+    a diagnostic, and it is what the silencing result of 2026-11-02 asks for.
+
+    The chain of reasoning is worth keeping, because the obvious prescription
+    was wrong. The rule was shown to *stop* when its neighbours look native: at
+    0.75 pinned it moves free residues half as far and leaves 69 % of them in
+    the well they were randomly dropped into. The first guess was that the
+    no-op term needed to become per-residue -- but the no-op term is already
+    switched off (``--noop-weight 0`` since v5, measured vacuous by
+    ``scripts/noop_probe.py``), and the reconstruction term is *already*
+    per-residue: on a partially damaged sample it asks the damaged residues to
+    move and the undamaged ones to stay, in the same step. So the per-residue
+    signal was never the missing piece.
+
+    What is missing is the *immobility*. In training the undamaged residues are
+    at native but free, so they drift as the rule works; under the clamp they
+    are exactly native and do not move at all. "My neighbours are correct and
+    they have stopped" is a state that uniform damage essentially never
+    produces -- with 64 neighbours and damage fraction f, an all-native shell
+    around a damaged residue has probability ``(1 - f)**64``, which is 4 % at
+    f = 0.05 and 6e-7 at f = 0.2. Freezing the undamaged residues produces it
+    on every sample instead.
+
+    The cost is stated rather than hidden: a run trained this way has seen the
+    clamp test's distribution, so the clamp test stops being a held-out
+    diagnostic for it and becomes a training objective. The held-out claim
+    moves to global repacking accuracy, which must not regress.
     """
     torsion: TorsionTopology = topo.torsion
     native_chis = measure_chis(native_coords, torsion)
@@ -537,6 +671,7 @@ def training_objective(
         config,
         generator=generator,
         supervise_step=supervise_step,
+        frozen=frozen,
     )
     assert result.supervised is not None
     mu, log_kappa, seen_coords = result.supervised

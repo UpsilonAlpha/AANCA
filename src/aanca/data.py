@@ -436,6 +436,22 @@ class Sample:
     crop_seed: int | None = None
 
     @property
+    def damaged_mask(self) -> Tensor:
+        """``(n_residues,)`` bool: which side chains were actually moved.
+
+        Read off ``deltas`` rather than stored, so it cannot disagree with the
+        damage that was applied. A residue with no chis has no deltas and is
+        never damaged, which is correct -- GLY and ALA have nothing to get
+        wrong.
+
+        This exists for the clamp-style training case, where the *undamaged*
+        residues are frozen at their native conformations for the whole
+        rollout: ``frozen = ~damaged_mask``. See ``scripts/train.py``'s
+        ``--clamp-probability``.
+        """
+        return (self.deltas != 0).any(dim=-1)
+
+    @property
     def supervised_fraction(self) -> float:
         """Fraction of residues the loss may touch. Below 1 only for a crop."""
         mask = self.topology.supervised_mask

@@ -69,7 +69,7 @@ import torch
 PINNED = (
     "crop_size", "steps", "steps_max", "truncate", "seed", "pool_probability", "k",
     "native_probability", "noop_weight", "lr", "lr_drop", "lr_gamma",
-    "damage_fractions",
+    "damage_fractions", "clamp_probability",
     "clash_weight", "clash_tolerance",
     "update_schedule", "coupling_radius",
     # The identity head's existence is a *shape* difference, not a setting:

@@ -258,6 +258,23 @@ def main() -> int:
         "--init-from carries the weights, the optimiser and the pool across.",
     )
     parser.add_argument(
+        "--clamp-probability",
+        type=float,
+        default=0.0,
+        help="fraction of partially damaged samples whose UNDAMAGED residues "
+        "are frozen at native for the whole rollout. This is the clamp test's "
+        "own intervention used as a training case, and it is what the "
+        "silencing result asks for: the rule stops when its neighbours look "
+        "native, and the state it was never trained on is 'my neighbours are "
+        "correct AND they have stopped moving'. Uniform damage cannot produce "
+        "it -- an all-native 64-neighbour shell around a damaged residue has "
+        "probability (1-f)**64 -- so freezing produces it instead. Needs "
+        "--damage-fractions below 1 to do anything, since at fraction 1 there "
+        "are no undamaged residues to freeze. **A run using this has seen the "
+        "clamp test's distribution**, so report global repacking accuracy as "
+        "the held-out claim, not the clamp table.",
+    )
+    parser.add_argument(
         "--clash-weight",
         type=float,
         default=0.0,
@@ -517,6 +534,12 @@ def main() -> int:
         # numbers mean.
         shares = ", ".join(f"{f:g}" for f in args.damage_fractions)
         print(f"damage fractions: {shares} (drawn per sample)")
+    if args.clamp_probability:
+        print(
+            f"clamp probability: {args.clamp_probability:g} -- the undamaged "
+            "residues of a partially damaged sample are frozen at native. "
+            "The clamp table is no longer held out for this run."
+        )
     if args.update_schedule != "bernoulli":
         print(
             f"update schedule: {args.update_schedule}, coupling radius "
@@ -673,6 +696,10 @@ def main() -> int:
     #: and because a pool whose seeds came from native starts is a different
     #: pool, so the count belongs with the weights.
     native_starts = int((source or {}).get("native_starts", 0))
+    #: Not checkpointed, unlike ``native_starts``: it changes nothing about the
+    #: pool or the weights, so a resume restarting the count costs a log line's
+    #: accuracy and nothing else.
+    clamped_samples = 0
 
     def write_checkpoint(update: int) -> None:
         ckpt.save(
@@ -809,6 +836,20 @@ def main() -> int:
         else:
             start = sample.damaged
 
+        # The clamp case. Only meaningful on a partially damaged fresh sample:
+        # a pooled start is a state the rule itself produced, where "undamaged"
+        # no longer names anything, and a native start has nothing to freeze.
+        frozen = None
+        if (
+            args.clamp_probability > 0.0
+            and not reusable
+            and not from_native
+            and sample.damage_fraction < 1.0
+            and rng.random() < args.clamp_probability
+        ):
+            frozen = ~sample.damaged_mask.to(start.device)
+            clamped_samples += 1
+
         terms, result = training_objective(
             rule,
             start,
@@ -819,6 +860,7 @@ def main() -> int:
             rng=rng,
             noop_weight=args.noop_weight,
             identity_weight=args.identity_weight,
+            frozen=frozen,
         )
         optimiser.zero_grad()
         terms.total.backward()
@@ -903,6 +945,11 @@ def main() -> int:
                 + (
                     f"  id {sum(recent_identity) / len(recent_identity):>5.3f}"
                     if recent_identity
+                    else ""
+                )
+                + (
+                    f"  clamped {clamped_samples}"
+                    if args.clamp_probability
                     else ""
                 )
                 + (

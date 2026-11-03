@@ -67,6 +67,21 @@ MAX_ANGLE_DELTA = 0.15
 #: still unlearning the prior. Start a masked run nearer 2.
 IDENTITY_KEEP_INIT = 8.0
 
+#: Where an untrained rule puts a newborn, degrees. The delta head's identity
+#: initialisation has no analogue in growth -- a newborn has to go *somewhere*,
+#: and there is no "do nothing" option -- so the neutral choice is the most
+#: populated region of the Ramachandran plot instead: an untrained rule grows
+#: an alpha helix. That is a physically valid default rather than a random one,
+#: which is the property the identity initialisation was actually buying.
+BACKBONE_INIT_PHI = -63.0
+BACKBONE_INIT_PSI = -43.0
+BACKBONE_INIT_OMEGA = 180.0
+
+#: Initial activation logit, so sigmoid is about 0.12 and growth starts slow.
+#: Zero would wake every frontier residue of every segment on the first step,
+#: before the rule has any hidden state to decide with.
+ACTIVATION_INIT = -2.0
+
 
 class AANCARule(nn.Module):
     """One update step. Apply repeatedly with the same weights.
@@ -89,6 +104,10 @@ class AANCARule(nn.Module):
         max_angle_delta: float = MAX_ANGLE_DELTA,
         identity: bool = False,
         identity_keep: float = IDENTITY_KEEP_INIT,
+        growth: bool = False,
+        activation_init: float = ACTIVATION_INIT,
+        max_rotation: float = 0.1,
+        max_translation: float = 0.3,
     ) -> None:
         super().__init__()
         self.node_dim = node_dim
@@ -158,6 +177,34 @@ class AANCARule(nn.Module):
                 nn.Linear(state_dim, 64), nn.GELU(), nn.Linear(64, LIBRARY_SIZE)
             )
             self.identity_keep = nn.Parameter(torch.tensor(float(identity_keep)))
+
+        # Growth. Three heads, and the split is the design: *whether* to wake a
+        # dormant neighbour, *where* to put it if woken, and how the residue's
+        # own frame should move while it relaxes. The third is why growth needs
+        # heads at all beyond the second -- a backbone built from torsions
+        # cannot be corrected from torsions, because the lever arm reaches
+        # 29 A over 75 residues (see ``aanca.growth``).
+        self.growth = growth
+        self.activation_init = activation_init
+        self.max_rotation = max_rotation
+        self.max_translation = max_translation
+        if growth:
+            # Two logits: N-ward and C-ward. Separate rather than one, because
+            # a segment's two ends are different situations and a residue in
+            # the middle of a segment is on neither frontier.
+            self.activation_head = nn.Sequential(
+                nn.Linear(state_dim, 64), nn.GELU(), nn.Linear(64, 2)
+            )
+            # Three torsions per direction, each as a (cos, sin) pair for the
+            # same reason the delta head uses one: a raw angle has a
+            # discontinuity in the middle of its range.
+            self.birth_head = nn.Sequential(
+                nn.Linear(state_dim, 64), nn.GELU(), nn.Linear(64, 2 * 3 * 2)
+            )
+            # Axis-angle rotation and translation of the residue's own atoms.
+            self.frame_head = nn.Sequential(
+                nn.Linear(state_dim, 64), nn.GELU(), nn.Linear(64, 6)
+            )
         self._init_heads()
 
     def _init_heads(self, initial_log_kappa: float = 1.0) -> None:
@@ -190,6 +237,35 @@ class AANCARule(nn.Module):
             # keep-current term and the rule holds every label still.
             nn.init.zeros_(self.identity_head[-1].weight)
             nn.init.zeros_(self.identity_head[-1].bias)
+
+        if self.growth:
+            final = self.activation_head[-1]
+            nn.init.zeros_(final.weight)
+            with torch.no_grad():
+                final.bias.fill_(float(self.activation_init))
+
+            # The torsion order matches ``backbone.extend_nward`` and
+            # ``extend_cward``: N-ward takes (phi parent, omega child, psi
+            # child) and C-ward (psi parent, omega parent, phi child).
+            final = self.birth_head[-1]
+            nn.init.zeros_(final.weight)
+            with torch.no_grad():
+                degrees = torch.tensor(
+                    [
+                        [BACKBONE_INIT_PHI, BACKBONE_INIT_OMEGA, BACKBONE_INIT_PSI],
+                        [BACKBONE_INIT_PSI, BACKBONE_INIT_OMEGA, BACKBONE_INIT_PHI],
+                    ]
+                )
+                radians = torch.deg2rad(degrees)
+                bias = torch.stack(
+                    [torch.cos(radians), torch.sin(radians)], dim=-1
+                ).reshape(-1)
+                final.bias.copy_(bias)
+
+            # Zeroed, so an untrained rule relaxes by not moving -- the one
+            # place growth does have an identity initialisation.
+            nn.init.zeros_(self.frame_head[-1].weight)
+            nn.init.zeros_(self.frame_head[-1].bias)
 
     def initial_hidden(
         self, n_residues: int, device: torch.device | str = "cpu",
@@ -299,5 +375,66 @@ class AANCARule(nn.Module):
             keep = current.to(logits.dtype)
         return logits + self.identity_keep * keep
 
+    def growth_outputs(
+        self, node_features: Tensor, hidden: Tensor
+    ) -> tuple[Tensor, Tensor, Tensor, Tensor]:
+        """``(activation, torsions, axis_angle, translation)``.
+
+        - ``activation`` ``(R, 2)`` raw logits, N-ward then C-ward.
+        - ``torsions`` ``(R, 2, 3)`` radians, in the order the two ``extend_``
+          functions take them.
+        - ``axis_angle`` ``(R, 3)`` and ``translation`` ``(R, 3)``, both
+          hard-bounded here so one relaxation step stays local whatever the
+          head asks for. Bounding by scaling the whole vector rather than each
+          component keeps the rotation's *axis* untouched, which a per-component
+          tanh would not.
+
+        Raises if the rule was not built with ``growth=True``, rather than
+        returning ``None`` like the other optional heads: there is no sensible
+        no-growth value for a tuple of four, and a silent zero would look like
+        a rule that had decided not to grow.
+        """
+        if not self.growth:
+            raise ValueError(
+                "this rule has no growth heads; build it with "
+                "AANCARule(growth=True)"
+            )
+        state = torch.cat([node_features, hidden], dim=-1)
+        activation = self.activation_head(state)
+
+        raw = self.birth_head(state).view(-1, 2, 3, 2)
+        torsions = torch.atan2(raw[..., 1], raw[..., 0])
+
+        move = self.frame_head(state)
+        axis_angle = _bounded(move[:, :3], self.max_rotation)
+        translation = _bounded(move[:, 3:], self.max_translation)
+        return activation, torsions, axis_angle, translation
+
     def parameter_count(self) -> int:
         return sum(p.numel() for p in self.parameters())
+
+
+def _bounded(vector: Tensor, limit: float) -> Tensor:
+    """Scale ``vector`` so its norm never exceeds ``limit``, keeping direction.
+
+    ``tanh`` on the norm rather than a hard clamp, so the bound is smooth and
+    the gradient does not vanish for a head that is asking for too much.
+
+    **The branch at the origin is load-bearing, not defensive.** The frame head
+    is zero-initialised, so ``vector`` is exactly zero on the first update and
+    ``limit * tanh(0) / 0`` evaluates to ``0 / eps = 0`` -- which multiplies
+    the whole output by zero and leaves the head with no gradient at all, for
+    every update, forever. The factor's true limit as the norm goes to zero is
+    1, so that is what it is told to be. Measured: without this the frame
+    head's total gradient on a growth objective is exactly 0.000e+00, which is
+    the same failure as zeroing the delta head's bias and getting
+    ``atan2(0, 0)``.
+    """
+    norm = vector.norm(dim=-1, keepdim=True)
+    safe = norm.clamp_min(1e-8)
+    factor = torch.where(
+        norm < 1e-6,
+        torch.ones_like(norm),
+        limit * torch.tanh(norm / limit) / safe,
+    )
+    return vector * factor

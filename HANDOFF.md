@@ -2608,3 +2608,175 @@ that asks for zero output on an undamaged structure.
 4. **`pip install torch` does not replace an existing torch**, so restaging against a different
    ROCm index prints "requirement already satisfied" and changes nothing. `bunya_stage.sh` now
    passes `--upgrade`; the symptom was a staging log printing the version it was meant to replace.
+
+---
+
+### Growth is implemented — pre-allocated slots, an alive mask, a frontier — 2026-11-03
+
+Built this session: `aanca/backbone.py`, `aanca/growth.py`, `aanca/fape.py`, three new heads on
+the rule, the alive path through `step_once`, `growth_objective`, `scripts/growth_probe.py`, and
+47 tests. Nothing on the packing path changed behaviour: `growth=None` in `RolloutConfig` touches
+no new tensor, and the whole existing suite is still green.
+
+**The design, and the one place it was forced.** Growing NCA does not create cells; the lattice is
+complete from step 0 and growth is an *alive mask*. Transplanted here, the substrate is the `N`
+residue slots, the sequence edges exist from step 0, and only the coordinates are absent — which
+resolves the chicken-and-egg that kills the obvious design, since a residue cannot be placed by the
+graph it is about to join. What is *forced*, not chosen: a dormant slot has no coordinates, so
+"spatially adjacent to a live cell" is undefined for it, and its only adjacency is covalent. So the
+alive set is a union of **sequence segments**, growth extends segments at either end, and several
+seeds give nucleation and coalescence. One seed with `cward_only` is synthesis order, which is the
+control rather than the model.
+
+**The measurement that shaped it.** Regrowing 1UBQ's backbone from its own measured torsions
+(`scripts/growth_probe.py`):
+
+| residues grown | 1 | 2 | 5 | 10 | 20 | 40 | 60 | 75 |
+|---|---|---|---|---|---|---|---|---|
+| measured bonds/angles | 0.000 | 0.000 | 0.000 | 0.000 | 0.000 | 0.000 | 0.000 | 0.000 |
+| **ideal** bonds/angles | 0.026 | 0.155 | 0.564 | **1.472** | 2.767 | 8.464 | 3.276 | **29.433** |
+
+CA error in Angstrom. The measured row is the round trip and is the control on the placement
+primitive — exact, so the NeRF is right. The ideal row is what a structure being grown de novo has
+to use, because it has no measured geometry to read, and it is **the lever arm at the backbone**:
+1.5 A by the tenth residue, tens of Angstrom down the chain. (Non-monotone, because accumulated
+error is a random walk that can fold back; read the trend, not the digits.)
+
+That is fatal for a torsion-space relaxation, and it is the reason for the architecture:
+
+* **Birth is by torsion** — a newborn's backbone comes from its parent's frame plus ideal bond
+  geometry and three predicted torsions (psi, omega of the parent and phi of the child, C-ward).
+  This is the one place a torsion is unavoidable and the one place nothing is downstream, so the
+  lever arm at birth is exactly zero.
+* **Relaxation is not** — an alive residue relaxes by a bounded **rigid move of its own atoms**,
+  axis-angle plus translation, which is EGNN's coordinate update in SE(3) form. No lever arm, and a
+  global correction is a local parameter change. The chain is then held together by a
+  `peptide_bond_restraint` (C-N length, omega planarity) instead of by construction, which is how
+  AF2 and every structure diffusion model do it.
+* **The rest of a newborn's atoms ride on a rigid transform** from its parked pose, so bond lengths
+  and angles inside a residue stay exactly the crystal's — consistent with v1 freezing them, and it
+  avoids needing ideal coordinates for twenty residue types. Only CA lands on the NeRF triad
+  exactly; N and C follow the residue's own geometry, so the realised peptide bond is ideal plus
+  that residue's deviation, **measured 0.007 A on 1UBQ**. The alternative moves the same
+  discrepancy to the CB attachment; keeping it in the peptide bond is better because that is what
+  the restraint supervises.
+
+**Three heads, three jobs, and all three get gradient** (asserted in
+`tests/test_growth.py::test_every_growth_head_receives_gradient`): `activation_head` (2 logits,
+N-ward and C-ward), `birth_head` (3 torsions per direction as cos/sin pairs), `frame_head` (6, the
+rigid move). The `birth_head` bias is set to phi −63, psi −43, omega 180, so **an untrained rule
+grows an alpha helix**. That is the right analogue of the delta head's identity initialisation:
+there is no "do nothing" for a newborn, so the neutral choice is the most populated region of the
+Ramachandran plot rather than a random one.
+
+**A dead gradient, found by asserting instead of assuming.** The frame head is zero-initialised and
+its output is bounded by scaling the vector to keep the rotation axis intact — and
+`limit * tanh(0) / 0` evaluates to `0 / eps = 0`, which multiplied the whole output by zero and
+left the head with **exactly 0.000e+00 gradient, on every update, forever**. The factor's true
+limit at the origin is 1, so that is what it is now told to be. Same class of bug as zeroing the
+delta head's bias and getting `atan2(0, 0)`, and it would have looked like a head that had simply
+learned nothing.
+
+**The activation head's credit signal.** A newborn's coordinates are
+`born * placed + (1 - born) * parked` with `born` a **straight-through Bernoulli**, so the gradient
+reaching the activation logit is `(placed - parked) · dL/dx` — "waking this neighbour changed the
+loss by this much". That is the same device as the identity head's straight-through one-hot and it
+is what makes growth *order* trainable rather than merely sampled; a hard decision gives no
+gradient at all.
+
+**The degenerate optimum, found and closed.** FAPE is a mean over the residues that exist, so
+growing one more residue can only add error: under FAPE alone the cheapest structure is the seed,
+alone, forever, and nothing in the geometry objects. `completion_weight` is therefore load-bearing
+rather than a nudge — a cross-entropy on the frontier's activation logits towards waking, evaluated
+at the final state only, so it is exactly zero once the structure is complete. The two signals are
+different and both are needed: this one says *grow*, the straight-through path says *that birth
+helped*. Measured at initialisation the completion term is 2.13 against FAPE 0.56, and the
+activation head's gradient is 4.8e2 against the birth head's 2.1 — so early training is dominated
+by learning to grow at all, and `completion_weight` will need lowering once it does.
+
+**FAPE, not a torsion loss, and taken rather than invented.** AF2 eq. 10, clamp 10 A, scale 10 A
+(`aanca/fape.py`, pinned in a test so a tuning pass has to be deliberate). A hinge that rotates
+half the protein leaves every bond, angle and torsion inside each residue untouched — so a torsion
+loss cannot charge for a wrong fold, and a coordinate loss cannot be computed without choosing a
+superposition first. `backbone_rmsd` is reported alongside because FAPE saturates at its clamp.
+
+**The untrained baseline, 60 steps on 1UBQ, mean of 3 seeds:**
+
+| seeds | mode | alive | bond | fape | CA rmsd |
+|---|---|---|---|---|---|
+| 1 | C-ward only | 6.1 % | 0.0001 | 0.365 | 2.33 |
+| 1 | both ways | 8.3 % | 0.0022 | 0.470 | 3.43 |
+| 2 | both ways | 18.9 % | 0.0012 | 0.658 | 5.24 |
+| 4 | both ways | 34.6 % | **0.4828** | 0.741 | 5.60 |
+| 8 | both ways | 61.8 % | **4.5100** | 0.716 | 5.18 |
+
+**The loop-closure problem, predicted and now measured.** `bond` is the peptide restraint,
+unweighted, and a crystal scores ~0.002. It is fine at one and two seeds and explodes at four and
+eight — 4.51 at eight seeds. That is coalescence: two segments grown from different seeds meet in
+the middle and nothing closes the gap between them. The restraint term is the *detector* and an
+untrained rule has no way to act on it. So the honest statement of where growth stands is: single
+nucleation works and the chain stays intact; multiple nucleation is the interesting model and its
+open problem is loop closure, with a number attached.
+
+**Still open, recorded rather than discovered later.** A grown structure is a sample from whatever
+the rule happens to do, with no density attached, so "grown" still says nothing about whether the
+result is a protein — the same gap as "a fixed point is not an energy", and what the Potts and MH
+machinery is for. Nothing forbids a mirror fold, because the heads see only distances. Side chains
+are deliberately out of `growth_objective`: `training_objective` already supervises chis, and
+joining the two objectives should follow a measurement rather than a code layout.
+
+### The no-op term is already gone, so the fix is the clamp — 2026-11-03
+
+Correcting the previous session's prescription, which was wrong about its own premise. The
+"per-residue no-op" it proposed cannot be built, because **the no-op term is switched off** —
+`--noop-weight 0` since v5, measured vacuous by `scripts/noop_probe.py`, with
+`--native-probability` carrying the fixed point instead. Worse, the per-residue part was never
+missing: on a partially damaged sample the **reconstruction term is already per-residue**, asking
+the damaged residues to move and the undamaged ones to stay, in the same step. `--damage-fractions`
+has been doing exactly that since v6, which is why it helped (−20.9 → −11.9) — and the fact that it
+did not *fix* the sign is the evidence that per-residue supervision was not the gap.
+
+**What is actually missing is the immobility.** In training the undamaged residues sit at native
+but are *free*, so they drift as the rule works. Under the clamp they are exactly native and do not
+move at all. "My neighbours are correct **and they have stopped**" is the state the rule has never
+seen, and uniform damage essentially cannot produce it: with 64 neighbours and damage fraction `f`,
+an all-native shell around a damaged residue has probability `(1 − f)^64` — 4 % at `f` = 0.05 and
+6e-7 at `f` = 0.2. Freezing the undamaged residues produces it on every sample.
+
+Implemented as `--clamp-probability` (`training_objective(frozen=...)` → `rollout(frozen=...)`,
+which `step_once` has supported since the clamp test was built; `Sample.damaged_mask` is read off
+`deltas` so it cannot disagree with the damage that was applied). A frozen residue keeps ticking
+and keeps being scored, so it is still charged for proposing a non-zero delta — the silence
+supervision now happens in the presence of correct *immobile* neighbours, which is the whole point.
+Pinned in the checkpoint fingerprint, absent from `WARM_START_MUST_MATCH`, so v9 warm-starts from
+v6/v7 the way v6 did from v5. Progress lines print a `clamped` count so a run that is quietly
+clamping nothing is visible.
+
+**The cost, stated rather than hidden:** a run trained this way has seen the clamp test's
+distribution, so **the clamp table stops being a held-out diagnostic for it**. The held-out claim
+moves to global repacking accuracy, which must not regress. Report both or the result is
+unreadable.
+
+### Comparing v8_if with PottsMPNN — the numbers to report
+
+Decided earlier and worth making concrete now that inverse folding runs. **Native sequence recovery
+is not the headline.** PottsMPNN traded NSR down (~44 % against ProteinMPNN's ~58 %) for refolding
+self-consistency and ddG correlation, so beating 44 % on NSR could just mean we are a
+worse-calibrated ProteinMPNN. What to report, in order:
+
+1. **Joint recovery** — sequence recovery *and* chi accuracy from a jointly scrambled start, on the
+   held-out split. This is the number that is ours: nobody reports it because nobody's model decides
+   both at once. PottsMPNN has no chi number to compare, which is exactly the point.
+2. **NSR, reported anyway**, split core/surface, against PottsMPNN's ~44 % and ProteinMPNN's ~58 %
+   on the same set. Not as a win condition — as the calibration check that says whether the identity
+   head is in the right regime at all.
+3. **Self-consistency** — design, fold, RMSD. The comparison PottsMPNN itself leads with.
+4. **Label churn** — the fraction of positions whose label changed in a sweep, which must decay to
+   zero. The sequence analogue of the `|delta|` convergence curve, and the diagnostic that says
+   whether the ripple settles or oscillates; PottsMPNN's local optimisation sweeps "until no
+   favourable substitution remains", which is the same condition stated discretely.
+   `identity.label_churn` already computes it.
+
+Sequencing: (1) and (2) need only `v8_if`'s checkpoint and the existing eval set, so they come
+first. (3) needs a folding model and is the larger job. The set must be the same one the packing
+benchmarks use, or none of it is comparable with our own earlier numbers either.
