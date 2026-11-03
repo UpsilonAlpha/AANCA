@@ -3064,3 +3064,101 @@ grow structure and sequence together. A latent has no type-dependent atom count,
 disappears and reason 2 weakens. Reason 3 does not: an incomplete neighbourhood is incomplete
 whatever the state variable. That is the argument for a pipeline that does not depend on this
 project's representation choices.
+
+### Revising the "pipeline, not a joint objective" conclusion — 2026-11-03
+
+The previous section's three reasons were challenged and two and a half of them do not hold. The
+conclusion is withdrawn: **growth and packing can share one rollout.** What follows is what the
+reasons were worth and what the cost actually is, because the revision matters more than the
+original claim.
+
+**"Bounded local updates are bad at global constraints" was wrong, and a paper in this project's own
+reading list is the counterexample.** EGNCA (arXiv 2301.10497) does pattern formation on a graph
+from *random Gaussian coordinates*, with purely local E(n)-equivariant updates and no seed node,
+and converges to a target point cloud. That is bounded local updates satisfying a global geometric
+constraint. Growing NCA's whole conceit is the same thing. The claim should never have been made in
+that form.
+
+What is actually missing is two specific things, and only one of them is information:
+
+* **Information.** Every spatial neighbour is already in the graph, and sequence neighbours are
+  *forced* in, so a residue at a junction already sees the gap and its size. What no feature carries
+  is the **sequence distance to the nearest alive slot in each direction**. A frontier residue cannot
+  distinguish "three slots left to span 9 Å" from "thirty", which is precisely the quantity closure
+  needs. It is node-local and cheap -- clip and RBF-encode it, the way every other distance in this
+  project is encoded.
+* **Credit.** `truncate` is 12 steps and `max_translation` is 0.3 Å per step, so a coordinated
+  segment translation closing a 9 Å gap needs about 30 steps of consistent motion by many residues
+  -- two and a half truncation windows. The loss cannot credit a manoeuvre longer than its gradient
+  horizon, however capable the rule is of performing it.
+
+**So the real virtue of closure-aware growth is not more force, it is a shorter problem.** Aiming
+births at a nearby frontier converts the global constraint into a local one: do not close a 9 Å gap,
+never open one. A two-or-three-residue bridge fits inside the 12-step horizon, which is the same
+argument as "birth has no lever arm because nothing is downstream yet" applied to time instead of
+space.
+
+**A newborn at the background amino-acid distribution is not a leak**, and the objection to it was
+wrong. A draw from the global composition carries zero information about the native residue at that
+position, and it buys something the all-zero unknown token does not: a **definite atom set
+immediately**, which is what packing needs in order to have anything to move. The one real caveat is
+that a pre-committed label fights the keep-current term -- at keep 8 it is held at 98 % -- and keep
+2.0 was already chosen on measurement for masked starts, so this is a tuning matter and not a
+principle.
+
+**Flip, pack, flip, repack is the intended dynamics, not a pathology.** It is iterated conditional
+modes, which is exactly what PottsMPNN's published local optimisation does ("sweeps until no
+favourable substitution remains"), and what this project's own Potts plus Metropolis-Hastings
+machinery exists for. The gradient-noise objection raised against it is weak: with final-state
+supervision and a 12-step truncation, the gradients for packing work that a later flip discards are
+mostly never computed. And the discard is cheaper than it looks if identity errors are
+chemically local -- a LEU to ILE flip keeps nearly the same atom set. **That is checkable and should
+be checked**: the confusion matrix of `v8_if`'s identity head, blocked by chemical class. If it is
+block-diagonal, discarded packing is cheap and the objection evaporates entirely.
+
+**The cost that does remain is engineering, and it is one purchase.** `TorsionTopology` is
+documented as depending "only on the sequence, never the coordinates" and is resolved once into
+index tensors; a flipping label makes `atom_mask`, `chi_mask`, `chi_atoms` and `downstream`
+*label*-dependent. The tractable design is a gather: precompute those tables per library entry,
+shape `(54, ...)`, and index them by the committed label each step. Masks are never differentiated,
+so a gather costs nothing, and nothing has to be rebuilt. The same table purchase supplies the ideal
+per-type coordinates needed to materialise a side chain for a newly chosen type -- so it is one
+table, not two, and it is the same table that would let Cartesian birth place a side chain at all.
+
+**Reason 3 was the principled one and it half holds -- as a design requirement, not a fact.** The
+objection was that a growing structure has incomplete neighbourhoods where growth is happening, so
+the chi target is unlearnable there. The answer given was that growth finishes quickly and chis
+settle afterwards, and `loss_window = 0.5` already supervises only the back half of the rollout, so
+if growth finishes in the first half the objection dissolves with no new machinery. Correct in
+principle. Measured (`scripts/growth_rate_probe.py`, 1UBQ, 120 steps, mean of 3 seeds):
+
+```
+  bias  p(wake)  seeds  max_births  complete at  fraction  final alive
+  -2.0     0.12      1           8         >120         -       14.5%
+  -2.0     0.12      4           8         >120         -       57.5%
+   0.0     0.50      1           8         >120         -       62.7%
+   0.0     0.50      4           8   >120 (2/3)         -       98.7%
+   2.0     0.88      1           8   >120 (1/3)         -       84.2%
+   2.0     0.88      4           8           54       45%      100.0%
+   2.0     0.88      4           2           50       41%      100.0%
+   4.0     0.98      4           8           46       38%      100.0%
+```
+
+So: **at the current default growth never finishes at all** -- 14.5 % of 1UBQ in 120 steps at one
+seed. At activation bias 2 to 4 with four seeds it completes at 38-46 % of the rollout, just inside
+the loss window. `ACTIVATION_INIT = -2.0` is therefore wrong for a joint objective and should be
+positive; -2 was chosen so an untrained rule would not wake the whole frontier at once, which is a
+first-step concern and not a schedule.
+
+**And the two problems are coupled, which is the finding here.** One seed never reliably finishes
+even at p(wake) = 0.98, because a single segment's longer arm averages ~57 residues and the
+asynchronous mask halves the birth rate, so it needs ~114 steps. More seeds means shorter arms means
+faster completion. **So multi-seed growth is forced by the completion-time requirement** -- it is
+not an optional elaboration of the interesting model. Which makes coalescence mandatory rather than
+a feature to defer, and moves closure-aware growth from "next idea" to "prerequisite".
+
+What does not dissolve: the *permanent* incompleteness of a crop's boundary shell, which is what
+`supervised_mask` is for and is orthogonal to growth. And during the first half the chi head is
+still *acting* on incomplete neighbourhoods even though it is not supervised there, so its early
+output feeds the structure the back half is scored on -- noisy rather than unlearnable, and the
+sample pool already trains on states the rule itself produced, which is the same situation.
