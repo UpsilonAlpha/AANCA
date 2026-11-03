@@ -238,7 +238,16 @@ def main() -> int:
         ckpt.restore_python_rng(rng, state["python_rng"])
         print(f"resumed from {last_path} at update {start_update}")
 
-    print(f"{rule.parameter_count()} parameters, one hop, no rollout\n")
+    # ``args.hops``, not the word "one". The banner read "one hop" while the
+    # run used three, because an earlier patch to this line did not match and
+    # failed silently -- and a log that misreports its own configuration is
+    # worse than one that reports nothing.
+    print(
+        f"{rule.parameter_count()} parameters, {args.hops} hop(s), no rollout.\n"
+        "The baseline to beat is the witnesses' own centroid -- 2.51 A\n"
+        "surrounded, 4.76 A at a frontier -- and an untrained head reproduces\n"
+        "it exactly. The target is ~0.6 A, the peptide bond's tolerance.\n"
+    )
     started = time.perf_counter()
     recent: list[float] = []
     recent_error: list[float] = []
