@@ -173,6 +173,65 @@ def main() -> int:
             out = seed_alive(topo.n_residues, 3, generator, device)
             assert out.device.type == device.type and int(out.sum()) == 3
 
+    @check("evaluate: the eval path a run reaches 500 updates in")
+    def _eval():
+        # **Added after the third device fault in a row.** Each of the first
+        # two hid the next: a CPU generator raised before a CPU topology could,
+        # and a CPU topology raised before ``rotamers.nearest_well``'s CPU
+        # constant could. A run that clears all three still dies at its *first
+        # eval* if the eval path has one, and that costs 500 updates rather
+        # than nothing -- so the check covers it too, through the real
+        # functions.
+        from aanca.data import RepackingDataset, read_manifest
+        from aanca.evaluate import build_eval_set, evaluate
+
+        manifest = ROOT / "data" / "manifest.json"
+        pdb = ROOT / "data" / "pdb"
+        if not manifest.exists():
+            print("      (skipped: no manifest)")
+            return
+        specs = []
+        for spec in read_manifest(manifest)["validation"]:
+            for suffix in (".bcif", ".cif", ".pdb"):
+                candidate = pdb / f"{spec.pdb_id}{suffix}"
+                if candidate.exists():
+                    specs.append(type(spec)(spec.pdb_id, candidate, spec.group))
+                    break
+            if len(specs) >= 24:
+                break
+        if not specs:
+            print("      (skipped: no coordinates)")
+            return
+        dataset = RepackingDataset(
+            specs, concentrations=(100.0, 0.0), crop_size=96,
+            device=device, cache_limit=32,
+        )
+        # **Pre-filtered, because the dataset's own filters reject entries the
+        # manifest accepts.** The first attempt took the first two specs
+        # alphabetically and got 10GZ, which has 12 amino acids against a
+        # min_residues of 40 -- RCSB's polymer-monomer count includes
+        # nucleotides, so a nucleic-acid complex passes the manifest and has
+        # almost no protein. That is the dataset behaving correctly and this
+        # check asking the wrong thing of it.
+        usable = []
+        for index in range(len(specs)):
+            try:
+                dataset.load_crop(index)
+            except Exception:
+                continue
+            usable.append(index)
+            if len(usable) >= 2:
+                break
+        if not usable:
+            print("      (skipped: no entry passed the dataset's filters)")
+            return
+        cases = build_eval_set(dataset, usable, (100.0,), seed=0)
+        rule = AANCARule().to(device)
+        result = evaluate(
+            rule, cases, RolloutConfig(steps=2, truncate=2, k=24)
+        )
+        assert result is not None
+
     @check("hole task and loss")
     def _hole():
         rule = AANCARule(hole=True).to(device)

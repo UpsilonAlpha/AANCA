@@ -35,7 +35,21 @@ def nearest_well(degrees: Tensor) -> tuple[Tensor, Tensor]:
     Distance is wrapped, so a prediction at 170 is 10 degrees from trans and
     not 350 from it.
     """
-    centres = torch.tensor(list(WELLS.values()), dtype=degrees.dtype)
+    # **On ``degrees``' device**, which is the whole bug of job 31736674: this
+    # built the centres on the CPU and subtracted them from a GPU tensor, so
+    # every path that assigns a rotamer well died on a card with "found at
+    # least two devices". It is the only line in the identity track that does
+    # arithmetic against a constant built here rather than one carried on the
+    # topology, and so the only one that could.
+    #
+    # Invisible to 809 CPU tests and to the first two GPU checks alike, because
+    # the two earlier checks never reached it -- a CPU generator raised first
+    # (``aanca.rng``), and then a CPU topology raised first
+    # (``scripts/device_check.py``). Three device faults in the same code path,
+    # each hidden behind the one before it.
+    centres = torch.tensor(
+        list(WELLS.values()), dtype=degrees.dtype, device=degrees.device
+    )
     offsets = wrap_to_pi(torch.deg2rad(degrees.unsqueeze(-1) - centres)).rad2deg()
     index = offsets.abs().argmin(dim=-1)
     return index, offsets.gather(-1, index.unsqueeze(-1)).squeeze(-1)

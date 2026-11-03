@@ -3994,3 +3994,47 @@ same way — by interrogating a number that did not make sense rather than by a 
 The common shape: a quantity whose name implies it isolates something, which does not. None of the
 809 tests could have caught any of them, because each one computes exactly what it was written to
 compute.
+
+### Three device faults in one code path, each hidden behind the last — 2026-11-03
+
+The hourly checkup found the GPU check (31736674) had run and **failed 8/10**, up from 6/10 after the
+topology fix, with both remaining failures in the identity-carrying objectives — including the exact
+path job 31516313 died on. v8b_if is chained `afterok`, so it would never have started.
+
+The traceback, from the check's `.err` rather than guessed at:
+
+```
+  rollout.py:801      target = library_index(torsion.resnames, native_chi1)
+  identity.py:156     wells, _distance = rotamers.nearest_well(chi1_degrees)
+  rotamers.py:39      offsets = wrap_to_pi(torch.deg2rad(degrees.unsqueeze(-1) - centres))
+RuntimeError: Expected all tensors to be on the same device, cuda:0 and cpu
+```
+
+`nearest_well` built the three rotamer-well centres **on the CPU** and subtracted them from a GPU
+tensor. One line, one missing `device=`, and it takes down every path that assigns a rotamer well —
+which is every path that touches identity.
+
+**The structure of this is the finding, not the fix.** Three independent device faults sat in the same
+call chain, and each one hid the next:
+
+1. a CPU **generator** against GPU logits (`torch.multinomial`) — raised first, fixed in `aanca.rng`;
+2. a CPU **topology** against GPU coordinates — raised next, and was `scripts/device_check.py`'s own
+   bug rather than the library's;
+3. a CPU **constant** against GPU input, here.
+
+Each fix was necessary and none was sufficient, and after each one the natural report was "fixed,
+confirmed on hardware" — which was true of the fault addressed and false of the path. **Two of the
+three were only ever visible because something ran the real functions on a real card**; 809 CPU tests
+could not see any of them, since on CPU every one of these pairs agrees for free.
+
+**So the check now covers the eval path too**, through `build_eval_set` and `evaluate` rather than a
+paraphrase of them. The reasoning is the same one that has now been right three times: a run that
+clears all three faults above still dies at its **first eval**, 500 updates in rather than at update 0,
+if the eval path carries a fourth. Also pre-filtered, because the first attempt at that check took the
+first two entries alphabetically and got 10GZ — 12 amino acids against a `min_residues` of 40, since
+RCSB's polymer-monomer count includes nucleotides. That was the dataset filtering correctly and the
+check asking the wrong thing of it.
+
+An audit of every other module-level tensor used in arithmetic found none left: `diagnostics` moves to
+CPU deliberately, and `metrics`, `growth.closure_features` and `backbone.measured_geometry` all pass
+`device=`. `nearest_well` was the last of them.
