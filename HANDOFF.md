@@ -3162,3 +3162,79 @@ What does not dissolve: the *permanent* incompleteness of a crop's boundary shel
 still *acting* on incomplete neighbourhoods even though it is not supervised there, so its early
 output feeds the structure the back half is scored on -- noisy rather than unlearnable, and the
 sample pool already trains on states the rule itself produced, which is the same situation.
+
+### Closure-aware growth — the spec, with the reach bound measured — 2026-11-03
+
+Three additions and one loss term. The loss term is the part that matters; the rest is what it needs
+in order to have anything to act on.
+
+**1. See the pending closure.** Partly there already. `edge_features`' `sequence_offset` block is a
+33-dim one-hot of the residue-id difference clipped to ±16, so the rule can **already identify**
+which spatial neighbour is its closure partner, and the backbone RBF block already gives the
+distance and `relative_rotation` the orientation. Two things are genuinely missing:
+
+* Beyond the 10 Å perception cutoff there is no edge at all, so a partner 20 Å away is invisible.
+  Measured junction gaps are 7–9 Å median (inside the cutoff) but reach 23 Å (outside it). Fix: force
+  the nearest-alive-in-sequence residue into the neighbour list, exactly the way ±1 sequence
+  neighbours are already forced by `include_sequence_neighbours`. The `sequence_offset` one-hot then
+  labels it for free.
+* The **index gap** — how many dormant slots lie between me and the next alive one — is never
+  directly available. It is inferable from a partner's sequence offset, but only when that partner is
+  within the cutoff, which is the case that is already fine. Fix: a node feature, the index gap in
+  each direction, clipped and RBF-encoded. It depends on no spatial quantity at all, which is the
+  point.
+
+**2. Budget it — the reachability bound, measured rather than assumed.** Max CA(i)–CA(i+g) distance
+over two real proteins:
+
+| g | 1 | 2 | 3 | 5 | 8 | 12 | 16 |
+|---|---|---|---|---|---|---|---|
+| 1UBQ max, Å | 3.85 | 7.17 | 10.36 | 16.76 | 25.52 | 35.43 | 35.12 |
+| 193L max, Å | 3.84 | 7.14 | 10.42 | 16.81 | 22.56 | 23.77 | 28.36 |
+| per residue | 3.85 | 3.58 | 3.46 | 3.36 | ~3.0 | ~2.5 | ~2.0 |
+
+The per-residue reach falls from 3.85 Å at one bond to ~3.4 Å by g = 3 and keeps falling, and the two
+proteins agree to 0.06 Å up to g = 5. So the usable bound in the regime that matters is **about 3.4 Å
+per spare slot**, and the headline consequence is sharp: **closing a 10 Å gap needs about three spare
+slots.** The ±16 clip is not binding — g = 16 reaches 35 Å.
+
+Against that, the junctions actually produced have **g = 0**: two segments adjacent in sequence, both
+alive, nothing between them, and 7–9 Å apart. Zero budget against a 9 Å gap. Stopping one residue
+earlier gives 3.85 Å of reach, two gives 7.2, three gives 10.4. So the failure is not that growth
+aims badly, it is that growth **spends the entire budget before it needs it**.
+
+**3. Aim it.** `MAX_BIRTH_DIRECTION` is 1.0 rad of swing around the helical reference and 0.72 rad
+spans helix, sheet and polyproline II, so the freedom to steer already exists in the
+parameterisation. Nothing is missing except a reason.
+
+**4. The reason: a reachability restraint.** For each pending closure with index gap `g` and
+end-to-end distance `d`, charge `relu(d − reach(g))`. Its properties are why this is the design and
+not an extra term:
+
+* Exactly zero for single-seed growth, and zero early in multi-seed growth — far apart but plenty of
+  slots left.
+* It bites the instant a birth commits to a geometry that **forecloses** closure, which makes it a
+  *leading* indicator. The peptide restraint is a lagging one: it only fires once the junction has
+  formed, by which point no local move can fix it.
+* The gradient lands on precisely the two decisions that could have avoided the problem: the birth
+  offset direction (aim) and the activation logit (do not wake yet, you are spending budget).
+* It arrives within a step or two of the bad birth, well inside the 12-step truncation window. That
+  is "convert the global constraint into a local one" made concrete, and it is the same move as
+  "birth has no lever arm because nothing is downstream yet", applied to time.
+
+This is the clash term's logic — charge for a geometry that forecloses an outcome rather than one
+that is already wrong — which is a symmetry worth keeping in mind when weighting it.
+
+**What stays hard.** The final bridge still has to be near-exact, and a local rule will get it
+approximately, so expect residual strain at junctions; the honest standard is "comparable to a
+crystal", since the steric preflight measured real structures at up to 0.000430 Å/atom of strain
+rather than zero. And genuine unreachability remains possible: if the seeds fall such that the native
+fold requires an approach direction growth has already committed to, only a coordinated segment
+motion fixes it, and the restraint makes that rare rather than impossible.
+
+**Alternatives considered.** An analytical closure step on each bridge at the end — exact, reliable,
+non-learned, what fragment assembly does — is the fallback if the restraint underperforms, at the
+cost of a step outside the NCA. Per-segment rigid moves are rejected: a segment is not a local
+object, and the locality claim is the project. Single-seed growth is ruled out by the completion-time
+measurement. Seed placement that avoids meetings does not scale: at 92 % alive there are ~8 junctions
+regardless.
