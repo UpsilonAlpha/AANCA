@@ -16,6 +16,7 @@ can only mean a bookkeeping bug.
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import sys
@@ -28,6 +29,19 @@ ROOT = Path(__file__).resolve().parent.parent
 MANIFEST = ROOT / "data" / "manifest.json"
 PDB = ROOT / "data" / "pdb"
 TRAIN = ROOT / "scripts" / "train.py"
+
+#: Appended to every run tag, so two copies of this file running at once do not
+#: clobber each other's checkpoints.
+#:
+#: **This cost half an hour of chasing a regression that was not one.** Two full
+#: suites were running concurrently; these tests write real checkpoints to
+#: ``runs/<tag>/`` and read them back, so each suite's ``pytest_pinned`` run
+#: deleted and rewrote the other's ``last.pt`` mid-test. The symptom is a
+#: *different* test failing on each run -- a warm start that should have been
+#: refused reporting a missing file, two halves not matching -- which reads as
+#: flakiness in the resume logic, the one thing these tests exist to rule out.
+#: Every one of them passes alone.
+TAG_SUFFIX = f"_{os.getpid()}"
 
 SMALL = [
     "--eval-structures", "2",
@@ -53,14 +67,14 @@ def clean_runs():
         "pytest_native", "pytest_native_halves",
         "pytest_numpy_nb", "pytest_device_nb",
     ):
-        shutil.rmtree(ROOT / "runs" / tag, ignore_errors=True)
+        shutil.rmtree(run_dir(tag), ignore_errors=True)
     yield
 
 
 def run(tag: str, updates: int, *extra: str) -> subprocess.CompletedProcess:
     return subprocess.run(
-        [sys.executable, str(TRAIN), "--tag", tag, "--updates", str(updates),
-         *SMALL, *extra],
+        [sys.executable, str(TRAIN), "--tag", tag + TAG_SUFFIX,
+         "--updates", str(updates), *SMALL, *extra],
         cwd=str(ROOT),
         capture_output=True,
         text=True,
@@ -70,9 +84,21 @@ def run(tag: str, updates: int, *extra: str) -> subprocess.CompletedProcess:
 
 def weights(tag: str) -> dict:
     state = torch.load(
-        ROOT / "runs" / tag / "last.pt", map_location="cpu", weights_only=False
+        run_dir(tag) / "last.pt", map_location="cpu", weights_only=False
     )
     return state["rule"], state["update"]
+
+
+def run_dir(tag: str) -> Path:
+    """Where ``run(tag, ...)`` actually wrote, suffix included."""
+    return ROOT / "runs" / (tag + TAG_SUFFIX)
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _clean_up_this_processes_runs():
+    yield
+    for path in (ROOT / "runs").glob(f"*{TAG_SUFFIX}"):
+        shutil.rmtree(path, ignore_errors=True)
 
 
 @pytest.mark.needs_data
@@ -147,9 +173,9 @@ def test_native_starts_are_counted_and_survive_a_resume():
     second = run("pytest_native_halves", 4, *native)
     assert second.returncode == 0, second.stdout[-3000:] + second.stderr[-3000:]
 
-    whole = torch.load(ROOT / "runs" / "pytest_native" / "last.pt",
+    whole = torch.load(run_dir("pytest_native") / "last.pt",
                        map_location="cpu", weights_only=False)
-    halves = torch.load(ROOT / "runs" / "pytest_native_halves" / "last.pt",
+    halves = torch.load(run_dir("pytest_native_halves") / "last.pt",
                         map_location="cpu", weights_only=False)
     # Every update takes a native start, and the tally is the run's, not the
     # segment's.
@@ -172,7 +198,7 @@ def test_a_run_without_native_starts_draws_no_extra_randomness():
     assert plain.returncode == 0, plain.stdout[-3000:] + plain.stderr[-3000:]
     weights_plain, _ = weights("pytest_native")
 
-    shutil.rmtree(ROOT / "runs" / "pytest_native", ignore_errors=True)
+    shutil.rmtree(run_dir("pytest_native"), ignore_errors=True)
     explicit = run("pytest_native", 2, "--native-probability", "0")
     assert explicit.returncode == 0, explicit.stdout[-3000:] + explicit.stderr[-3000:]
     weights_explicit, _ = weights("pytest_native")
@@ -198,14 +224,14 @@ def test_a_warm_start_keeps_the_training_and_begins_a_new_curve():
     before, before_update = weights("pytest_pinned")
     assert before_update == 2
 
-    checkpoint = ROOT / "runs" / "pytest_pinned" / "last.pt"
+    checkpoint = run_dir("pytest_pinned") / "last.pt"
     # A rollout length the fingerprint would refuse on a resume.
     warm = run("pytest_warm", 2, "--steps", "5", "--init-from", str(checkpoint))
     assert warm.returncode == 0, warm.stdout[-3000:] + warm.stderr[-3000:]
     assert "warm start" in warm.stdout
 
     state = torch.load(
-        ROOT / "runs" / "pytest_warm" / "last.pt", map_location="cpu", weights_only=False
+        run_dir("pytest_warm") / "last.pt", map_location="cpu", weights_only=False
     )
     assert state["update"] == 2, "a warm start counts its own updates from zero"
     assert state["init_from"]["update"] == 2, "provenance is not recorded"
@@ -225,7 +251,7 @@ def test_a_warm_start_over_different_structures_is_refused():
 
     source = run("pytest_pinned", 2)
     assert source.returncode == 0, source.stdout[-3000:] + source.stderr[-3000:]
-    checkpoint = ROOT / "runs" / "pytest_pinned" / "last.pt"
+    checkpoint = run_dir("pytest_pinned") / "last.pt"
 
     bad = run(
         "pytest_warm_bad", 2, "--structures", "6", "--init-from", str(checkpoint)

@@ -3834,3 +3834,75 @@ faster, and nothing yet says the other terms can keep up with it.
 
 One cosmetic consequence: with identity at 93.7 the *total* is around 350 and its magnitude means
 nothing. Read the per-term columns, not the total.
+
+### Overnight state — what is running and what to read first — 2026-11-03
+
+**On Bunya.** Two jobs, chained so they need no attention:
+
+| job | what | state |
+|---|---|---|
+| **31736674** | `bunya_gpu_check.slurm`, now ending in `scripts/device_check.py` | queued behind the user's own `pmhccamp` array |
+| **31736759** | `v8b_if`, `--dependency=afterok:31736674` | will start only if the check passes |
+
+**If the check fails for any reason, 31736759 never runs** and sits in
+`DependencyNeverSatisfied` indefinitely — the same state the stale `mm_h3_6b` job is in. That is the
+intended behaviour and not a hang, but it means "v8b_if never started" should be read as "the check
+failed", and the check's `.out` is the place to look.
+
+**v8b_if corrects three things about the original v8_if (31516313)**, beyond the device bug that
+killed it:
+
+* `--noop-weight 0 --native-probability 0.2` were both absent, so it would have trained with the
+  measured-vacuous no-op term at full weight and **no fixed-point supervision at all**. Every run
+  since v5 has used those two.
+* It omitted `--split`, so it would have trained on **validation** — which this document says is "a
+  development signal, never a benchmark result", and which is the wrong split for the run that is
+  meant to produce the PottsMPNN comparison.
+* `--updates 120000` is about five days of GPU at v7b's 3.5 s/update. Reduced to **20000**, matching
+  v7b's scale and one 24 h segment, because committing five days of a shared allocation to a
+  configuration whose last attempt died at update 0 is not the right order to do things in. Extend
+  if it looks right.
+
+**Locally.** `hole_v2` is training the hole head on CPU, 12,000 updates, and it is the measurement
+the cloud scheme turns on. At 9,000:
+
+```
+  mask          fused   centroid    gain  per-witness  witnesses   top-1
+  hole         1.67 A     3.00 A   +1.33       6.62 A       16.2  54.0%
+  frontier     1.71 A     4.54 A   +2.82       5.52 A        8.9  42.0%
+```
+
+**It is plateauing around 1.7 Å against the 0.6 Å the peptide bond needs** — a factor of about 2.8
+short. Read `scripts/peptide_shell_probe.py` for where 0.6 comes from.
+
+**And one prediction of mine is already wrong, in a useful direction.** I expected the frontier case
+to be much harder, because a hole on the boundary of a partial structure has half the witnesses (8.9
+against 16.2) and they are all on one side. Trained, it is **not** harder: 1.71 Å against 1.67 Å.
+The witnesses' count is not what limits the answer. That matters for growth specifically, because
+growth is *always* at a frontier — the case I thought would be the obstacle is free.
+
+So the open question is no longer "can a frontier be handled" but "can one hop ever reach 0.6 Å",
+and the answer looks like no. Which is what the `--hops` ablation is for: the architecture's claim is
+"one hop per step, depth comes from time", so on a task with no time, hops *are* depth, and how many
+this task needs estimates how many steps a growth rollout would need before a newborn could be placed
+well. **Run `--hops 3` next, same budget, and compare.** If three hops reach 0.6 Å then growth needs
+a few relaxation steps per birth, which is unsurprising and fine; if they do not, the local
+neighbourhood does not determine a residue's position well enough for density-driven growth at
+peptide-bond precision, whatever is built on top.
+
+### A trap closed: the resume tests cannot run concurrently with themselves
+
+Two full suites were running at once and *different* tests failed on each run — a warm start that
+should have been refused reporting a missing file, two halves not matching. That reads as flakiness in
+the resume logic, which is the one thing those tests exist to rule out, and it cost half an hour of
+chasing a regression that was not one. Every one of them passes alone.
+
+The cause: `tests/test_train_resume.py` runs the real training script and writes real checkpoints to
+`runs/<tag>/`, then reads them back. Two copies share the tags, so each one's `pytest_pinned` run
+deletes and rewrites the other's `last.pt` mid-test. Fixed with a per-process tag suffix and a
+session-scoped fixture that removes only its own directories, so the tests are now safe to run
+concurrently by construction.
+
+Worth generalising: any test that writes to a fixed path outside `tmp_path` is a test that cannot be
+run twice at once, and the failure it produces will look like a bug in the thing under test rather
+than in the harness.
