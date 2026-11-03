@@ -4101,3 +4101,24 @@ moving*, and measure its peptide bond against N. If the bond tightens from 0.9 �
 handful of steps, growth works and the hole task was measuring the wrong instant. If it does not, the
 newborn's position is never recoverable and birth needs to be more accurate than a neighbourhood can
 make it.
+
+### A liveness probe needs a control, or "queued" and "blind" look identical — 2026-11-04
+
+The 00:17 checkup's first probe reported the GPU check as `still queued` and `v8c_if` as
+`not started`. Both were false: the whole read path was down, and the helper that classified the
+results treated an HTTP 404 and a `TypeError: Failed to fetch` the same way — so "the job log does not
+exist yet" and "I cannot see anything at all" produced the same string.
+
+**The fix is a control request for a file known to be absent.** A working route answers 404 for a
+missing file; a dead route raises a network error for *everything*. Measured: the real file, a second
+attempt at it, and a deliberately nonexistent path all raised `Failed to fetch`, which is what
+established the route rather than the files was gone. `BUNYA_BROWSER_SHELL.md` already says a 404 with
+body "Not found" means the route worked and the file is missing — this is that rule turned into a
+probe instead of a thing to remember.
+
+Then the supplied refresh link redirected to `iam.rcc.uq.edu.au`, which is the unambiguous expiry
+signal, as against the dead-read-path case the same document warns reads identically.
+
+**What expiry does and does not stop.** Submitted SLURM jobs are separate jobs and are unaffected;
+anything under `/scratch` survives. So 31739839 and 31739848 run or have run regardless, and the chain
+resumes being readable the moment the user reconnects. What is blocked is only observation.
