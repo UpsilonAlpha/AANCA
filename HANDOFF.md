@@ -4038,3 +4038,66 @@ check asking the wrong thing of it.
 An audit of every other module-level tensor used in arithmetic found none left: `diagnostics` moves to
 CPU deliberately, and `metrics`, `growth.closure_features` and `backbone.measured_geometry` all pass
 `device=`. `nearest_well` was the last of them.
+
+**Chain re-established after the rotamers fix.** v8b_if (31736759) could never have started, so it
+was cancelled rather than left to sit in `DependencyNeverSatisfied`. New chain:
+
+| job | what | depends on |
+|---|---|---|
+| **31739839** | `bunya_gpu_check.slurm`, now 11 paths including the eval path | — |
+| **31739848** | `v8c_if`, same args as v8b_if | `afterok:31739839` |
+
+Three GPU-check submissions to get a clean one is the cost of having had three stacked device faults,
+and it is still the right trade: each check is ten minutes against a 24-hour segment that would have
+died, and the second and third faults were only findable by running the real functions on the card.
+
+### Depth is not the bottleneck: three hops buy 0.03 Å, and the reason is common-mode error
+
+`hole_h3` finished — 12,000 updates, 66.9 min, `--hops 3`, everything else identical to `hole_v2`.
+Like for like on bonded positions (`scripts/hole_by_structure.py`, same 60 structures, 6 repeats):
+
+| | 1 hop | 3 hops |
+|---|---|---|
+| **all bonded** | **0.95 Å** | **0.92 Å** |
+| alpha helix | 0.88 Å (ratio 2.98) | 0.86 Å (ratio 3.04) |
+| irregular | 0.93 Å | 1.06 Å |
+| extended | 1.13 Å | 0.96 Å |
+| near collinear | 0.99 Å | 1.02 Å |
+| **per-witness** | **6.54 / 5.25 Å** | **3.52 / 2.66 Å** |
+| chain breaks (excluded) | 4.42 Å | 3.22 Å |
+| training loss | ~8.2 | ~4.1 |
+
+**So the answer to "can depth close the 1.6× gap" is no.** 0.92 Å against 0.95 Å is a 3 % improvement
+where a factor of 1.6 is needed, and three hops cost 3× the message passing for it.
+
+**But the per-witness error roughly halved, and that is the informative part.** Each individual
+witness became much better at pointing at the hole — 6.54 → 3.52 Å — while the *fused* answer barely
+moved. That can only mean the witnesses' residual errors are **largely correlated**: fusing sixteen
+of them cannot average away a bias they share, and making each one individually sharper does not help
+if they are all wrong in the same direction.
+
+Which identifies what the remaining error *is*. The common-mode component is "where on the
+Ramachandran circle" — and that is a property of the missing residue's **own** conformation, not of
+any witness's view of it, so every witness is equally uncertain about it no matter how much
+information reaches them. More hops move information further; they cannot create information nobody
+has.
+
+**The consequence for growth, and it is the useful one.** `hole_predictions` builds the graph once and
+carries only the hidden state, which was deliberate: it isolates "how far does information have to
+travel" from "how long does the geometry take to settle". The answer is that **information travel was
+never the bottleneck — settling is.** So a newborn's placement cannot be made peptide-bond-accurate
+from a frozen neighbourhood in any number of hops, and the thing that could fix it is a real rollout
+where the structure *changes* between steps: the common-mode uncertainty is resolved by the
+neighbourhood rearranging around the newborn, not by more message passing over a fixed graph.
+
+That is a point in favour of the architecture rather than against it. The rule's claim is that depth
+comes from time; this says the depth that matters is the kind that only time provides. It also means
+the reach restraint and the relaxation steps are doing load-bearing work rather than cleanup — a
+birth placed to 0.9 Å is *expected* to be wrong at the peptide bond, and the steps after it are what
+make the bond.
+
+**What would test it directly:** place a newborn, then run N relaxation steps with the *geometry
+moving*, and measure its peptide bond against N. If the bond tightens from 0.9 Å towards 0.1 Å over a
+handful of steps, growth works and the hole task was measuring the wrong instant. If it does not, the
+newborn's position is never recoverable and birth needs to be more accurate than a neighbourhood can
+make it.
