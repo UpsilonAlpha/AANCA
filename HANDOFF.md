@@ -2967,3 +2967,100 @@ packing pass over the grown backbone, which it does. The output of growth-with-i
 them, and what RFD4-Proteina produces directly — and placing the side chains afterwards is the
 existing rule's job. The composition is the next measurement, and the finding above says it has to
 be a pipeline.
+
+### Coalescence, measured — and the bug the measurement found — 2026-11-03
+
+`scripts/coalescence_probe.py`. Grow 1UBQ from several seeds, then look at every covalently bonded
+pair that is alive at both ends and ask what its realised C-N distance is. A pair made by a *birth*
+sits at the peptide bond's 1.33 Å. A pair where two independently grown segments merely became
+sequence-adjacent has never been placed by anything.
+
+```
+ seeds   alive  segments  bonded  joined  junctions  worst gap  median gap
+     1   8.3%       1.0     5.3     5.3        0.0          -           -
+     2  18.9%       1.7    12.7    12.7        0.0          -           -
+     4  34.6%       3.0    23.3    23.0        0.3        7.5         7.5
+     8  61.8%       3.7    43.3    40.3        3.0       14.7         9.0
+    16  92.1%       3.3    66.7    58.3        8.3       23.3         7.5
+```
+
+`joined` is pairs within 2 Å — real peptide bonds. `junctions` is pairs beyond it. **One and two
+seeds produce no junctions at all**: every bond is real and the chain is intact, which is why the
+restraint reads ~0.002 there. From four seeds up, junctions appear and their median gap is 7–9 Å,
+which is where the restraint's 0.5 and 3.9 come from. So the restraint was never measuring poor
+geometry; it was counting unclosed loops, and now the count is explicit.
+
+**Why nothing closes them.** `frontier` computes `cward[i] = alive[i] & links[i] & ~alive[i+1]`, so
+once `i+1` is alive from the *other* seed, `i` is no longer on any frontier and growth simply stops
+there. The pair is adjacent in sequence, alive at both ends, and was never placed relative to each
+other. The only tool for moving an already-alive residue is `rigid_relax`, bounded at 0.1 rad and
+0.3 Å per step, and closing a 9 Å gap needs a **coordinated** motion of a whole segment that no
+local rule produces: each residue's restraint gradient says "move toward your sequence neighbour",
+which also pulls it away from its own segment-mates, who are pulling back. It is the classical loop
+closure problem, which is a global constraint, and bounded local updates are bad at those.
+
+**The diagnosis is actuation, not perception.** Residue `i` can already see where `i+1` is —
+sequence neighbours are *forced* into each other's neighbour lists (`select_neighbours`'s
+`include_sequence_neighbours`), both are alive, so the edge is real and carries the distance. The
+rule knows the gap exists and how big it is. What it has no way to do is move a hundred residues
+together. So the fix is not a feature; it is either closure-aware growth (bias births *toward* a
+nearby frontier, so segments meet with a short gap that a few residues can bridge) or a dedicated
+non-learned closure step at the end, which is what fragment assembly does.
+
+**This matters more than a defect usually would**, because multi-seed growth was the whole argument:
+nucleation and coalescence is the foldon-like, parallel, O(surface) story, and one seed growing
+C-ward is synthesis order — the thing this project argues folding is not. If coalescence cannot be
+made to work, multi-seed growth produces several fragments that never become one protein.
+
+**The bug the number found.** The 16-seed worst gap first came out as **13,495 Å**, which is not a
+geometry error but a parked residue — `PARK_SPACING` is 500 Å per slot. Refusing to report an
+unexplained number turned up a real fault: a dormant slot can be woken from **both** sides in the
+same step, which is exactly what closing a one-residue gap looks like. `give_birth` reads the
+backbone once from the incoming coordinates, so the second placement's *source* triad was the
+child's parked one while its atoms had already been moved by the first — and `rigid_onto_triad` then
+subtracts a CA hundreds of Ångström away. Fixed by letting one side win and leaving the other as a
+junction, which is the honest resolution: two segments meeting is not a birth, and pretending either
+parent placed the child would hide the gap rather than report it. The worst gap is now 23.3 Å, a
+real junction. Pinned in `tests/test_growth.py`.
+
+Worth noting what did *not* catch it. Every growth test passed, the full suite passed, the untrained
+probe's FAPE and RMSD looked ordinary, and the peptide restraint was already large at 8 and 16 seeds
+for a legitimate reason — so the bug hid behind a number that was *supposed* to be big. It took
+asking what a specific digit meant.
+
+### Growth and packing cannot share one rollout — the three reasons, in order of depth
+
+Recorded because the earlier section asserted this from one measurement and the measurement is the
+weakest of the three arguments.
+
+1. **Representation (contingent).** Growth needs a state with no side chains, or a newborn is its
+   native amino acid. Packing needs side chains, because they are what it moves. Measured: under
+   blind growth the chi head's gradient is exactly zero, because with every side-chain atom on CB
+   the chi1 axis CA-CB passes through all of them and a rotation about an axis does not move points
+   on it. **But this is dodgeable** — materialise an *idealised* side chain from the committed label
+   instead of collapsing to CB, and there is no leak and something to pack. It needs ideal
+   coordinates for twenty residue types, the table this project avoided by using rigid transfer. So
+   "cannot" overstates it: cannot *yet*, for a reason that is a table.
+2. **The atom set is a function of a label that is still moving (a real pathology).** Labels ripple
+   throughout the rollout, so a residue's atom set is undetermined while its type is. The joint
+   (type, chi1 well) library was designed so a committed entry has a definite atom set, so one could
+   materialise on commitment and re-materialise on change — at the cost that every label flip
+   discards the packing work done on the old side chain, and the chi head's gradient for a residue
+   whose type later changes is noise. Not fatal, and not free.
+3. **The chi target is unlearnable where growth is happening (the principled reason).** This project
+   already encodes the principle: `topo.supervised_mask` exists to exclude residues whose perception
+   is incomplete on a crop, because "its native torsions depend on contacts that were cropped away
+   and asking for them is unlearnable rather than merely hard". A growing structure is that case at
+   its worst — every residue near the frontier has a radically incomplete neighbourhood and stays
+   that way until growth finishes. Supervising chis during growth would therefore supervise only the
+   deep interior of the alive set: a small, biased subset that shrinks as the number of seeds rises.
+   This argument survives both fixes above, and it is why the answer is a pipeline.
+
+**The honest qualification.** All three are about a representation where side chains are *explicit
+Cartesian atoms whose count depends on type*. RFD4-Proteina reportedly carries all-atom information
+through its whole trajectory in a 32-dim per-token latent and decodes at the end, with sequence
+recovery against the final design rising from ~50 % to 97 % along the way — so it does, in effect,
+grow structure and sequence together. A latent has no type-dependent atom count, so reason 1
+disappears and reason 2 weakens. Reason 3 does not: an incomplete neighbourhood is incomplete
+whatever the state variable. That is the argument for a pipeline that does not depend on this
+project's representation choices.

@@ -304,6 +304,25 @@ def give_birth(
         if parents.numel() == 0:
             continue
         children = parents - 1 if direction == 0 else parents + 1
+        # **A child may be woken from both sides in the same step**, which is
+        # what closing a one-residue gap looks like, and it was a bug worth the
+        # measurement that found it. ``bb`` is read once from the incoming
+        # coordinates, so the second placement's *source* triad was the child's
+        # parked one while its atoms had already been moved -- and
+        # ``rigid_onto_triad`` then subtracts a CA five hundred Angstrom per
+        # slot away, flinging the residue to roughly the park distance. It
+        # showed up as a 13,495 A peptide bond at 16 seeds, in exactly the
+        # coalescence regime this is all about.
+        #
+        # One side wins and the other becomes a junction, which the peptide
+        # restraint charges for. That is the honest resolution: two
+        # independently grown segments meeting is not a birth, and pretending
+        # either parent placed the child would hide the gap rather than report
+        # it.
+        fresh = ~alive[children]
+        parents, children = parents[fresh], children[fresh]
+        if parents.numel() == 0:
+            continue
         n, ca, c = bb[parents, 0], bb[parents, 1], bb[parents, 2]
         if birth_mode == "cartesian":
             triad = _cartesian_triad(

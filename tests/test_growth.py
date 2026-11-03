@@ -401,3 +401,40 @@ def test_the_objective_refuses_a_config_without_growth(ubiquitin):
         growth_objective(
             AANCARule(growth=True), coords, topo, RolloutConfig(steps=1, k=24)
         )
+
+
+def test_a_child_woken_from_both_sides_is_placed_once(ubiquitin):
+    """The coalescence bug, pinned.
+
+    Closing a one-residue gap means both neighbours are on a frontier for the
+    same dormant slot and both may wake it in one step. ``give_birth`` reads
+    the backbone once from the incoming coordinates, so the second placement's
+    *source* triad was the child's parked one while its atoms had already been
+    moved -- and the rigid transform then subtracts a CA hundreds of Angstrom
+    away. Measured as a 13,495 A peptide bond at 16 seeds before the fix.
+
+    One side wins; the other side becomes a junction for the peptide restraint
+    to charge for, which is the honest outcome.
+    """
+    topo, coords, links = ubiquitin
+    alive = _alive(topo.n_residues, [25, 27])
+    parked = park_coords(coords, alive)
+    decided = torch.zeros(topo.n_residues, dtype=parked.dtype)
+    born_c = decided.clone()
+    born_c[25] = 1.0          # 25 wakes 26 C-ward
+    born_n = decided.clone()
+    born_n[27] = 1.0          # 27 wakes 26 N-ward, same step
+    torsions = torch.zeros(topo.n_residues, 2, 6, dtype=parked.dtype)
+
+    grown, after = give_birth(
+        parked, topo, alive, links, born_n, born_c, torsions,
+        birth_mode="cartesian",
+    )
+    assert bool(after[26])
+    bb = backbone_atoms(grown, topo)
+    # Placed off one of its two parents, so it is a peptide bond away from one
+    # of them -- not hundreds of Angstrom from both.
+    to_25 = float((bb[26, 0] - bb[25, 2]).norm())
+    to_27 = float((bb[27, 0] - bb[26, 2]).norm())
+    assert min(to_25, to_27) < 2.0, (to_25, to_27)
+    assert max(to_25, to_27) < 100.0, "the child was flung to its parked slot"
