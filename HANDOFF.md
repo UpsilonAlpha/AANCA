@@ -4122,3 +4122,49 @@ signal, as against the dead-read-path case the same document warns reads identic
 **What expiry does and does not stop.** Submitted SLURM jobs are separate jobs and are unaffected;
 anything under `/scratch` survives. So 31739839 and 31739848 run or have run regardless, and the chain
 resumes being readable the moment the user reconnects. What is blocked is only observation.
+
+### One newborn in five would fail threading at 0.9 Å, and rotation is nearly free
+
+`scripts/bond_sensitivity_probe.py`, 20 structures. The hole head's accuracy is a **CA** error and the
+threading tolerance is a **C–N** distance, and the two had been compared directly as though they were
+the same quantity. They are not: the bond runs from the parent's C to the child's **N**, which depends
+on the child's orientation as well as its CA. So perturb a real residue's frame by a controlled amount
+and remeasure the bond holding it to its parent. No model, no training — a property of the geometry,
+so it bounds what either could achieve.
+
+| CA shift | rotation | mean C–N | median | 90th | past the 2.0 Å cut |
+|---|---|---|---|---|---|
+| 0.0 | 0° | 1.33 Å | 1.33 | 1.35 | 0.0 % |
+| 0.3 | 0° | 1.36 Å | 1.37 | 1.58 | 0.0 % |
+| **0.6** | 0° | 1.42 Å | 1.46 | 1.85 | **0.0 %** |
+| **0.9** | 0° | 1.54 Å | 1.61 | **2.12** | **20.4 %** |
+| 1.5 | 0° | 1.90 Å | 2.01 | 2.69 | 50.4 % |
+| 0.0 | 11° | 1.36 Å | 1.36 | 1.55 | 0.0 % |
+| 0.9 | 11° | 1.56 Å | 1.62 | 2.16 | 21.8 % |
+
+**Two corrections, in opposite directions.**
+
+*Rotation is nearly free, so the gap I flagged was not one.* Eleven degrees about the residue's own CA
+costs 0.03 Å of mean bond and sends nothing past the cut — because N sits only ~1.46 Å from CA, so even
+a large rotation moves it a couple of tenths, much of that tangential to the bond. I had worried that
+orientation error would amplify a CA error into a worse bond. It does the opposite: the bond is almost
+entirely a function of where the CA is.
+
+*But the statistic that matters is the tail, not the mean, and that makes 0.9 Å worse than it looked.*
+At the hole head's 0.9 Å the **mean** bond is 1.54 Å, which reads as comfortably fine against an ideal
+1.329 — while the 90th percentile is 2.12 Å and **20.4 % of bonds exceed the 2.0 Å cut and would not be
+read as peptide bonds at all**. A random displacement is partly along the bond axis, where it is
+absorbed, and partly perpendicular, where it is not; the mean hides that and the tail is the whole
+story.
+
+So "0.9 Å placement against a 0.6 Å target, short by 1.6×" understates it. The honest statement is
+**one newborn in five is unthreadable**, and at 0.6 Å none are — which vindicates that target, though
+for a different reason than it was derived: 0.6 Å is where the *tail* clears the cut, not where the
+mean does.
+
+**And this sharpens the hops conclusion rather than competing with it.** Three hops halved the
+per-witness error and left the fused error alone, which says the residual is **common-mode** — every
+witness wrong in the same direction. Common-mode error is exactly what produces a tail: it does not
+average away over witnesses, so it survives into the 90th percentile while the mean looks healthy.
+The two measurements are describing the same thing from different ends, and together they say the
+remaining work is to remove a correlated bias, not to reduce an average.
