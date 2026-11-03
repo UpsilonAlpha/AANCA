@@ -4245,3 +4245,23 @@ of 0.514 Å: with `--identity-start masked` a native-start rollout is re-decidin
 side chains *should* move. Three of the standard diagnostics mean something different under an
 identity run, and the honest position is that the only interpretable numbers from v8c_if are the
 identity NLL trajectory and the `|delta|` plateau.
+
+### Scoring a finished run's identity head — `scripts/score_identity.py`
+
+Applies the now-instrumented `evaluate` to a checkpoint, so v8c_if's held-out identity number can be
+had without spending another seven GPU-hours re-deriving it. Reports joint NLL (floor ln 54 = 3.99),
+type-marginal NLL (floor ln 20 = 3.00), sequence recovery, and the label-churn curve.
+
+**It reads the held-out indices from the checkpoint rather than reconstructing them**, and the reason
+is a mistake the first version made and crashed on. `train.py` builds its dataset over the **whole**
+available split, and `usable()` shuffles `range(len(dataset))` across that full list and keeps the
+first that load — so a stored index is a position in the entire split. Truncating the pool to
+`structures + eval_structures`, which looks like the obvious thing since that is how many the run
+used, renumbers every index and scores a *different* set of structures, some of which the run trained
+on. It raised an `IndexError` rather than quietly scoring the wrong twelve, which was luck rather than
+design: had the pool been larger than the highest stored index, it would have returned a plausible
+number for the wrong structures. That is the same class of error as the thing the script exists to
+correct — a number measuring something other than what it is named — one level up.
+
+`--weights` scores a different file's parameters against those indices, which `best.pt` needs: it
+holds weights alone under `state_dict` and carries no split.
