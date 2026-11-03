@@ -3433,3 +3433,75 @@ accept the gauge freedom. Measure the real per-step cost on a growth rollout bef
 That is wrong on the locality axis: closing a three-residue bridge is a local solve over a seven-atom
 span, not a global operation. What makes it un-NCA-like is that it is neither learned nor expressed
 as a cell update. So if locality is the priority it is compatible; it is autonomy that it costs.
+
+### Growth as a point cloud, not a chain of slots — the better version — 2026-11-03
+
+The proposal, in its correct form and not the garbled one recorded two sections up: during training the
+rule is already shown the CA and CB coordinates of its spatial neighbours; during growth it uses that
+training to **add a node to the graph**. The newborn's position comes from what a real protein's
+neighbourhood looks like — "my neighbourhood is sparse over there, there should be a residue there" —
+rather than from a slot index or a peptide-bond budget.
+
+**This dissolves the closure problem rather than solving it, which is why it is the better idea.**
+With pre-allocated slots, residue *i* must bond to residue *i+1*: the partner is predetermined by
+index, so two segments that drift apart have a specific unclosable gap, and that gap is what the reach
+restraint charges for. In a cloud there is no predetermined partner. **Any** two segment ends may join
+if they come within peptide range, so which ones join is decided by geometry rather than violated by
+it, and the six-degree-of-freedom gauge freedom stops mattering because there is no correspondence to
+be wrong about.
+
+**It also recovers variable length, which the slot design silently gave up.** Growth's advertised
+advantage over diffusion was that length is an outcome rather than an input — and then `seed_alive`
+pre-allocates `N` slots, which fixes the length exactly as diffusion does. A cloud restores it.
+
+**And it turns the missing distribution into a local one.** "Growth is a sample from whatever the rule
+happens to do, with no density attached" has been the standing objection, matching "a fixed point is
+not an energy". But "my neighbourhood should look like a real protein's" is a *local* statement over a
+10 Å ball, learnable from data, and that is a Markov random field — which is exactly what the Potts
+machinery was built for. The cloud formulation makes the distribution problem better, not worse.
+
+**Perception is already in place.** `backbone_edge_block` is the full 5×5 N/CA/C/O/CB distance matrix,
+RBF-encoded: 400 of the 575 edge dimensions. The rule has been shown precisely the coordinates the
+proposal says it should be shown, on every structure it has ever trained on. What is missing is not
+perception but a head that *predicts* them — the rule currently predicts chi deltas, frames, labels
+and activation, and is never asked where a neighbour ought to be.
+
+**The measurement, and why it answers a question the scheme does not have to ask.** The obvious worry
+is sequence assignment: a density-placed residue arrives with a position and no index, so is the chain
+recoverable from the cloud? `scripts/ca_shell_probe.py`, 291 structures:
+
+```
+  bonded CA-CA      n= 283066  min 2.75  median 3.81  max 4.32
+  non-bonded CA-CA  n=1171242  min 3.08  1st pct 4.36
+  non-bonded pairs closer than the longest bonded one: 10028 (8.6e-03 of them)
+
+  CAs within 4.2 A of a residue:  1 -> 1.92%   2 -> 94.05%   3 -> 3.91%   4+ -> 0.10%
+  95.97% have exactly one or two, which is what makes the chain a readable path
+```
+
+So the chain is *mostly* readable — 96 % of residues unambiguously — but not cleanly: the populations
+overlap by 0.86 %, and 4 % of residues carry a third CA at peptide range. Reading a path off the cloud
+would need more than a threshold.
+
+**But the scheme never needs to read it back**, because the residue that creates a node knows it
+created it. The covalent relation is *recorded at birth*, not inferred — so the chain is built
+incrementally and sequence assignment is a non-problem. What the measurement does bound is a different
+risk: a newborn placed at peptide range from its parent may land at peptide range from some *third*
+residue, and nothing in the geometry distinguishes a real bond from that coincidence. The rate is the
+4 % above, and it is the thing a clash-like term would have to suppress.
+
+**What it costs: the loss loses its correspondence.** With slots, grown residue *i* is native residue
+*i*, so FAPE and the identity term have a per-residue target for free. In a cloud there is no
+correspondence, so a supervised loss needs an **assignment step** first. There is precedent rather
+than novelty here: RFD4-Proteina scores motif-token correspondences with an auxiliary head and
+resolves them by per-chain Hungarian assignment. For de novo there is no target anyway and the loss is
+the local density above; it is supervised regrowth that would need the assignment.
+
+**The cheap decisive next step, which needs no rollout at all.** Train a neighbour-placement head by
+**masked-residue reconstruction on native structures**: delete one residue, show the rule the rest, ask
+where the missing CA was. One forward pass per residue, no unrolling, no growth machinery — and
+directly analogous to the masked-label task inverse folding already runs. The resulting error is the
+number that says whether density-driven growth can work at all, because it is exactly the quantity a
+newborn's placement inherits. Measure that before building the cloud representation, which is a large
+refactor: `TorsionTopology` and `FeatureTopology` are both indexed by a fixed residue count with fixed
+sequence ids.
