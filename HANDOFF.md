@@ -3642,3 +3642,103 @@ the neighbour list, so such pairs always exist. Measured: moving the hole 25 Å 
 any alive residue, bit-identical, because the edge is zeroed at aggregation by
 `edge_mask & alive[neighbours]`. Only the hole's own row moves, by 3e-7, and nothing reads it. The
 same argument covers the growth path, which masks the same way.
+
+### The clamp table is complete, and silencing is quantitative — 2026-11-03
+
+All three jobs finished (exit 0). With `--no-anchor` at 0.75 pinned, every row from the same seed so
+both arms score the same residues from the same starts:
+
+| run | arm | free right | free MAE | start | moved | stuck | native − random | moved n/r |
+|---|---|---|---|---|---|---|---|---|
+| v5 (31515295) | native | 54.2 % | 58.50 | 33.5 % | 46.58 | 68.7 % | **−20.9** | **0.52** |
+| v5 | random | 75.1 % | 34.34 | 33.5 % | 89.17 | 35.2 % | | |
+| v6 (31515293) | native | 63.4 % | 47.48 | 33.5 % | 61.64 | 57.4 % | **−11.9** | **0.69** |
+| v6 | random | 75.3 % | 34.31 | 33.5 % | 89.47 | 35.1 % | | |
+| v6 seed 1 (31515294) | native | 63.0 % | 47.40 | 34.5 % | 59.07 | 59.3 % | **−12.7** | **0.67** |
+| v6 seed 1 | random | 75.7 % | 33.49 | 34.5 % | 88.57 | 34.9 % | | |
+
+Pinned drift is 0.00e+00 on every native arm, so no pin leaked and no row is void.
+
+**The prediction held.** The previous session predicted v6's `moved n/r` would fall between v5's 0.52
+and 1; it is 0.69 and 0.67. And the seed replicate puts the v6 deficit at **−12.3 ± 0.4**, so the
+nine-point improvement over v5 is far outside seed noise — against the 1.2-point seed-to-seed spread
+measured on the accuracy itself.
+
+**The deficit is accounted for by the under-movement, numerically.** Taking the deficit against
+`1 − moved n/r`: v5 is 20.9 over 0.48, which is 43.5 points per unit; v6 is 12.3 over 0.325, which is
+37.8. Within 15 % of each other across two generations. The same holds on the stuck column: the
+random arm leaves 35 % stuck in both runs — that is the rate at which a random start lands in the
+right well by luck — and the native arm's *excess* over it is 33.5 points for v5 and 22.3 for v6,
+tracking the deficit in the same proportion.
+
+So the silencing account is not merely consistent with the table, it predicts its magnitude from a
+movement statistic that has nothing to do with accuracy. **`--damage-fractions` bought exactly the
+movement it restored and no more.** Whether `--clamp-probability` closes the rest is the next
+measurement, and it has a quantitative target: driving `moved n/r` to 1 should take the deficit to
+roughly zero.
+
+### v7b finished: the clash term works and costs accuracy — 31484745
+
+20,000 updates, 1,182 min on an MI355X, exit 0, `--clash-weight 50 --damage-fractions 1.0 1.0 0.5 0.2
+0.05` warm-started from `v6_mixed/last.pt`. Held out after 20,000:
+
+```
+                   chi1   chi2   chi3   chi4  acc all    core    surf  rmsd all    core    surf
+kappa 0           36.65  42.28  62.59  63.76     33.8    44.8    22.7     1.170   0.975   1.340
+kappa 100          4.18   4.36   4.44   4.81     99.8    99.9    99.8     0.141   0.133   0.142
+kappa 20           8.24   9.59   9.90  10.24     83.7    86.7    79.7     0.285   0.258   0.302
+pooled            16.36  18.74  25.64  26.27     72.4    77.1    67.4     0.532   0.456   0.594
+clash 0.0004 (a crystal structure scores 0.000)
+drift from a native start: 0.0194 A mean, 2.883 A worst atom
+|delta| per step: 0.9 2.3 2.6 ... 1.5 1.4 1.3 1.2 1.1 1.1
+```
+
+**The clash term does what it was built for.** 0.0004 Å of mean overlap per supervised atom against a
+crystal's 0.000, at weight 50 — so the packing is physically valid, which is the claim the steric term
+exists to support. And the `|delta|` curve rises to 2.8° and decays monotonically to 1.1° over 64
+steps: converging, not oscillating, which is the tier-2 diagnostic.
+
+**Do not compare these numbers with v5's.** v7b ran `--split train` with 400 structures and 12 held
+out; the v5 figures in this document are from the validation split with a different held-out set. The
+comparison that means something is v7b against **v6_mixed**, which shares the split and the pool by
+construction (`split` is in `WARM_START_MUST_MATCH`) — and v6's final eval has not been collected yet.
+That is the number to fetch before claiming the clash term is free or expensive. Noting the shape of
+the worry honestly: a kappa-0 accuracy of 33.8 % is not obviously better than what v5 reported on its
+own set, so "physical validity cost accuracy" is live and unresolved rather than ruled out.
+
+### A device-only bug killed the first inverse-folding run — 31516313
+
+v8_if took a GPU allocation and exited 1 **at update 0**, having run no updates at all:
+
+```
+RuntimeError: Expected a 'cuda' device type for generator but found 'cpu'
+  identity.py:241  drawn = torch.multinomial(flat, 1, generator=generator)
+```
+
+A `torch.Generator` carries a device, and any draw that consumes one requires the generator's device
+to match the tensor it draws from. That is in direct tension with this project's reproducibility
+convention — stated at `rollout.update_mask`, every random choice is drawn on the **CPU** and moved,
+so a run's stream is a property of its seed and not of its hardware — and the tension had never been
+resolved anywhere, only avoided by accident.
+
+**806 passing tests said nothing about it, and structurally could not.** Every test runs on CPU,
+where the generator and the tensor are both CPU and the constraint holds for free. Nor did
+`scripts/bunya_gpu_check.slurm`, which had passed on the same card: it answers whether the ROCm wheel
+enumerates the GPU, not whether a training step runs on it.
+
+Fixed in `aanca/rng.py`: `draw_multinomial` and `draw_uniform` draw on the generator's device and move
+the *result*, which keeps the stream reproducible instead of raising. **Three call sites needed it**,
+and only one had been reached: `identity.straight_through`'s multinomial (the crash),
+`identity._gumbel_noise`'s uniform, which passed `device=logits.device` and would have failed
+identically the moment a temperature was used, and `potts._sample`, which runs on CPU today and
+carried the same latent fault.
+
+**The systemic half is `scripts/device_check.py`**, which exercises ten generator-consuming paths --
+including `training_objective` with identity on, and `growth_objective` with Cartesian birth -- on
+whatever device it is handed, by calling the library rather than paraphrasing it. It is now the last
+step of `bunya_gpu_check.slurm`, whose exit code it joins. Thirty seconds on a card against a queue
+wait and a dead chain.
+
+The lesson is narrower than "test on the target hardware" and more useful: **a convention that is
+deliberately device-independent needs one place where that independence is implemented**, or every
+call site re-decides it and the ones that are never exercised decide wrong.

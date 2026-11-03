@@ -60,6 +60,7 @@ import torch
 from torch import Tensor
 
 from . import residue_constants as rc
+from .rng import draw_multinomial, draw_uniform
 from . import rotamers
 
 #: Entries of the library, in the canonical order: residue types in
@@ -198,7 +199,10 @@ def _gumbel_noise(
     logits: Tensor, generator: torch.Generator | None = None
 ) -> Tensor:
     """Standard Gumbel noise shaped like ``logits``, reproducible from ``generator``."""
-    uniform = torch.rand(
+    # Drawn wherever the generator lives and moved, not drawn on the logits'
+    # device: a CPU generator with ``device="cuda"`` raises, and this project
+    # draws every random choice on the CPU on purpose. See ``aanca.rng``.
+    uniform = draw_uniform(
         logits.shape,
         generator=generator,
         dtype=logits.dtype,
@@ -237,9 +241,11 @@ def straight_through(
     if not hard:
         return soft
     if sample:
-        flat = soft.reshape(-1, soft.shape[-1])
-        drawn = torch.multinomial(flat, 1, generator=generator)
-        choice = drawn.reshape(*soft.shape[:-1])
+        # ``draw_multinomial`` and not ``torch.multinomial``: the bare call
+        # requires the generator's device to match the probabilities', and a
+        # CPU generator against GPU logits is what killed job 31516313 at
+        # update 0. See ``aanca.rng``.
+        choice = draw_multinomial(soft, generator)
     else:
         choice = soft.argmax(dim=-1)
     one_hot = torch.zeros_like(soft).scatter_(

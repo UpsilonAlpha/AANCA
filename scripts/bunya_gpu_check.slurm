@@ -93,5 +93,19 @@ for n in (384, 1024):
     print(f"200 x ({n}, 64, 128) @ (128, 128): {time.perf_counter() - start:.3f} s")
 PY
 RC=$?
+
+# **The half that was missing on 3 Nov.** Everything above answers "does the
+# ROCm wheel enumerate this card". It passed on the MI355X and job 31516313
+# still died at update 0 with "Expected a 'cuda' device type for generator but
+# found 'cpu'", because a draw that consumes a CPU generator cannot read a GPU
+# tensor -- and the local suite cannot see that, since every test runs on CPU
+# where the two agree for free. So run the real code paths on the real card.
+echo
+echo "== device_check: do the library's own paths run here =="
+python scripts/device_check.py --device cuda
+DC=$?
+echo "device_check exit : ${DC}"
+
+[[ ${RC} -eq 0 ]] && RC=${DC}
 echo "exit : ${RC}"
 exit "${RC}"

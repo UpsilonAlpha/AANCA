@@ -47,6 +47,8 @@ from typing import Iterable, Sequence
 import torch
 from torch import Tensor
 
+from .rng import draw_multinomial
+
 __all__ = [
     "AnnealResult",
     "PottsModel",
@@ -377,7 +379,10 @@ def metropolis_ratio(
 
 
 def _sample(probabilities: Tensor, generator: torch.Generator | None) -> int:
-    return int(torch.multinomial(probabilities, 1, generator=generator)[0])
+    # See ``aanca.rng``: a bare ``torch.multinomial`` requires the generator's
+    # device to match the probabilities'. Reached on CPU today, but the same
+    # latent fault that killed job 31516313.
+    return int(draw_multinomial(probabilities.reshape(1, -1), generator)[0])
 
 
 def gibbs_sweep(
