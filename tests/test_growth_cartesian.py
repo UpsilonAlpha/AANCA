@@ -70,7 +70,8 @@ def _one_birth(topo, coords, links, mode, perturb=0.0, seed=0, parent=20):
         for p in rule.birth_head.parameters():
             p.data.add_(torch.randn_like(p) * perturb)
     _a, birth, _aa, _t = rule.growth_outputs(
-        torch.zeros(topo.n_residues, 32), torch.zeros(topo.n_residues, 96)
+        torch.zeros(topo.n_residues, rule.node_dim),
+        torch.zeros(topo.n_residues, rule.hidden_dim),
     )
     born = torch.zeros(topo.n_residues, dtype=parked.dtype)
     born[parent] = 1.0
@@ -228,7 +229,8 @@ def test_the_head_width_differs_between_the_modes():
     cartesian = AANCARule(growth=True, birth="cartesian")
     assert torsion.birth_head[-1].out_features == 2 * 3 * 2
     assert cartesian.birth_head[-1].out_features == 2 * 6
-    node, hidden = torch.zeros(5, 32), torch.zeros(5, 96)
+    node = torch.zeros(5, cartesian.node_dim)
+    hidden = torch.zeros(5, cartesian.hidden_dim)
     assert tuple(torsion.growth_outputs(node, hidden)[1].shape) == (5, 2, 3)
     assert tuple(cartesian.growth_outputs(node, hidden)[1].shape) == (5, 2, 6)
 
@@ -236,8 +238,10 @@ def test_the_head_width_differs_between_the_modes():
 def test_the_untrained_cartesian_head_asks_for_no_deviation():
     """Zeroed, so the reference birth is what an untrained rule performs."""
     rule = AANCARule(growth=True, birth="cartesian")
-    _a, birth, _aa, _t = rule.growth_outputs(torch.zeros(3, 32), torch.zeros(3, 96))
-    assert float(birth.abs().max()) == 0.0
+    _a, birth, _aa, _t = rule.growth_outputs(
+        torch.zeros(3, rule.node_dim), torch.zeros(3, rule.hidden_dim)
+    )
+    assert float(birth.detach().abs().max()) == 0.0
 
 
 def test_the_direction_swing_is_bounded_and_the_orientation_is_not():
@@ -251,7 +255,10 @@ def test_the_direction_swing_is_bounded_and_the_orientation_is_not():
     torch.manual_seed(0)
     for p in rule.birth_head.parameters():
         p.data.add_(torch.randn_like(p) * 5.0)
-    _a, birth, _aa, _t = rule.growth_outputs(torch.randn(64, 32), torch.randn(64, 96))
+    _a, birth, _aa, _t = rule.growth_outputs(
+        torch.randn(64, rule.node_dim), torch.randn(64, rule.hidden_dim)
+    )
+    birth = birth.detach()
     swing = birth[..., :3].norm(dim=-1)
     assert float(swing.max()) <= rule.max_birth_direction + 1e-6
     assert float(birth[..., 3:].norm(dim=-1).max()) > rule.max_birth_direction

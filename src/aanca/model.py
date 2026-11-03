@@ -30,6 +30,13 @@ from .identity import LIBRARY_SIZE
 
 #: Dimensions of the NumPy featuriser's output, from ``graph.build_graph``.
 NODE_FEATURE_DIM = 32
+
+#: Extra node dimensions a growth rule carries: the closure-separation block
+#: from ``aanca.growth.closure_features``, which says how many residues away
+#: the nearest alive slot is in each direction. Kept here rather than imported
+#: from ``growth`` to avoid a cycle, and asserted equal to
+#: ``growth.CLOSURE_DIM`` in ``tests/test_closure.py`` so the two cannot drift.
+GROWTH_NODE_EXTRA = 24
 EDGE_FEATURE_DIM = 575
 
 #: Ceiling on ``log kappa``. A likelihood loss can be reduced by claiming
@@ -129,6 +136,13 @@ class AANCARule(nn.Module):
         max_birth_direction: float = MAX_BIRTH_DIRECTION,
     ) -> None:
         super().__init__()
+        # A growth rule perceives the closure-separation block as well, so its
+        # node dimension is wider. Applied only when ``node_dim`` is the
+        # default, so an explicit value still wins -- and the failure mode of
+        # getting it wrong is a loud shape mismatch at the first forward pass,
+        # not a silent one.
+        if growth and node_dim == NODE_FEATURE_DIM:
+            node_dim = NODE_FEATURE_DIM + GROWTH_NODE_EXTRA
         self.node_dim = node_dim
         self.hidden_dim = hidden_dim
         self.message_dim = message_dim

@@ -48,6 +48,8 @@ from .blind import blind_coords
 from .growth import (
     GrowthConfig,
     alive_topology,
+    closure_features,
+    closure_separation,
     correct_oxygens,
     frontier,
     give_birth,
@@ -364,6 +366,17 @@ def step_once(
     under test.
     """
     alive = state.alive
+    closure = None
+    if alive is not None and config.growth is not None and not rule.growth:
+        # Checked here rather than where the heads are used, because a growth
+        # rollout widens the node features by the closure-separation block and
+        # a packing rule would hit a shape mismatch first. "mat1 and mat2
+        # shapes cannot be multiplied" is the wrong thing to tell someone who
+        # built the wrong rule.
+        raise ValueError(
+            "this rollout carries an alive mask and a growth config but the "
+            "rule has no growth heads; build it with AANCARule(growth=True)"
+        )
     if alive is not None:
         # Dormant residues are removed from perception rather than hidden
         # inside it: no atoms in the mask, so neighbour selection never sees
@@ -372,6 +385,12 @@ def step_once(
         # layer, which makes a missed mask loud instead of plausible.
         topo = alive_topology(topo, alive)
         links = growth_links(topo)
+        # How far the nearest alive slot is, each way. The one closure quantity
+        # the graph cannot supply, because the slots in between have no atoms
+        # and are not in it; see ``growth.closure_separation``.
+        closure = closure_features(
+            closure_separation(alive, links), config.feature_dtype
+        )
 
     coords_seen = state.coords
     aa_onehot = None
@@ -392,6 +411,7 @@ def step_once(
         device_neighbours=config.device_neighbours,
         aa_onehot=aa_onehot,
         blind=config.blind,
+        closure=closure,
     )
     node = graph.node_features.to(torch.float32)
 

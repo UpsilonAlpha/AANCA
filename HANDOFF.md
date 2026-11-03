@@ -3238,3 +3238,80 @@ cost of a step outside the NCA. Per-segment rigid moves are rejected: a segment 
 object, and the locality claim is the project. Single-seed growth is ruled out by the completion-time
 measurement. Seed placement that avoids meetings does not scale: at 92 % alive there are ~8 junctions
 regardless.
+
+### Closure-aware growth is built — 2026-11-03
+
+`scripts/reach_probe.py`, `aanca.growth.REACH` / `reach` / `pending_closures` /
+`reachability_restraint` / `closure_separation` / `closure_features`, the closure block on the node
+features, `reach_weight` in `growth_objective`, a `reach` and `n` column on the probe, and
+`tests/test_closure.py`. 790 tests.
+
+**The reach bound, measured properly.** 391 structures, ~188,000 pairs per separation, CA–CA within
+a bonded run only — a gap that crosses a chain break or a numbering discontinuity is not a closure.
+Taken at the **99.99th percentile, not the maximum**, and the reason is in the data: the maximum at
+g = 1 is 4.32 Å, which is no peptide bond at all, since trans is 3.80 and cis 2.9. That pair is a
+broken model or a chain break with contiguous numbering. The percentile still keeps the nineteen
+longest of 188,000.
+
+```
+REACH = 0, 3.96, 7.44, 10.96, 14.37, 17.75, 21.09, 24.43, 27.74, 31.03,
+        33.98, 37.18, 40.14, 43.00, 45.76, 48.56, 50.64, 53.33, 54.98, 57.24, 59.90
+```
+
+3.96 Å for one bond falling to 2.99 Å per residue by twenty, extrapolated beyond the table at the
+last step's slope. Generous is the safe direction for a feasibility test — it never calls a closure
+impossible that a real chain could have made. The earlier two-protein estimate of ~3.4 Å per slot
+was roughly right but the max was contaminated; the headline stands, **a 10 Å gap needs about three
+spare slots** (`REACH[3]` = 10.96).
+
+**The restraint.** `relu(d − reach(g))` averaged over pending closures, where a pending closure is
+two alive residues with nothing but dormant slots between them and an unbroken covalent path across.
+Taking *consecutive* entries of the sorted alive set makes "nothing but dormant slots between" true
+by construction, so only the covalent path has to be checked. A pair at separation 1 is included and
+needs no special case: a bond made by a birth sits at 3.80 Å against `REACH[1]` = 3.96, so a real
+peptide bond charges exactly nothing.
+
+Measured on untrained growth, 60 steps on 1UBQ, mean of 3 seeds:
+
+| seeds | alive | bond | **reach** | n closures | fape | CA rmsd |
+|---|---|---|---|---|---|---|
+| 1 (C-ward) | 6.1 % | 0.0050 | **0.0000** | 4 | 0.361 | 2.27 |
+| 1 | 8.3 % | 0.0061 | **0.0000** | 5 | 0.468 | 3.40 |
+| 2 | 18.9 % | 0.0057 | **0.0000** | 13 | 0.653 | 5.19 |
+| 4 | 34.6 % | 0.4892 | **0.0728** | 25 | 0.740 | 5.58 |
+| 8 | 61.8 % | 4.6282 | **0.4386** | 46 | 0.715 | 5.14 |
+
+It is exactly 0.0000 at one and two seeds where the peptide restraint still reads 0.005–0.006 of
+bond-length noise, so **it separates "intact chain" from "unclosable" where the peptide restraint
+cannot**, and it is in interpretable Ångström of excess rather than squared distance. Zero on a
+crystal structure and on any alive subset of one, asserted. **On by default**, unlike every other
+optional term here, because multi-seed growth is required rather than optional and it costs nothing
+when nothing is pending.
+
+**The credit path, confirmed.** With only the reach term weighted, gradient reaches the activation
+head, the birth head and the frame head. The activation head's gradient is the largest by orders of
+magnitude — 3.3e4 against the birth head's 98 on one run — which is the term telling it loudly that
+*waking a residue is what spends the budget*. That is the decision the peptide restraint can never
+inform, because by the time it fires the budget is gone. Weighting will matter.
+
+**The perception half: the count is a feature, the partner is not yet.** `closure_separation` gives
+each residue the sequence distance to the nearest alive slot in each direction, one-hot over
+`CLOSURE_BINS` for 24 node dimensions, so a growth rule's `node_dim` is 56 against a packing rule's
+32 (applied automatically when `node_dim` is the default; an explicit value still wins, and
+`CLOSURE_DIM == GROWTH_NODE_EXTRA` is asserted so the two modules cannot drift). This cannot be
+inferred from the graph: the slots in between have no atoms and are not in it, so the only route is
+reasoning over the *absence* of edges at the intervening offsets, which is what sum-aggregation
+message passing does worst.
+
+**What is deferred, and the number that says when it bites.** Forcing the closure partner into the
+neighbour list the way ±1 sequence neighbours already are. The partner is visible when it is inside
+the 10 Å cutoff, and the restraint fires at `d > reach(g) ≈ 3.5g`, so fires-and-visible holds for
+g ≤ 3 — which is the regime where closure is still actionable. For g ≥ 4 the restraint fires only
+beyond ~14 Å, where the partner is invisible, so the rule gets **gradient without perception**: it
+can still act, through its own coordinates, but it learns a reflex rather than a policy. That is the
+honest remaining gap, and the fix touches `select_neighbours`, its device twin and `build_graph`, so
+it is its own change.
+
+**One message fixed in passing.** A growth rollout on a packing rule used to die with "mat1 and mat2
+shapes cannot be multiplied", because the widened node features hit the first linear layer before
+the missing-growth-heads check. The check moved to the top of `step_once`.

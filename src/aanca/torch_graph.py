@@ -451,6 +451,7 @@ def node_features(
     topo: FeatureTopology,
     aa_onehot: Tensor | None = None,
     blind: bool = False,
+    closure: Tensor | None = None,
 ) -> Tensor:
     """``(n_res, 32)``: residue one-hot, chis as sin/cos pairs, and the chi mask.
 
@@ -463,6 +464,12 @@ def node_features(
     head that chose the label, and therefore the only thing that makes a ripple
     differentiable.
 
+    ``closure`` appends the closure-separation block from
+    :func:`aanca.growth.closure_features`: how many residues away the nearest
+    alive slot is in each direction. It is a growth feature and widens the
+    node dimension, which is why a growth rule is built with a different
+    ``node_dim`` -- see :data:`aanca.model.GROWTH_NODE_EXTRA`.
+
     ``blind`` zeroes all three chi blocks -- the sin and cos pairs *and the
     mask*. The mask has to go too: how many chis a residue has is a function of
     its type, so leaving it in hands a rule that is supposed to be inferring
@@ -474,17 +481,18 @@ def node_features(
     mask = topo.torsion.chi_mask.to(coords.dtype)
     if blind:
         zero = torch.zeros_like(mask)
-        return torch.cat([types, zero, zero, zero], dim=-1)
-    chis = measure_chis(coords, topo.torsion)
-    return torch.cat(
-        [
+        blocks = [types, zero, zero, zero]
+    else:
+        chis = measure_chis(coords, topo.torsion)
+        blocks = [
             types,
             torch.sin(chis) * mask,
             torch.cos(chis) * mask,
             mask,
-        ],
-        dim=-1,
-    )
+        ]
+    if closure is not None:
+        blocks.append(closure.to(coords.dtype))
+    return torch.cat(blocks, dim=-1)
 
 
 def backbone_edge_block(
@@ -616,6 +624,7 @@ def build_graph(
     device_neighbours: bool = False,
     aa_onehot: Tensor | None = None,
     blind: bool = False,
+    closure: Tensor | None = None,
 ) -> TorchGraph:
     """Select neighbours and featurise. Differentiable except for the selection.
 
@@ -639,7 +648,7 @@ def build_graph(
         neighbours=neighbours,
         edge_mask=edge_mask,
         envelope=envelope,
-        node_features=node_features(coords, topo, aa_onehot, blind),
+        node_features=node_features(coords, topo, aa_onehot, blind, closure),
         edge_features=features,
         feature_slices=slices,
     )

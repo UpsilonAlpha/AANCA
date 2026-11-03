@@ -47,6 +47,8 @@ from aanca.growth import (
     completion,
     growth_links,
     peptide_bond_restraint,
+    pending_closures,
+    reachability_restraint,
     seed_alive,
 )
 from aanca.identity import library_index, type_index, type_marginal
@@ -118,6 +120,10 @@ def grow(rule, topo, native, links, config, seed, identity=False) -> dict[str, f
         out = {
             "alive": completion(final.alive),
             "bond": float(peptide_bond_restraint(final.coords, topo, final.alive, links)),
+            "reach": float(
+                reachability_restraint(final.coords, topo, final.alive, links)
+            ),
+            "closures": float(pending_closures(final.alive, links)[0].numel()),
             "fape": float(fape(final.coords, native, topo, scored)),
             "rmsd": float(backbone_rmsd(final.coords, native, topo, scored)),
         }
@@ -209,8 +215,8 @@ def main() -> int:
 
     print(f"Growth over {args.steps} steps, mean of {args.repeats} seeds")
     print(
-        "  birth       seeds   mode         alive      bond      fape   CA rmsd"
-        + ("  recovery" if args.identity else "")
+        "  birth       seeds   mode         alive      bond     reach   n"
+        "      fape   CA rmsd" + ("  recovery" if args.identity else "")
     )
     modes = ("torsion", "cartesian") if args.birth == "both" else (args.birth,)
     for mode in modes:
@@ -244,12 +250,16 @@ def main() -> int:
             print(
                 f"  {mode:<12s}{n_seeds:>3d}   {label:<12s}"
                 f"{mean['alive']:>7.1%}{mean['bond']:>10.4f}"
+                f"{mean['reach']:>10.4f}{mean['closures']:>4.0f}"
                 f"{mean['fape']:>10.4f}{mean['rmsd']:>10.2f}"
                 + (f"{mean['recovery']:>10.1%}" if args.identity else "")
             )
 
     print(
-        "\n  bond is the peptide restraint, unweighted, and a crystal structure\n"
+        "\n  reach is the mean Angstrom by which a pending closure exceeds what\n"
+        "  its remaining slots can span, over n closures; a crystal scores 0,\n"
+        "  and so does single-seed growth, which has nothing pending.\n"
+        "  bond is the peptide restraint, unweighted, and a crystal structure\n"
         "  scores about 0.002: a value far above that is a torn chain, which is\n"
         "  the failure a rigid frame move can cause and a torsion cannot.\n"
         "  fape saturates at its 10 A clamp, so read rmsd alongside it."

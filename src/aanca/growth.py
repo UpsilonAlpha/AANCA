@@ -477,6 +477,167 @@ def peptide_bond_restraint(
     return ((length - C_N) ** 2).mean() + planarity.mean()
 
 
+# -- closure-aware growth --------------------------------------------------
+
+#: How far ``g`` bonded residues can reach, Angstrom, indexed by sequence
+#: separation. ``REACH[g]`` is the greatest CA(i)-CA(i+g) distance a real
+#: protein backbone was observed to span.
+#:
+#: Measured by ``scripts/reach_probe.py`` over 391 structures and ~188,000
+#: pairs per separation, at the **99.99th percentile rather than the maximum**.
+#: The maximum is a maximum over the worst modelling artifact in four hundred
+#: structures: at g = 1 it is 4.32 A, which is not a peptide bond at all, since
+#: trans is 3.80 and cis 2.9 -- so that pair is a chain break with contiguous
+#: numbering, or a broken model. The percentile still keeps the nineteen
+#: longest of 188,000.
+#:
+#: Note what the shape says: 3.96 A for one bond falling to 2.99 A per residue
+#: by twenty. A long gap cannot be spanned at a peptide bond a residue, because
+#: the CA-CA-CA pseudo-angle is capped well below straight.
+REACH: tuple[float, ...] = (
+    0.00, 3.96, 7.44, 10.96, 14.37, 17.75, 21.09, 24.43, 27.74, 31.03,
+    33.98, 37.18, 40.14, 43.00, 45.76, 48.56, 50.64, 53.33, 54.98, 57.24,
+    59.90,
+)
+
+#: Angstrom per residue beyond the table, taken from its last step
+#: (59.90 - 57.24). Extrapolating generously is the safe direction for a
+#: feasibility test: it never calls a closure impossible that a real chain
+#: could have made.
+REACH_SLOPE = REACH[-1] - REACH[-2]
+
+
+def reach(separation: Tensor) -> Tensor:
+    """``REACH`` at each sequence separation, extrapolated beyond the table."""
+    table = torch.tensor(REACH, dtype=torch.float64, device=separation.device)
+    inside = separation.clamp(0, len(REACH) - 1)
+    value = table[inside]
+    beyond = (separation - (len(REACH) - 1)).clamp_min(0).to(value.dtype)
+    return value + beyond * REACH_SLOPE
+
+
+def pending_closures(alive: Tensor, links: Tensor) -> tuple[Tensor, Tensor]:
+    """``(left, right)`` indices of every pair of alive residues that must bond.
+
+    A pending closure is two alive residues with nothing but dormant slots
+    between them and an unbroken covalent path across the whole span. Taking
+    *consecutive* entries of the sorted alive set makes "nothing but dormant
+    slots between" true by construction, so only the covalent path has to be
+    checked -- a gap that crosses a chain break or a numbering discontinuity is
+    not a closure, it is two different molecules.
+
+    A pair at separation 1 is included, which is the junction that has already
+    formed. It needs no special case: a bond made by a birth sits at 3.80 A and
+    ``REACH[1]`` is 3.96, so a real peptide bond charges exactly nothing.
+    """
+    index = torch.nonzero(alive, as_tuple=False).flatten()
+    if index.numel() < 2:
+        empty = torch.zeros(0, dtype=torch.long, device=alive.device)
+        return empty, empty
+    left, right = index[:-1], index[1:]
+    # ``links[a:b]`` must be all true, which is a difference of a cumulative
+    # sum rather than a loop.
+    joined = torch.cat(
+        [
+            torch.zeros(1, dtype=torch.long, device=alive.device),
+            links.to(torch.long).cumsum(0),
+        ]
+    )
+    spans = joined[right] - joined[left]
+    keep = spans == (right - left)
+    return left[keep], right[keep]
+
+
+def reachability_restraint(
+    coords: Tensor, topo: FeatureTopology, alive: Tensor, links: Tensor
+) -> Tensor:
+    """Angstrom by which pending closures exceed what their slots can span.
+
+    ``relu(d - reach(g))``, averaged over pending closures. The term growth
+    needs and the peptide restraint cannot be, because this one is a **leading**
+    indicator: it charges the instant a birth commits to a geometry that
+    *forecloses* closure, while the peptide restraint only fires once the two
+    segments are adjacent and nothing local can fix the gap any more.
+
+    Three properties are why this is the design rather than an extra term.
+    It is exactly zero for single-seed growth, which has no pending closure at
+    all, and zero early in multi-seed growth, where the ends are far apart but
+    have slots to spare. Its gradient lands on precisely the two decisions that
+    could have avoided the problem -- the birth offset, through the newborn's
+    coordinates, and the activation logit, through the straight-through gate --
+    because waking a residue is what spends the budget. And it arrives within a
+    step or two of the offending birth, so it fits inside the twelve-step
+    truncation window, where a coordinated segment translation never could.
+
+    Same logic as the clash term: charge for a geometry that forecloses an
+    outcome rather than one that is already wrong. Reported unweighted, in
+    Angstrom, so it can be compared against a crystal structure's own value --
+    which is zero, since a real chain is closed everywhere.
+    """
+    left, right = pending_closures(alive, links)
+    if left.numel() == 0:
+        return torch.zeros((), device=coords.device, dtype=coords.dtype)
+    ca = backbone_atoms(coords, topo)[:, 1]
+    distance = (ca[right] - ca[left]).norm(dim=-1)
+    budget = reach(right - left).to(distance.dtype)
+    return (distance - budget).clamp_min(0.0).mean()
+
+
+#: Bin edges for the closure-separation feature: how many residues away the
+#: nearest alive slot is, in one direction. The first eight separations get a
+#: bin each because that is the regime the reach bound actually bites in -- a
+#: ten Angstrom gap needs about three spare slots -- and beyond that the
+#: distinction stops mattering, since REACH[9] is already 31 A.
+CLOSURE_BINS: tuple[int, ...] = (1, 2, 3, 4, 5, 6, 7, 8, 12, 16)
+#: One bin per edge above, one for "further than the last edge", one for
+#: "there is no alive residue that way at all". Times two directions.
+CLOSURE_DIM = 2 * (len(CLOSURE_BINS) + 2)
+
+
+def closure_separation(alive: Tensor, links: Tensor) -> Tensor:
+    """``(R, 2)`` residues to the nearest alive slot, N-ward then C-ward.
+
+    Zero means there is none -- the chain ends, or a covalent break
+    intervenes. A value of 1 means the adjacent residue is already alive, which
+    is a closure that has already happened.
+
+    **This cannot be inferred from the graph**, which is why it is a feature.
+    A dormant slot has no atoms and is removed from perception entirely, so a
+    frontier residue sees no edge to anything between it and its closure
+    partner. It *can* see the partner itself, labelled by the 33-dim
+    ``sequence_offset`` one-hot -- but only if the partner is inside the 10 A
+    cutoff, and only by reasoning over the *absence* of edges at the
+    intervening offsets, which is exactly the kind of inference
+    sum-aggregation message passing does worst. Stating the count directly
+    costs twenty-four node dimensions.
+    """
+    n = alive.shape[0]
+    device = alive.device
+    out = torch.zeros(n, 2, dtype=torch.long, device=device)
+    left, right = pending_closures(alive, links)
+    if left.numel():
+        separation = right - left
+        # The pair (left, right) is each other's nearest alive slot by
+        # construction, so one scatter fills both directions.
+        out[left, 1] = separation
+        out[right, 0] = separation
+    return out
+
+
+def closure_features(separation: Tensor, dtype: torch.dtype) -> Tensor:
+    """``(R, CLOSURE_DIM)`` one-hot of :func:`closure_separation`'s bins."""
+    edges = torch.tensor(CLOSURE_BINS, device=separation.device)
+    # Bin 0 is "none" (separation 0); then one bin per edge; then "beyond".
+    index = torch.bucketize(separation, edges, right=False) + 1
+    index = torch.where(separation == 0, torch.zeros_like(index), index)
+    width = len(CLOSURE_BINS) + 2
+    one_hot = torch.zeros(
+        separation.shape[0], 2, width, dtype=dtype, device=separation.device
+    )
+    one_hot.scatter_(-1, index.unsqueeze(-1), 1.0)
+    return one_hot.reshape(separation.shape[0], -1)
+
+
 def growth_links(topo: FeatureTopology) -> Tensor:
     """``sequence_links`` on the topology's own device."""
     return sequence_links(topo, topo.atom_mask.device)
@@ -515,6 +676,16 @@ class GrowthTerms:
     #: division of labour -- packing supervises it already. ln 20 = 3.00 is the
     #: uninformative floor.
     identity: Tensor
+    #: Angstrom by which pending closures exceed what their remaining slots can
+    #: span, before ``reach_weight``. Unweighted and physical, like the other
+    #: restraints: a real chain is closed everywhere, so a crystal scores
+    #: exactly zero. Measured on untrained growth: 0.0000 at one and two seeds,
+    #: 0.073 at four, 0.439 at eight, 0.774 at sixteen.
+    reach: Tensor
+    #: How many pending closures there were. The reach term is a mean over
+    #: these, so without the count it cannot be read -- a large mean over one
+    #: closure is a different situation from a small mean over twenty.
+    closures: int
     #: Fraction of alive residues whose most likely type is the native one.
     #: This is sequence recovery, and it is the number ProteinMPNN (~58 %),
     #: PottsMPNN (~44 %) and RFD4-Proteina report -- so it is the one to quote,
@@ -532,6 +703,7 @@ def growth_objective(
     completion_weight: float = 1.0,
     identity_weight: float = 0.0,
     identity_start: str = "masked",
+    reach_weight: float = 1.0,
 ) -> tuple[GrowthTerms, object]:
     """Supervised regrowth: from a seed, rebuild the native backbone.
 
@@ -539,6 +711,15 @@ def growth_objective(
     available here, so this trains the machinery without needing the
     distribution growth does not have. It is the same relationship the
     reconstruction term has to design.
+
+    **The reachability restraint is on by default**, unlike every other
+    optional term in this project, and that is deliberate: multi-seed growth is
+    not an elaboration but a requirement -- a single segment cannot finish
+    inside the loss window (``scripts/growth_rate_probe.py``) -- so coalescence
+    happens on every run that matters, and a run with ``reach_weight = 0``
+    would be growing segments it has no reason to be able to join. It costs
+    nothing when there is nothing pending: single-seed growth scores exactly
+    zero.
 
     **The degenerate optimum, and the term that closes it.** FAPE is a mean
     over the residues that exist, so growing one more residue can only add
@@ -609,6 +790,8 @@ def growth_objective(
 
     fape = fape_loss(final.coords, native_coords, topo, scored)
     bond = peptide_bond_restraint(final.coords, topo, final.alive, links)
+    reach_term = reachability_restraint(final.coords, topo, final.alive, links)
+    closure_left, _closure_right = pending_closures(final.alive, links)
 
     logits = final.activation_logits
     if logits is None:
@@ -651,6 +834,7 @@ def growth_objective(
         + bond_weight * bond.to(fape.dtype)
         + completion_weight * completion_term.to(fape.dtype)
         + identity_weight * identity_term.to(fape.dtype)
+        + reach_weight * reach_term.to(fape.dtype)
     )
     return (
         GrowthTerms(
@@ -662,6 +846,8 @@ def growth_objective(
             rmsd=float(backbone_rmsd(final.coords, native_coords, topo, scored).detach()),
             identity=identity_term.detach(),
             recovery=recovery,
+            reach=reach_term.detach(),
+            closures=int(closure_left.numel()),
         ),
         result,
     )
