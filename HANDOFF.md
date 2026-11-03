@@ -3315,3 +3315,90 @@ it is its own change.
 **One message fixed in passing.** A growth rollout on a packing rule used to die with "mat1 and mat2
 shapes cannot be multiplied", because the widened node features hit the first linear layer before
 the missing-growth-heads check. The check moved to the top of `step_once`.
+
+### The junction gap is accumulated drift, r = 0.970 — 2026-11-03
+
+`scripts/drift_probe.py`. The closure problem has been quoted at 7–9 Å of junction gap for several
+sections now, as though that were its magnitude. It is not: it is a measure of how badly an
+*untrained* rule places residues, and the correlation says so almost perfectly.
+
+A parent–child pair sits at exactly 3.804 Å because that is what a birth sets, so the cross-segment
+junctions are precisely the adjacent alive pairs that are *not* at 3.804. Over 8 runs at 6 seeds,
+22 such junctions:
+
+```
+  junction CA-CA gap      mean   8.72 A  median   5.84  max  18.57
+  sum of the two drifts   mean   6.28 A  median   3.32  max  18.05
+
+  correlation between the gap and the summed drift: r = 0.970
+  fraction of junctions already inside REACH[1] = 3.96 A: 31.8%
+```
+
+And the drift itself, as CA error against native by births from the nearest seed:
+
+| births from seed | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 |
+|---|---|---|---|---|---|---|---|---|
+| mean error, Å | 0.00 | 1.25 | 5.06 | 7.51 | 8.13 | 9.68 | 10.13 | 11.68 |
+
+About 2 Å per birth for an untrained rule that grows alpha helices from its initialisation. Two
+segments drift independently, so where they meet the discrepancy is the sum — which is what r = 0.970
+is saying.
+
+**So closure difficulty is a function of per-birth placement error, not a structural obstacle.**
+Already at this accuracy **31.8 % of junctions are inside `REACH[1]` and therefore closable**, and
+FAPE supervises placement directly. A rule at 0.3 Å per birth would drift ~1 Å by three hops and its
+junctions would charge nothing at all. The reach restraint keeps its value, but its role is a
+**backstop for when placement is poor**, not the primary mechanism — and that is a better
+understanding of it than the one it was built under.
+
+**Where closure *is* structural, and it is only here.** Supervised regrowth seeds at native
+positions (`initial_state` parks everything else), so two segments share a reference frame and the
+only discrepancy is error. De novo there are no native seed positions, so two independently placed
+seeds have a genuinely undetermined 6-degree-of-freedom relative pose, which no amount of placement
+accuracy fixes because there is no target to be accurate against. **That** is the gauge freedom, and
+it is the real closure problem — confined to unconditional generation.
+
+### Would an N-to-C sweep resolve it? Yes, and it is the wrong trade
+
+Asked and worth recording with the numbers, because the answer is "completely, by construction".
+One seed growing one direction is one segment, and one segment has no junctions at all: measured
+`reach` exactly 0.0000 at one seed, where four seeds give 0.0728 and eight 0.4386. Three reasons not
+to:
+
+1. **It is synthesis order**, which is the thing this project argues folding is not — the causal
+   filter, foldons ordered by native structure, and HemK NTD folding at ~5 ms⁻¹ against translation
+   at ~3.6 aa/s. Adopting it is retreating to the control.
+2. **It cannot finish.** From `scripts/growth_rate_probe.py`: one seed at p(wake) = 0.98 reaches only
+   84 % in 120 steps, because a single segment's longer arm averages ~57 residues and the
+   asynchronous mask halves the birth rate — ~114 steps for 76 residues, ~600 for a 300-residue
+   crop, around twenty times the per-rollout cost. This is the O(surface) versus O(N) argument
+   arriving as a wall-clock number.
+3. **It is the least autonomous option available.** The order stops being a decision: it is imposed,
+   and exactly one cell may act at a time, which is a sequential program rather than a cellular
+   automaton. Mordvintsev's lizard does not grow head to tail.
+
+**Three alternatives that keep autonomy, in order of how little they add.**
+
+* **Train it.** r = 0.970 says accurate placement closes junctions by itself, FAPE already supervises
+  placement, and the reach restraint is the backstop. Nothing new is needed for supervised regrowth.
+* **One seed, bidirectional.** Zero junctions, because it is still one segment; no imposed direction,
+  because the seed's position sets the order rather than the N terminus; and both arms advance at
+  once, so half the steps of a unidirectional sweep. Already supported and measured at 0 junctions.
+  Still O(N) steps.
+* **Nucleation from a spatial neighbour** — the fix for the de novo gauge freedom and the most
+  autonomous addition. Let a dormant slot be woken by any alive residue that is *spatially* near
+  rather than only covalently adjacent, and place it from that residue's frame. Then every segment's
+  pose is connected to the original seed through a chain of placements, segments are commensurable
+  from birth, and the gauge freedom disappears. Local, parallel, chosen by the rule, and not
+  synthesis order.
+
+  It also fixes the concrete autonomy deficit that exists right now: `frontier` only extends existing
+  segments, so the rule **cannot choose** how many segments there are. Seeds are a hyperparameter.
+  The trade between completion speed, which wants many seeds, and closure difficulty, which wants
+  few, is therefore set by hand where it should be learned — and the reach restraint already supplies
+  exactly the pressure that would teach it, if the rule had the means to act on it.
+
+**One correction.** An analytical loop closure step was called "a step outside the NCA" earlier.
+That is wrong on the locality axis: closing a three-residue bridge is a local solve over a seven-atom
+span, not a global operation. What makes it un-NCA-like is that it is neither learned nor expressed
+as a cell update. So if locality is the priority it is compatible; it is autonomy that it costs.
