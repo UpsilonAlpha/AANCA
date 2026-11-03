@@ -106,7 +106,7 @@ def evaluate(rule, dataset, indices, args, seed: int = 0) -> dict[str, dict[str,
                 if not bool(task.witnesses.any()):
                     continue
                 offset, logit = hole_predictions(
-                    rule, coords, topo, task, k=args.k
+                    rule, coords, topo, task, k=args.k, hops=args.hops
                 )
                 per_witness.append(float(placement_error(offset, task)))
                 consensus.append(
@@ -156,6 +156,17 @@ def main() -> int:
     parser.add_argument("--eval-every", type=int, default=500)
     parser.add_argument("--crop-size", type=int, default=256)
     parser.add_argument("--k", type=int, default=32)
+    parser.add_argument(
+        "--hops",
+        type=int,
+        default=1,
+        help="message-passing hops before the head reads. 1 is what a single "
+        "step of the real rule can see, and the honest default. Because the "
+        "hole task has no time, hops here ARE depth -- so how many it needs is "
+        "an estimate of how many steps a growth rollout would need before a "
+        "newborn could be placed well. A matched sweep at 1 and 3 is the "
+        "experiment; see aanca.hole.hole_predictions.",
+    )
     parser.add_argument("--lr", type=float, default=3e-4)
     parser.add_argument("--clip", type=float, default=1.0)
     parser.add_argument(
@@ -250,7 +261,9 @@ def main() -> int:
         if not bool(task.witnesses.any()):
             continue
 
-        offset, logit = hole_predictions(rule, coords, topo, task, k=args.k)
+        offset, logit = hole_predictions(
+            rule, coords, topo, task, k=args.k, hops=args.hops
+        )
         total, fused, error = hole_loss(offset, logit, task, coords, topo)
         if not torch.isfinite(total):
             continue

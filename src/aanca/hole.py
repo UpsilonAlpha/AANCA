@@ -146,29 +146,44 @@ def hole_predictions(
     task: HoleTask,
     k: int = 32,
     cutoff: float = 10.0,
+    hops: int = 1,
 ) -> tuple[Tensor, Tensor]:
-    """``(offset, logit)`` per residue from one message-passing hop.
+    """``(offset, logit)`` per residue after ``hops`` message-passing hops.
 
-    One hop and no rollout: the question is what a residue can tell from its
-    immediate neighbourhood, and unrolling would answer a different one. The
-    graph is built on the *alive* subset, so the deleted residue contributes
-    nothing -- which is what ``growth.alive_topology`` is for, and the reason
-    this task needed no new perception code.
+    The graph is built on the *alive* subset, so the deleted residue
+    contributes nothing -- which is what ``growth.alive_topology`` is for, and
+    the reason this task needed no new perception code.
+
+    **``hops`` is the interesting knob, and it is a proxy for something else.**
+    This project's architecture claim is "one hop per step, depth comes from
+    time" (``model.AANCARule``): a rollout gets its depth by applying a
+    one-hop rule repeatedly. The hole task has no time -- nothing moves, there
+    is nothing to iterate towards -- so here hops *are* depth, and how many the
+    task needs is an estimate of how many steps a growth rollout would need
+    before a newborn could be placed well. One hop is the honest default,
+    because it is what a single step of the real rule can see.
+
+    The graph is built once and only the hidden state is carried, since the
+    coordinates do not change: this is a rollout with the geometry frozen,
+    which isolates "how far does information have to travel" from "how long
+    does the geometry take to settle".
     """
     masked = alive_topology(topo, task.alive)
     graph = build_graph(
         coords.to(torch.float32), masked, k=k, cutoff=cutoff, blind=False
     )
+    if hops < 1:
+        raise ValueError(f"hops must be at least 1, got {hops}")
+    node = graph.node_features.to(torch.float32)
+    edges = graph.edge_features.to(torch.float32)
+    mask = graph.edge_mask & task.alive[graph.neighbours]
+    envelope = graph.envelope.to(torch.float32)
     hidden = rule.initial_hidden(topo.n_residues, coords.device)
-    _mu, _log_kappa, new_hidden = rule(
-        graph.node_features.to(torch.float32),
-        hidden,
-        graph.edge_features.to(torch.float32),
-        graph.neighbours,
-        graph.edge_mask & task.alive[graph.neighbours],
-        graph.envelope.to(torch.float32),
-    )
-    return rule.hole_outputs(graph.node_features.to(torch.float32), new_hidden)
+    for _ in range(hops):
+        _mu, _log_kappa, hidden = rule(
+            node, hidden, edges, graph.neighbours, mask, envelope
+        )
+    return rule.hole_outputs(node, hidden)
 
 
 def hole_loss(
