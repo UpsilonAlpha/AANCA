@@ -77,6 +77,23 @@ BACKBONE_INIT_PHI = -63.0
 BACKBONE_INIT_PSI = -43.0
 BACKBONE_INIT_OMEGA = 180.0
 
+#: How far a Cartesian birth may swing the newborn's CA direction, radians.
+#:
+#: Measured rather than chosen (``scripts/growth_probe.py`` and the numbers in
+#: HANDOFF): the CA-CA distance of a trans peptide is **3.804 A for every
+#: (phi, psi)** -- it is fixed by the peptide's own geometry, not by the
+#: torsions -- so the only thing a birth chooses about *where* the child's CA
+#: goes is a direction. Rotating the helical reference direction by 0.72 rad
+#: reaches beta sheet, polyproline II and left-handed helix alike, so 1.0 rad
+#: covers the Ramachandran plot with room to spare while still forbidding a
+#: newborn from appearing behind its parent.
+#:
+#: The child's *orientation* is deliberately NOT bounded. A rotation is
+#: intrinsically bounded, polyproline II sits 3.07 rad from helix -- nearly
+#: antipodal -- and any cap tight enough to matter would exclude real
+#: secondary structure.
+MAX_BIRTH_DIRECTION = 1.0
+
 #: Initial activation logit, so sigmoid is about 0.12 and growth starts slow.
 #: Zero would wake every frontier residue of every segment on the first step,
 #: before the rule has any hidden state to decide with.
@@ -105,9 +122,11 @@ class AANCARule(nn.Module):
         identity: bool = False,
         identity_keep: float = IDENTITY_KEEP_INIT,
         growth: bool = False,
+        birth: str = "torsion",
         activation_init: float = ACTIVATION_INIT,
         max_rotation: float = 0.1,
         max_translation: float = 0.3,
+        max_birth_direction: float = MAX_BIRTH_DIRECTION,
     ) -> None:
         super().__init__()
         self.node_dim = node_dim
@@ -185,9 +204,15 @@ class AANCARule(nn.Module):
         # cannot be corrected from torsions, because the lever arm reaches
         # 29 A over 75 residues (see ``aanca.growth``).
         self.growth = growth
+        self.birth = birth
         self.activation_init = activation_init
         self.max_rotation = max_rotation
         self.max_translation = max_translation
+        self.max_birth_direction = max_birth_direction
+        if birth not in ("torsion", "cartesian"):
+            raise ValueError(
+                f"unknown birth {birth!r}; expected 'torsion' or 'cartesian'"
+            )
         if growth:
             # Two logits: N-ward and C-ward. Separate rather than one, because
             # a segment's two ends are different situations and a residue in
@@ -195,11 +220,26 @@ class AANCARule(nn.Module):
             self.activation_head = nn.Sequential(
                 nn.Linear(state_dim, 64), nn.GELU(), nn.Linear(64, 2)
             )
-            # Three torsions per direction, each as a (cos, sin) pair for the
-            # same reason the delta head uses one: a raw angle has a
-            # discontinuity in the middle of its range.
+            # Where a newborn goes, in one of two parameterisations.
+            #
+            # ``torsion``: three torsions per direction, each as a (cos, sin)
+            # pair for the same reason the delta head uses one -- a raw angle
+            # has a discontinuity in the middle of its range. The child's
+            # backbone is then *constructed* by NeRF, which reads the child's
+            # own measured bond geometry and so is not type-independent.
+            #
+            # ``cartesian``: six numbers per direction, two axis-angle vectors.
+            # The first rotates the reference CA direction, the second composes
+            # onto the reference orientation, both relative to the parent's own
+            # frame -- so a birth is equivariant and no torsion, and nothing
+            # about the child's amino-acid type, enters its placement. A
+            # multiplicative residual on the rotation rather than an additive
+            # one, because axis-angle is not a vector space: measured, the
+            # additive difference between helix and sheet is 4.6 rad while the
+            # geodesic between them is 1.86.
+            width = 2 * 6 if birth == "cartesian" else 2 * 3 * 2
             self.birth_head = nn.Sequential(
-                nn.Linear(state_dim, 64), nn.GELU(), nn.Linear(64, 2 * 3 * 2)
+                nn.Linear(state_dim, 64), nn.GELU(), nn.Linear(64, width)
             )
             # Axis-angle rotation and translation of the residue's own atoms.
             self.frame_head = nn.Sequential(
@@ -244,23 +284,32 @@ class AANCARule(nn.Module):
             with torch.no_grad():
                 final.bias.fill_(float(self.activation_init))
 
-            # The torsion order matches ``backbone.extend_nward`` and
-            # ``extend_cward``: N-ward takes (phi parent, omega child, psi
-            # child) and C-ward (psi parent, omega parent, phi child).
             final = self.birth_head[-1]
             nn.init.zeros_(final.weight)
-            with torch.no_grad():
-                degrees = torch.tensor(
-                    [
-                        [BACKBONE_INIT_PHI, BACKBONE_INIT_OMEGA, BACKBONE_INIT_PSI],
-                        [BACKBONE_INIT_PSI, BACKBONE_INIT_OMEGA, BACKBONE_INIT_PHI],
-                    ]
-                )
-                radians = torch.deg2rad(degrees)
-                bias = torch.stack(
-                    [torch.cos(radians), torch.sin(radians)], dim=-1
-                ).reshape(-1)
-                final.bias.copy_(bias)
+            if self.birth == "cartesian":
+                # Zero deviation from the helical reference, which
+                # ``growth.give_birth`` holds. So an untrained Cartesian rule
+                # puts a newborn *exactly* where an untrained torsion rule
+                # does, and the two modes differ in what is learnable rather
+                # than in where they start -- which is the only way the probe's
+                # comparison between them means anything.
+                nn.init.zeros_(final.bias)
+            else:
+                # The torsion order matches ``backbone.extend_nward`` and
+                # ``extend_cward``: N-ward takes (phi parent, omega child, psi
+                # child) and C-ward (psi parent, omega parent, phi child).
+                with torch.no_grad():
+                    degrees = torch.tensor(
+                        [
+                            [BACKBONE_INIT_PHI, BACKBONE_INIT_OMEGA, BACKBONE_INIT_PSI],
+                            [BACKBONE_INIT_PSI, BACKBONE_INIT_OMEGA, BACKBONE_INIT_PHI],
+                        ]
+                    )
+                    radians = torch.deg2rad(degrees)
+                    bias = torch.stack(
+                        [torch.cos(radians), torch.sin(radians)], dim=-1
+                    ).reshape(-1)
+                    final.bias.copy_(bias)
 
             # Zeroed, so an untrained rule relaxes by not moving -- the one
             # place growth does have an identity initialisation.
@@ -381,8 +430,13 @@ class AANCARule(nn.Module):
         """``(activation, torsions, axis_angle, translation)``.
 
         - ``activation`` ``(R, 2)`` raw logits, N-ward then C-ward.
-        - ``torsions`` ``(R, 2, 3)`` radians, in the order the two ``extend_``
-          functions take them.
+        - ``birth`` -- what the newborn's placement is made of, and its shape
+          says which parameterisation. Under ``birth="torsion"`` it is
+          ``(R, 2, 3)`` radians, in the order the two ``extend_`` functions
+          take them. Under ``birth="cartesian"`` it is ``(R, 2, 6)``: an
+          axis-angle rotating the reference CA direction, bounded by
+          ``max_birth_direction``, followed by an unbounded axis-angle
+          composing onto the reference orientation.
         - ``axis_angle`` ``(R, 3)`` and ``translation`` ``(R, 3)``, both
           hard-bounded here so one relaxation step stays local whatever the
           head asks for. Bounding by scaling the whole vector rather than each
@@ -402,13 +456,20 @@ class AANCARule(nn.Module):
         state = torch.cat([node_features, hidden], dim=-1)
         activation = self.activation_head(state)
 
-        raw = self.birth_head(state).view(-1, 2, 3, 2)
-        torsions = torch.atan2(raw[..., 1], raw[..., 0])
+        if self.birth == "cartesian":
+            raw = self.birth_head(state).view(-1, 2, 6)
+            birth = torch.cat(
+                [_bounded(raw[..., :3], self.max_birth_direction), raw[..., 3:]],
+                dim=-1,
+            )
+        else:
+            raw = self.birth_head(state).view(-1, 2, 3, 2)
+            birth = torch.atan2(raw[..., 1], raw[..., 0])
 
         move = self.frame_head(state)
         axis_angle = _bounded(move[:, :3], self.max_rotation)
         translation = _bounded(move[:, 3:], self.max_translation)
-        return activation, torsions, axis_angle, translation
+        return activation, birth, axis_angle, translation
 
     def parameter_count(self) -> int:
         return sum(p.numel() for p in self.parameters())

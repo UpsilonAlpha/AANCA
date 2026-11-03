@@ -310,3 +310,175 @@ def index_geometry(geometry: BackboneGeometry, index: Tensor) -> BackboneGeometr
         ca_c_n=pick(geometry.ca_c_n),
         c_n_ca=pick(geometry.c_n_ca),
     )
+
+
+# -- frames as the birth parameter, instead of torsions -------------------
+
+
+def canonical_triad(
+    device: torch.device | str = "cpu", dtype: torch.dtype = torch.float64
+) -> tuple[Tensor, Tensor, Tensor]:
+    """An ideal ``(N, CA, C)`` whose :func:`frame_from_triad` is the identity.
+
+    CA at the origin, N along +x at the ideal N-CA length, C in the xy-plane at
+    the ideal N-CA-C angle. This is what makes a *frame* a complete description
+    of a residue's backbone: given a rotation and a CA, the triad is this one
+    carried there, so nothing about the residue's amino-acid type enters. It is
+    the step that makes Cartesian birth type-independent, which torsion birth
+    is not -- torsion birth reads the child's own measured bond geometry.
+    """
+    ca = torch.zeros(3, device=device, dtype=dtype)
+    n = torch.tensor([N_CA, 0.0, 0.0], device=device, dtype=dtype)
+    theta = math.radians(N_CA_C)
+    c = torch.tensor(
+        [CA_C * math.cos(theta), CA_C * math.sin(theta), 0.0],
+        device=device,
+        dtype=dtype,
+    )
+    return n, ca, c
+
+
+def triad_from_frame(rot: Tensor, ca: Tensor) -> tuple[Tensor, Tensor, Tensor]:
+    """``(N, CA, C)`` for a residue whose frame is ``rot`` and whose CA is ``ca``.
+
+    The inverse of :func:`frame_from_triad` composed with
+    :func:`canonical_triad`, and exact: round-tripping a real residue's triad
+    through here returns ideal internal geometry at the same position and
+    orientation, not the original atoms.
+    """
+    n0, _ca0, c0 = canonical_triad(rot.device, rot.dtype)
+    n = ca + (rot @ n0.unsqueeze(-1)).squeeze(-1)
+    c = ca + (rot @ c0.unsqueeze(-1)).squeeze(-1)
+    return n, ca, c
+
+
+def virtual_cb(n: Tensor, ca: Tensor, c: Tensor) -> Tensor:
+    """CB from the backbone, with the featuriser's own coefficients.
+
+    Imported from ``graph`` rather than restated so a growing residue's CB is
+    the same construction the perception already uses for a residue that has
+    none (``torch_graph.frame_atom_coords``).
+    """
+    from . import graph as np_graph
+
+    b = ca - n
+    cc = c - ca
+    a = torch.cross(b, cc, dim=-1)
+    return np_graph._VCB[0] * a + np_graph._VCB[1] * b + np_graph._VCB[2] * cc + ca
+
+
+def axis_angle_from_matrix(rot: Tensor) -> Tensor:
+    """``(..., 3)`` rotation vector whose norm is the angle.
+
+    The inverse of :func:`torch_geometry.rotation_matrices`. Used once, at
+    initialisation, to express the helical reference birth as the offset the
+    Cartesian head's bias should start at -- so an untrained Cartesian rule
+    puts a newborn exactly where an untrained torsion rule would, and the two
+    variants differ in what is *learnable* rather than in where they begin.
+
+    The small-angle branch is needed: ``sin(theta)`` divides, and at theta = 0
+    the axis is undefined while the rotation vector is simply zero.
+    """
+    trace = rot.diagonal(dim1=-2, dim2=-1).sum(-1)
+    cos = ((trace - 1.0) / 2.0).clamp(-1.0, 1.0)
+    theta = torch.acos(cos)
+    skew = torch.stack(
+        [
+            rot[..., 2, 1] - rot[..., 1, 2],
+            rot[..., 0, 2] - rot[..., 2, 0],
+            rot[..., 1, 0] - rot[..., 0, 1],
+        ],
+        dim=-1,
+    )
+    small = theta.abs() < 1e-6
+    denominator = (2.0 * torch.sin(theta)).clamp_min(1e-12)
+    out = skew * (theta / denominator).unsqueeze(-1)
+    return torch.where(small.unsqueeze(-1), torch.zeros_like(out), out)
+
+
+def rotation_from_vector(vector: Tensor) -> Tensor:
+    """``(..., 3, 3)`` rotation from a rotation vector, analytic at the identity.
+
+    ``torch_geometry.rotation_matrices`` normalises its axis, which is right
+    when the axis is a real bond and only the angle is zero -- the chi path --
+    and **wrong when the vector itself is the parameter**. There the axis is
+    exactly zero at initialisation, ``axis / clamp(norm)`` is zero, and
+    ``sin(0)`` multiplies whatever survives, so the rotation is the identity
+    with no gradient. Measured: the Cartesian birth head's total gradient was
+    exactly 0.000e+00 until this existed, and so was the rotation half of the
+    frame head's.
+
+    This is the standard numerically stable Rodrigues form, built from the
+    skew matrix of the *unnormalised* vector:
+
+        R = I + a K + b K^2,  a = sin(t)/t,  b = (1 - cos(t))/t^2
+
+    whose coefficients are analytic at ``t = 0`` (a -> 1, b -> 1/2), so the
+    derivative at the identity is the one it should be. The Taylor branch near
+    zero is there because the closed forms divide by ``t``; both branches are
+    computed on a clamped ``t`` so the unused one cannot produce a NaN that
+    ``where`` would propagate into the gradient.
+    """
+    theta_sq = (vector * vector).sum(-1, keepdim=True)
+    theta = theta_sq.clamp_min(1e-24).sqrt()
+    small = theta_sq < 1e-8
+    a = torch.where(small, 1.0 - theta_sq / 6.0, torch.sin(theta) / theta)
+    b = torch.where(
+        small, 0.5 - theta_sq / 24.0, (1.0 - torch.cos(theta)) / theta_sq.clamp_min(1e-24)
+    )
+
+    x, y, z = vector[..., 0], vector[..., 1], vector[..., 2]
+    zero = torch.zeros_like(x)
+    skew = torch.stack(
+        [
+            torch.stack([zero, -z, y], dim=-1),
+            torch.stack([z, zero, -x], dim=-1),
+            torch.stack([-y, x, zero], dim=-1),
+        ],
+        dim=-2,
+    )
+    eye = torch.eye(3, dtype=vector.dtype, device=vector.device).expand_as(skew)
+    a = a.unsqueeze(-1)
+    b = b.unsqueeze(-1)
+    return eye + a * skew + b * (skew @ skew)
+
+
+def relative_frame(
+    parent: tuple[Tensor, Tensor, Tensor], child: tuple[Tensor, Tensor, Tensor]
+) -> tuple[Tensor, Tensor]:
+    """``(axis_angle, offset)`` taking the parent's frame to the child's.
+
+    Both in the **parent's local frame**, which is what makes a Cartesian birth
+    equivariant: the head predicts where the child goes relative to the parent,
+    not where it goes in the crystal's coordinate system, so rotating the whole
+    structure rotates the birth with it rather than changing the prediction.
+    """
+    rot_parent = frame_from_triad(*parent)
+    rot_child = frame_from_triad(*child)
+    relative = rot_parent.transpose(-1, -2) @ rot_child
+    offset = (
+        rot_parent.transpose(-1, -2) @ (child[1] - parent[1]).unsqueeze(-1)
+    ).squeeze(-1)
+    return axis_angle_from_matrix(relative), offset
+
+
+def helical_birth_reference(
+    phi: float, psi: float, omega: float, cward: bool
+) -> tuple[Tensor, Tensor]:
+    """The reference birth, as ``(axis_angle, offset)`` in the parent's frame.
+
+    Builds one ideal peptide bond at the given torsions and measures where the
+    child's frame ended up. That is the bias the Cartesian birth head starts
+    at, so the two birth modes are initialised to the same structure.
+    """
+    geometry = ideal_geometry(dtype=torch.float64)
+    parent = canonical_triad(dtype=torch.float64)
+    radians = [math.radians(v) for v in (phi, psi, omega)]
+    phi_r, psi_r, omega_r = radians
+    if cward:
+        child = extend_cward(*parent, torch.tensor(psi_r), torch.tensor(omega_r),
+                             torch.tensor(phi_r), geometry)
+    else:
+        child = extend_nward(*parent, torch.tensor(phi_r), torch.tensor(omega_r),
+                             torch.tensor(psi_r), geometry)
+    return relative_frame(parent, child)

@@ -2780,3 +2780,117 @@ worse-calibrated ProteinMPNN. What to report, in order:
 Sequencing: (1) and (2) need only `v8_if`'s checkpoint and the existing eval set, so they come
 first. (3) needs a folding model and is the larger job. The set must be the same one the packing
 benchmarks use, or none of it is comparable with our own earlier numbers either.
+
+### Cartesian birth — a newborn placed from a frame, no torsion anywhere — 2026-11-03
+
+`GrowthConfig.birth` and `AANCARule(birth=...)` select `"torsion"` (the NeRF, as built earlier) or
+`"cartesian"`. Under Cartesian birth the parent emits a **frame** and the newborn's backbone is that
+frame carried to a canonical ideal triad — no NeRF, no predicted torsions, and critically **nothing
+about either residue's own internal geometry**, so the placement is type-independent. That is the
+property the CB-level representation needs, and it arrives as a side effect rather than as extra
+work.
+
+**Two measurements set the parameterisation, and both overturned the obvious choice.**
+
+*The CA–CA distance is not a free parameter.* It is **3.804 Å for every (phi, psi)** of a trans
+peptide — fixed by the peptide's own bond geometry, not by the torsions. So a birth chooses the
+*direction* of the child's CA and not its distance. The offset is therefore the reference offset
+**rotated**, and a rotation preserves norm, so no head output however large can tear the peptide at
+the moment of birth. Only relaxation can, which is what the restraint is for.
+
+*The rotation residual has to be multiplicative.* Axis-angle is not a vector space. Measured from
+the helical reference, C-ward:
+
+| | helix | sheet | ppII | left-helix | bridge |
+|---|---|---|---|---|---|
+| additive axis-angle difference, rad | 0.00 | 4.60 | 3.36 | 2.77 | 0.30 |
+| **geodesic rotation**, rad | 0.00 | 1.86 | 3.07 | 2.62 | 0.29 |
+| offset direction, rad | 0.00 | 0.71 | 0.71 | 0.50 | 0.26 |
+
+An additive residual would have to span 4.6 rad to reach beta sheet and is discontinuous near π; the
+geodesic is 1.86. So the head's rotation output **composes onto** the reference rather than adding
+to it. The same table sets the bounds: `MAX_BIRTH_DIRECTION = 1.0` rad covers every one of those
+secondary structures with room to spare, while the child's **orientation is deliberately uncapped** —
+polyproline II sits 3.07 rad from helix, nearly antipodal, so any cap tight enough to matter would
+exclude real secondary structure, and a rotation is intrinsically bounded anyway.
+
+**A second silent dead gradient, and it was worse than the first.**
+`torch_geometry.rotation_matrices` normalises its axis. That is right for the chi path, where the
+axis is a real bond and only the angle is zero, and **wrong when the vector itself is the learned
+parameter**: at initialisation the axis is exactly zero, `axis / clamp(norm)` is zero, and `sin(0)`
+multiplies whatever survives, so the map is the identity with no derivative. The Cartesian birth
+head's total gradient was exactly `0.000e+00`, and so was **the rotation half of the frame head** —
+which had been dead since the frame head was written, hidden because the translation half still
+carried gradient and made the total look healthy. `backbone.rotation_from_vector` is the standard
+stable Rodrigues form, `R = I + aK + bK²` with `a = sin t / t`, `b = (1 − cos t)/t²` built from the
+**unnormalised** vector, whose coefficients are analytic at the identity (a → 1, b → ½). Measured:
+5.68 against 0.00 for the same functional. Pinned in `tests/test_backbone.py`, with the old failure
+asserted alongside so the test explains itself.
+
+Both of these were found by asserting that every head receives gradient rather than by watching a
+loss curve. Neither would have produced a symptom — a head that cannot learn looks exactly like a
+head that has not learned yet.
+
+**The two modes are initialised to the same birth, which is what makes the comparison a comparison.**
+Both start at the helical reference. On a parent whose own internal geometry is ideal they agree to
+float precision (3.8e-15, asserted). On a crystal parent they differ by **0.08 Å**, and that number
+is accounted for rather than merely small: torsion birth reads the parent's measured N, CA and C
+through the NeRF, Cartesian birth reads only the parent's frame, and residue 20 of 1UBQ has
+N-CA-C = 109.84° against an ideal 111.00° — 1.16° at a 3.8 Å lever is 0.077 Å.
+
+**Untrained baseline, 60 steps on 1UBQ, mean of 3 seeds:**
+
+| birth | seeds | mode | alive | bond | fape | CA rmsd |
+|---|---|---|---|---|---|---|
+| torsion | 1 | C-ward only | 6.1 % | 0.0001 | 0.365 | 2.33 |
+| torsion | 1 | both ways | 8.3 % | 0.0022 | 0.470 | 3.43 |
+| torsion | 2 | both ways | 18.9 % | 0.0012 | 0.658 | 5.24 |
+| torsion | 4 | both ways | 34.6 % | 0.4828 | 0.741 | 5.60 |
+| torsion | 8 | both ways | 61.8 % | 4.5100 | 0.716 | 5.18 |
+| cartesian | 1 | C-ward only | 6.1 % | 0.0050 | 0.361 | 2.27 |
+| cartesian | 1 | both ways | 8.3 % | 0.0061 | 0.468 | 3.40 |
+| cartesian | 2 | both ways | 18.9 % | 0.0057 | 0.653 | 5.19 |
+| cartesian | 4 | both ways | 34.6 % | 0.4892 | 0.740 | 5.58 |
+| cartesian | 8 | both ways | 61.8 % | 4.6282 | 0.715 | 5.14 |
+
+`alive` is identical to the digit, as it must be — same activation head, same random stream. FAPE
+and RMSD agree to 0.005 and 0.05, which is the 0.08 Å per-birth difference above accumulated and
+then swamped by the helix both modes grow.
+
+**The prediction was directionally right and quantitatively an overestimate, which is worth
+recording as a miss.** It was that Cartesian birth would make the `bond` column worse *at every*
+seed count, because nothing would be correct by construction any more. The direction holds — 0.0050
+against 0.0001 at one seed, 0.0057 against 0.0012 at two — but the size is a factor of a few at
+crystal scale, not a torn chain. The reason is that the parameterisation ended up keeping the one
+invariant that genuinely is invariant, CA–CA = 3.804 Å, by construction. "Nothing correct by
+construction" was the wrong summary of what Cartesian birth does.
+
+**What this does not yet change.** A newborn's non-backbone atoms still ride on a rigid transform
+from its parked pose, so it is still born as its native amino acid: the *placement* is now
+type-independent but the *atom set* is not. Joining the identity head and growing at
+backbone-and-CB resolution is the step that removes the leak, and it is now cheap, because nothing
+in the placement path reads the child's type.
+
+**The state-of-the-art comparison has moved and this is closer than I said.** An agent search
+reports that the current Baker-lab/NVIDIA model, **RFD4-Proteina** (2026-10, project-site PDF, repo
+`RosettaCommons/RFD4-Proteina`, weights on HuggingFace, ~0.4 B params), does **not** diffuse SE(3)
+frames. Its state is **per-token anchor-atom coordinate (CA for amino acids) plus a 32-dim latent**,
+generated jointly by **flow matching** with a stochastic TSR SDE at 60 steps, and it **co-designs
+sequence** — the decoder emits all-atom structure and sequence together, with no ProteinMPNN handoff,
+and sequence recovery against the final design rises from ~50 % to 97 % along the trajectory, i.e.
+identity is still being decided mid-generation. Length is still fixed per sample (materialised from
+a contig string, padded token count throughout) and the network is still explicitly time-conditioned
+(separate 256-dim coordinate and latent time embeddings via adaLN), so the two differences that
+matter to this project are unchanged. Also: RFdiffusion3 exists and I had missed it (bioRxiv
+2025-09-18, all-atom, ~168 M params), and RFD4's own introduction says RFD3 "does not design
+high-quality sequences for its generated structures". **Unverified:** that "RFD4" ever stands for
+"RFdiffusion4" — nothing states it — and no bioRxiv/journal DOI was found for RFD4. Treat the
+numbers as agent-reported until read from the PDF directly.
+
+Two consequences for this project, stated now rather than acted on. First, "CA coordinate plus a
+per-residue latent" is a *third* option alongside frames and torsions, and an AANCA already has the
+latent — the 96-dim hidden state. The orientation would then be implicit in the latent rather than
+explicit in a rotation, which is strictly more general and strictly harder to restrain. Second, the
+field's own direction is towards joint sequence-structure generation with identity resolved
+*during* the trajectory, which is an independent argument for joining the identity head to growth
+next.

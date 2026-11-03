@@ -63,9 +63,13 @@ from .backbone import (
     extend_nward,
     ideal_geometry,
     index_geometry,
+    frame_from_triad,
+    helical_birth_reference,
+    rotation_from_vector,
     measure_backbone_torsions,
     place_oxygen,
     rigid_onto_triad,
+    triad_from_frame,
 )
 from .torch_geometry import rotation_matrices
 from .torch_graph import FeatureTopology, sequence_links
@@ -86,6 +90,13 @@ class GrowthConfig:
     seeds: int = 1
     #: Forbid N-ward growth. Only for the control above.
     cward_only: bool = False
+    #: How a newborn is placed. ``"torsion"`` builds its backbone by NeRF from
+    #: three predicted torsions, which is correct by construction and carries
+    #: the lever arm. ``"cartesian"`` takes a frame the parent emitted, which
+    #: has no lever arm anywhere and is type-independent -- the same state
+    #: variable the SE(3) diffusion models use. Must match the rule's own
+    #: ``birth``, since the head's width differs.
+    birth: str = "torsion"
     #: How a wake decision is drawn from the activation logit. ``"sample"``
     #: draws a Bernoulli and passes a straight-through gradient; ``"threshold"``
     #: takes ``logit > 0``, which is what a deterministic probe wants.
@@ -233,8 +244,7 @@ def rigid_relax(
     sense ``aanca.fape`` scores: the residue's position *is* its CA and its
     orientation *is* its N-CA-C frame.
     """
-    angle = axis_angle.norm(dim=-1)
-    rot = rotation_matrices(axis_angle, angle).to(coords.dtype)
+    rot = rotation_from_vector(axis_angle).to(coords.dtype)
     ca = backbone_atoms(coords, topo)[:, 1]
     origin = ca.unsqueeze(1)
     moved = (coords - origin) @ rot.transpose(-1, -2) + origin + translation.unsqueeze(1).to(
@@ -252,6 +262,7 @@ def give_birth(
     born_c: Tensor,
     torsions: Tensor,
     geometry: BackboneGeometry | None = None,
+    birth_mode: str = "torsion",
 ) -> tuple[Tensor, Tensor]:
     """Place the residues whose parents decided to wake them.
 
@@ -275,6 +286,13 @@ def give_birth(
     instead; keeping it in the peptide bond is better because the peptide bond
     is exactly what :func:`peptide_bond_restraint` supervises, and a residue's
     internal geometry is meant to be frozen at its crystal values.
+
+    **Under ``birth_mode="cartesian"`` the triad is not constructed at all**,
+    and ``torsions`` is instead the ``(R, 2, 6)`` pair of axis-angle vectors
+    described at :meth:`model.AANCARule.growth_outputs`. See
+    :func:`_cartesian_triad`. The two modes are initialised to the same birth,
+    so the probe's comparison between them is a comparison of what is
+    learnable and not of where they start.
     """
     geometry = geometry or ideal_geometry(coords.device, coords.dtype)
     bb = backbone_atoms(coords, topo)
@@ -286,16 +304,22 @@ def give_birth(
         if parents.numel() == 0:
             continue
         children = parents - 1 if direction == 0 else parents + 1
-        geo = index_geometry(geometry, children)
-        angles = torsions[parents, direction]
         n, ca, c = bb[parents, 0], bb[parents, 1], bb[parents, 2]
-        if direction == 0:
-            triad = extend_nward(
+        if birth_mode == "cartesian":
+            triad = _cartesian_triad(
+                (n, ca, c), torsions[parents, direction], direction
+            )
+        elif birth_mode == "torsion":
+            geo = index_geometry(geometry, children)
+            angles = torsions[parents, direction]
+            extend = extend_nward if direction == 0 else extend_cward
+            triad = extend(
                 n, ca, c, angles[:, 0], angles[:, 1], angles[:, 2], geo
             )
         else:
-            triad = extend_cward(
-                n, ca, c, angles[:, 0], angles[:, 1], angles[:, 2], geo
+            raise ValueError(
+                f"unknown birth mode {birth_mode!r}; expected 'torsion' or "
+                "'cartesian'"
             )
         source = (bb[children, 0], bb[children, 1], bb[children, 2])
         placed = rigid_onto_triad(new_coords[children], source, triad)
@@ -308,6 +332,71 @@ def give_birth(
         alive[children] = alive[children] | (decided[parents] > 0.5)
 
     return new_coords, alive
+
+
+#: The reference birth, per direction, cached because it is pure geometry.
+#: Index 0 is N-ward and 1 is C-ward, matching ``give_birth``'s loop.
+_REFERENCE: dict[tuple[int, torch.dtype], tuple[Tensor, Tensor]] = {}
+
+
+def _reference(direction: int, dtype: torch.dtype, device) -> tuple[Tensor, Tensor]:
+    key = (direction, dtype)
+    if key not in _REFERENCE:
+        from .model import BACKBONE_INIT_OMEGA, BACKBONE_INIT_PHI, BACKBONE_INIT_PSI
+
+        axis_angle, offset = helical_birth_reference(
+            BACKBONE_INIT_PHI, BACKBONE_INIT_PSI, BACKBONE_INIT_OMEGA,
+            cward=direction == 1,
+        )
+        _REFERENCE[key] = (axis_angle.to(dtype), offset.to(dtype))
+    axis_angle, offset = _REFERENCE[key]
+    return axis_angle.to(device), offset.to(device)
+
+
+def _cartesian_triad(
+    parent: tuple[Tensor, Tensor, Tensor], birth: Tensor, direction: int
+) -> tuple[Tensor, Tensor, Tensor]:
+    """A newborn's ``(N, CA, C)`` from a frame the parent emitted, no torsion.
+
+    The variant the measurements argue for, and it rests on two of them.
+
+    **The CA-CA distance is not a free parameter.** It is 3.804 A for every
+    (phi, psi) of a trans peptide, because it is fixed by the peptide's own
+    bond geometry rather than by the torsions. So a birth chooses the
+    *direction* of the child's CA and not its distance, and the offset here is
+    the reference offset *rotated* -- which keeps the CA-CA distance exactly
+    right by construction, the one invariant that genuinely is invariant.
+
+    **The rotation residual is multiplicative.** Axis-angle is not a vector
+    space: measured, the additive difference between the helical and sheet
+    births is 4.6 rad while the geodesic between them is 1.86, and the
+    representation is discontinuous near pi. So the head's output composes onto
+    the reference rotation rather than adding to it.
+
+    Everything is expressed in the **parent's own frame**, so a birth is
+    equivariant: rotate the whole structure and the birth rotates with it
+    instead of changing. And nothing about the child's amino-acid type enters,
+    which is what torsion birth cannot say -- it reads the child's own measured
+    N-CA, CA-C and N-CA-C. That is the property the CB-level representation
+    needs, and it arrives here as a side effect rather than as extra work.
+    """
+    # Everything is done in the *coordinates'* precision, not the head's. The
+    # head emits float32 and the coordinates are float64, and matmul does not
+    # promote -- so casting here rather than at the call site keeps the
+    # torsion arithmetic's exactness guarantee and still carries the gradient
+    # back into the head.
+    dtype = parent[1].dtype
+    birth = birth.to(dtype)
+    ref_axis_angle, ref_offset = _reference(direction, dtype, birth.device)
+    rot_parent = frame_from_triad(*parent)
+    rot_reference = rotation_from_vector(ref_axis_angle)
+    rot_swing = rotation_from_vector(birth[:, :3])
+    rot_spin = rotation_from_vector(birth[:, 3:])
+
+    offset = (rot_swing @ ref_offset.unsqueeze(-1)).squeeze(-1)
+    ca_child = parent[1] + (rot_parent @ offset.unsqueeze(-1)).squeeze(-1)
+    rot_child = rot_parent @ rot_reference @ rot_spin
+    return triad_from_frame(rot_child, ca_child)
 
 
 def correct_oxygens(

@@ -445,6 +445,7 @@ def step_once(
             torch.where(nward, wake[:, 0], torch.zeros_like(wake[:, 0])),
             torch.where(cward, wake[:, 1], torch.zeros_like(wake[:, 1])),
             torsions,
+            birth_mode=growth.birth,
         )
         coords = correct_oxygens(coords, topo, alive, links)
 

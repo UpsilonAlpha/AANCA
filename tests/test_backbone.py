@@ -191,3 +191,42 @@ def test_the_measured_torsions_are_a_protein(ubiquitin):
     assert float(planar.mean()) < -0.95, "omega should be trans"
     negative = (phi[joined + 1] < 0).to(torch.float64).mean()
     assert float(negative) > 0.85, "phi should be negative for an L-protein"
+
+
+def test_the_rotation_vector_map_is_alive_at_the_identity():
+    """The silent dead gradient, pinned.
+
+    ``torch_geometry.rotation_matrices`` normalises its axis, which is correct
+    for the chi path -- the axis is a bond and only the angle is zero -- and
+    wrong when the vector itself is the learned parameter, because then the
+    axis is zero at initialisation and the gradient vanishes. Both the
+    Cartesian birth head and the rotation half of the frame head are
+    zero-initialised, so they would never have learned anything and nothing in
+    a loss curve would have said so.
+    """
+    from aanca.backbone import rotation_from_vector
+    from aanca.torch_geometry import rotation_matrices
+
+    torch.manual_seed(0)
+    weight = torch.randn(3, 3, dtype=torch.float64)
+
+    stable = torch.zeros(1, 3, dtype=torch.float64, requires_grad=True)
+    (rotation_from_vector(stable)[0] * weight).sum().backward()
+    assert float(stable.grad.abs().sum()) > 0.1
+
+    old = torch.zeros(1, 3, dtype=torch.float64, requires_grad=True)
+    (rotation_matrices(old, old.norm(dim=-1))[0] * weight).sum().backward()
+    assert float(old.grad.abs().sum()) == 0.0, "the old failure is the reason"
+
+    assert torch.allclose(
+        rotation_from_vector(torch.zeros(1, 3, dtype=torch.float64))[0],
+        torch.eye(3, dtype=torch.float64),
+        atol=1e-12,
+    )
+    # And away from the origin the two must agree, or this is a different map.
+    vector = torch.tensor([[0.3, -0.7, 0.4], [1.9, 0.2, -2.2]], dtype=torch.float64)
+    assert torch.allclose(
+        rotation_from_vector(vector),
+        rotation_matrices(vector, vector.norm(dim=-1)),
+        atol=1e-12,
+    )

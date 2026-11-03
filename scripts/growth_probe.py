@@ -126,6 +126,14 @@ def main() -> int:
     parser.add_argument("--seeds", type=int, nargs="*", default=[1, 2, 4, 8])
     parser.add_argument("--repeats", type=int, default=3)
     parser.add_argument(
+        "--birth",
+        choices=("torsion", "cartesian", "both"),
+        default="both",
+        help="how a newborn is placed. The two are initialised to the same "
+        "helical reference birth, so running both is a comparison of what is "
+        "learnable rather than of where they start.",
+    )
+    parser.add_argument(
         "--checkpoint",
         default=None,
         help="a trained rule. Without one the untrained baseline is reported, "
@@ -155,21 +163,25 @@ def main() -> int:
         "  another torsion.\n"
     )
 
-    rule = AANCARule(growth=True)
+    loaded = None
     if args.checkpoint:
-        state = ckpt.load(Path(args.checkpoint))
-        rule.load_state_dict(ckpt.rule_weights(state), strict=False)
+        loaded = ckpt.rule_weights(ckpt.load(Path(args.checkpoint)))
         print(f"rule from {args.checkpoint}\n")
     else:
         print("untrained rule (the baseline)\n")
-    rule.eval()
 
     print(f"Growth over {args.steps} steps, mean of {args.repeats} seeds")
     print(
-        "  seeds   mode         alive      bond      fape   CA rmsd"
+        "  birth       seeds   mode         alive      bond      fape   CA rmsd"
     )
-    for n_seeds in args.seeds:
-        for cward_only in (True, False):
+    modes = ("torsion", "cartesian") if args.birth == "both" else (args.birth,)
+    for mode in modes:
+        rule = AANCARule(growth=True, birth=mode)
+        if args.checkpoint:
+            rule.load_state_dict(ckpt.rule_weights(loaded), strict=False)
+        rule.eval()
+        for n_seeds in args.seeds:
+          for cward_only in (True, False):
             if cward_only and n_seeds != 1:
                 # Synthesis order is a single-seed statement; several seeds
                 # growing one way is neither control nor model.
@@ -178,16 +190,18 @@ def main() -> int:
                 steps=args.steps,
                 truncate=args.steps,
                 k=args.k,
-                growth=GrowthConfig(seeds=n_seeds, cward_only=cward_only),
+                growth=GrowthConfig(
+                    seeds=n_seeds, cward_only=cward_only, birth=mode
+                ),
             )
             runs = [
                 grow(rule, topo, native, links, config, seed)
                 for seed in range(args.repeats)
             ]
             mean = {k: sum(r[k] for r in runs) / len(runs) for k in runs[0]}
-            mode = "C-ward only" if cward_only else "both ways"
+            label = "C-ward only" if cward_only else "both ways"
             print(
-                f"  {n_seeds:>5d}   {mode:<12s}"
+                f"  {mode:<12s}{n_seeds:>3d}   {label:<12s}"
                 f"{mean['alive']:>7.1%}{mean['bond']:>10.4f}"
                 f"{mean['fape']:>10.4f}{mean['rmsd']:>10.2f}"
             )
