@@ -3567,3 +3567,78 @@ failure mode. One-hot rather than multi-hot, since the measurement says out-degr
 declared structure maintained incrementally as residues are created and claims are made, rather than a
 function of fixed residue ids. `sequence_links` is currently derived once from `chain_ids` and
 `res_id_list`, and every growth function takes it as a given.
+
+### The hole task — and the baseline that said the first version was wrong — 2026-11-03
+
+`aanca/hole.py`, `scripts/train_hole.py`, `scripts/hole_baseline.py`, `tests/test_hole.py`. The
+decisive measurement for growth as a point cloud, and the cheapest in this project: **no rollout.**
+One message-passing hop, one head, one loss, 0.25–0.33 s an update on a CPU.
+
+**The task.** Delete one residue from a native structure and ask the residues that could have seen it
+to point at the hole. Well posed *because* one residue is missing: a head asked "where are your
+neighbours" has nineteen right answers and no way to choose, while a head asked "where is the gap"
+has one. Two mask modes — `hole` deletes one residue from an otherwise complete structure, which is
+over-determined and an upper bound; `frontier` deletes a contiguous sequence stretch so the hole sits
+on the boundary of a partial structure, which is what growth faces. The gap between them is the real
+difficulty.
+
+**The first version of the objective was measuring the wrong thing, and a baseline found it.** The
+loss was an unweighted per-witness Huber and the reported metric was the mean per-witness error.
+Training crawled from 6.93 to 6.50 Å over 2,662 updates, which looked like slow learning. It was not.
+`scripts/hole_baseline.py` on 60 structures:
+
+```
+  mask           zero  anti-centroid  least-occupied
+  hole         7.20 A        10.53 A         10.73 A
+  frontier     7.04 A         8.96 A          9.55 A
+```
+
+**Every closed-form predictor scores worse than emitting zero.** That is not a weak baseline, it is a
+broken metric. Witness distances are median 7.6 Å with only 30 % inside 6 Å, so the mean per-witness
+error is dominated by how *far away the witnesses are*: predicting zero scores exactly the witness's
+own distance, and any guess with magnitude in a slightly wrong direction scores worse. The objective
+was paying the model to say nothing, and the far witnesses — which cannot locate the hole — were
+setting the gradient.
+
+**The rebuilt objective has three terms.**
+
+* **The fused position**, which is what a generator would actually use: every witness's answer is
+  mapped into the shared frame and combined under a **softmax** of the logits, and that single
+  position is scored. A softmax rather than a sigmoid, because a softmax is a competition for weight
+  and so lets a far witness abstain, while a sigmoid lets every witness assert itself independently.
+* **A proximity-weighted per-witness term** for dense supervision, weighted by `1/d²`. That exponent
+  is the Fisher argument rather than a taste: a witness localises the hole to an angular precision,
+  which converts to a positional error proportional to its distance, so its precision goes as the
+  inverse square.
+* **Detection**, over every residue and not only the witnesses, because at growth time nothing tells a
+  residue that a hole exists.
+
+**The baseline is now the right one and it is an identity, not an estimate.** A zero offset and a flat
+logit make the softmax uniform, so an untrained head's fused position **is** the witnesses' centroid —
+verified to 1e-6 in `tests/test_hole.py`, and visible in the numbers (untrained fused 2.41 Å against
+centroid 2.41 Å). So the centroid is the zero point:
+
+| | centroid, Å | target, Å |
+|---|---|---|
+| surrounded hole | 2.51 | ~0.6 |
+| at a frontier | 4.76 | ~0.6 |
+
+The 0.6 Å target is the peptide bond's tolerance from `scripts/peptide_shell_probe.py` — the distance
+within which a newborn's N still threads unambiguously. So the head has to improve on the centroid by
+a factor of four surrounded and eight at a frontier, and `hole_v2` is running to find out whether it
+can.
+
+**What the first attempt cost and what it bought.** Two and a half thousand wasted updates, and the
+lesson is the ordinary one stated precisely: the baseline should have been measured *before* the
+trainer, not after it was already running. The thing that made it visible was not the loss curve —
+which was moving, slowly, in the right direction — but a closed-form predictor scoring worse than
+silence. A metric on which doing nothing beats every honest attempt is a metric that is measuring
+something other than what it names.
+
+**One leak checked rather than assumed.** `alive_topology` masks the hole out of `atom_mask`, but
+`frame_atom_coords` reads `frame_idx` and not `atom_mask`, so the backbone/CB edge block does read the
+hole's own coordinates for any pair that includes it — and ±1 sequence neighbours are *forced* into
+the neighbour list, so such pairs always exist. Measured: moving the hole 25 Å changes **nothing** on
+any alive residue, bit-identical, because the edge is zeroed at aggregation by
+`edge_mask & alive[neighbours]`. Only the hole's own row moves, by 3e-7, and nothing reads it. The
+same argument covers the growth path, which masks the same way.

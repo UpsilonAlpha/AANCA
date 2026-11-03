@@ -17,3 +17,5 @@ data/*
 
 # training run outputs: checkpoints and curves, not source
 runs/
+runs_hole_v1.log
+runs_hole_*.log

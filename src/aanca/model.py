@@ -129,6 +129,7 @@ class AANCARule(nn.Module):
         identity: bool = False,
         identity_keep: float = IDENTITY_KEEP_INIT,
         growth: bool = False,
+        hole: bool = False,
         birth: str = "torsion",
         activation_init: float = ACTIVATION_INIT,
         max_rotation: float = 0.1,
@@ -219,6 +220,13 @@ class AANCARule(nn.Module):
         # 29 A over 75 residues (see ``aanca.growth``).
         self.growth = growth
         self.birth = birth
+        # "Where is a residue missing?" -- the capability growth as a point
+        # cloud rests on, and the one that can be measured without a rollout.
+        # See ``aanca.hole``. Four outputs: a displacement in this residue's
+        # own frame, so the answer is equivariant, and a logit for whether
+        # there is a hole in sight at all -- because at growth time nothing
+        # tells a residue that there is one.
+        self.hole = hole
         self.activation_init = activation_init
         self.max_rotation = max_rotation
         self.max_translation = max_translation
@@ -259,6 +267,10 @@ class AANCARule(nn.Module):
             self.frame_head = nn.Sequential(
                 nn.Linear(state_dim, 64), nn.GELU(), nn.Linear(64, 6)
             )
+        if hole:
+            self.hole_head = nn.Sequential(
+                nn.Linear(state_dim, 64), nn.GELU(), nn.Linear(64, 4)
+            )
         self._init_heads()
 
     def _init_heads(self, initial_log_kappa: float = 1.0) -> None:
@@ -285,6 +297,12 @@ class AANCARule(nn.Module):
             for head in (self.bond_head, self.angle_head):
                 nn.init.zeros_(head[-1].weight)
                 nn.init.zeros_(head[-1].bias)
+
+        if self.hole:
+            # Zeroed: an untrained rule says "no hole, and it is at my own CA",
+            # which is wrong in a way that is at least not divergent.
+            nn.init.zeros_(self.hole_head[-1].weight)
+            nn.init.zeros_(self.hole_head[-1].bias)
 
         if self.identity:
             # Zeroed, so at initialisation the only thing in the logits is the
@@ -437,6 +455,25 @@ class AANCARule(nn.Module):
         else:
             keep = current.to(logits.dtype)
         return logits + self.identity_keep * keep
+
+    def hole_outputs(
+        self, node_features: Tensor, hidden: Tensor
+    ) -> tuple[Tensor, Tensor]:
+        """``(offset, logit)``: where a residue is missing, and whether one is.
+
+        ``offset`` is ``(R, 3)`` Angstrom in each residue's own backbone frame.
+        Not bounded, unlike the frame head's translation: a hole can be nine
+        Angstrom away and clipping the answer would make the far witnesses
+        unable to express it. The Huber loss in ``aanca.hole`` is what keeps
+        those far witnesses from dominating instead.
+        """
+        if not self.hole:
+            raise ValueError(
+                "this rule has no hole head; build it with AANCARule(hole=True)"
+            )
+        state = torch.cat([node_features, hidden], dim=-1)
+        out = self.hole_head(state)
+        return out[:, :3], out[:, 3]
 
     def growth_outputs(
         self, node_features: Tensor, hidden: Tensor
