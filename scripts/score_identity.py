@@ -121,7 +121,24 @@ def main() -> int:
     weights = Path(args.weights) if args.weights else Path(args.checkpoint)
     rule.load_state_dict(ckpt.rule_weights(ckpt.load(weights, map_location="cpu")))
 
-    steps = args.steps or int(stored.get("steps_max", stored.get("steps", 30)))
+    # ``or``-chained, not ``.get(key, default)``: ``--steps-max`` defaults to
+    # **0** meaning "unset, use --steps", so a stored 0 is *present* and falsy
+    # rather than absent, and a default only fires on absence. Reading it as a
+    # real value gave a zero-step rollout, which never calls ``step_once`` --
+    # so it produced no identity logits, reported "the rule has no identity
+    # head" when the head was built and correct, and printed the *damaged
+    # inputs* as though they were predictions. One root cause, three symptoms,
+    # and the misleading one was the message: it sent me to the model instead
+    # of the rollout length.
+    steps = (
+        args.steps
+        or int(stored.get("steps_max") or 0)
+        or int(stored.get("steps") or 0)
+        or 30
+    )
+    if steps < 1:
+        print(f"refusing to score with {steps} steps")
+        return 1
     config = RolloutConfig(
         steps=steps,
         truncate=int(stored.get("truncate", 12)),
@@ -159,8 +176,14 @@ def main() -> int:
             "ProteinMPNN (~58 %)\n  only in kind, not on this set: those are "
             "published on their own benchmarks."
         )
+    elif not getattr(rule, "identity", False):
+        print("\n  no identity numbers: this rule has no identity head.")
     else:
-        print("\n  no identity numbers -- the rule has no identity head.")
+        print(
+            "\n  no identity numbers: the rule HAS a head, but the rollout "
+            "produced no\n  logits -- which means it ran zero steps. Check "
+            "--steps and the stored steps_max."
+        )
     return 0
 
 
