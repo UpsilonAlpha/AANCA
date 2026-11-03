@@ -3505,3 +3505,65 @@ number that says whether density-driven growth can work at all, because it is ex
 newborn's placement inherits. Measure that before building the cloud representation, which is a large
 refactor: `TorsionTopology` and `FeatureTopology` are both indexed by a fixed residue count with fixed
 sequence ids.
+
+### Threading a cloud works, and the peptide bond does it perfectly — 2026-11-03
+
+`scripts/peptide_shell_probe.py`, 291 structures. The proposal was to thread the chain off a cloud
+using the direction of the peptide bond rather than CA proximity, since C(i)→N(i+1) is both short and
+*directed* and so fixes the N-to-C orientation a cloud has no indices for. It works, and it is not
+close:
+
+```
+  bonded C(i)-N(i+1)   n= 141532  min 0.979  median 1.330  max 4.752
+    percentiles        0.01% 1.262  0.1% 1.294  1% 1.311
+                         99% 1.352  99.9% 1.366  99.99% 1.392
+  every other C-N      n= 669759  min 2.509  1st pct 3.089
+
+  directed C-to-N graph at 2 A:
+    out-degree  0: 1.0107%  1: 98.9893%
+    in-degree   0: 1.0107%  1: 98.9893%
+  spurious edges found: 0 against 141532 real bonds
+```
+
+**99.98 % of real peptide bonds lie in [1.262, 1.392] Å** — a spread of 0.13 Å — and the nearest
+non-bonded C–N anywhere in 670,000 candidate pairs is **2.509 Å**. (The 0.979 and 4.752 are broken
+models, the same contamination `scripts/reach_probe.py` found at g = 1; the percentiles are the real
+bond.) So the populations are separated by **1.12 Å**, a threshold anywhere in [1.5, 2.5] works, and
+at 2.0 Å the directed graph has **zero** false edges and in- and out-degree never above one. It is
+exactly a set of directed paths, which is exactly a set of chains.
+
+**The number that matters for the design: ~0.6 Å of tolerance.** A bond sits at 1.33 and the
+threshold sits at 2.0, so a newborn's N can be about 0.6 Å from where it belongs and the bond is
+still unambiguously readable — up to 1.1 Å before it could be confused with anything. Against that,
+`scripts/drift_probe.py` measured the untrained rule at **1.25 Å of error at one birth**. So training
+has to roughly halve per-birth placement error for a cloud to thread itself, which is a realistic
+target rather than a demanding one.
+
+**A correction.** The previous section worried that 4 % of residues carry a third CA at peptide range,
+so "nothing in the geometry distinguishes a real bond from that coincidence". At the C–N level that is
+simply false: zero coincidences in 670,000 pairs. The 4 % is a CA-level artefact of a shell that
+overlaps, and it does not transfer to the peptide bond. The mechanism is immune to the thing it was
+charged with.
+
+**It needs frames, not CA and CB** — which is already what Cartesian birth emits. A frame plus
+`triad_from_frame` gives N, CA and C at ideal internal geometry, so the atoms the threading test needs
+are produced by the existing birth path without any addition.
+
+**The one distinction that remains: detecting a bond versus declaring one.** A birth already *declares*
+its bond — the parent knows which residue it created and in which direction — so for parent-child
+pairs threading is bookkeeping and free. Only a join between two independently grown segments would
+have to be *discovered*, and discovering it by threshold requires the two ends to land within ~1.1 Å
+of a correct peptide bond by accident.
+
+The better route is to make the join an action rather than an inference: a frontier residue emits a
+**claim** over its spatial neighbours — which it can see, unlike a dormant slot — for which one is its
+C-ward partner, with "none, I will grow a new one" as an option. Then the restraint pulls the claimed
+pair into bond geometry, and the C–N test becomes *verification* rather than discovery. That unifies
+growth and closure into a single decision, **extend or connect**, which is a better shape than a
+growth rule plus a separate closure mechanism, and it makes closure a positive action rather than a
+failure mode. One-hot rather than multi-hot, since the measurement says out-degree is never above one.
+
+**The refactor this implies.** `links` stops being topology and becomes *state*: the chain is a
+declared structure maintained incrementally as residues are created and claims are made, rather than a
+function of fixed residue ids. `sequence_links` is currently derived once from `chain_ids` and
+`res_id_list`, and every growth function takes it as a given.
