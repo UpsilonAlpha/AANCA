@@ -4695,3 +4695,30 @@ and measure the correlation between their error vectors. If it is high, threadin
 should move to 2.2 Å. If it is near zero, Cartesian birth cannot thread unaided and needs either an
 explicit bond-geometry term at birth or a relaxation pass that couples neighbours — which the hops
 ablation already showed more depth alone will not provide.
+
+### Correction: v9_if had not plateaued, and recovery is now 39.2 %
+
+The entry above claiming v9_if "has stopped improving at 38 %, so more of this recipe will not help"
+was **wrong, and the advice attached to it was wrong too.** The full per-eval trajectory, read from the
+log at 17,000 of its 20,000 updates:
+
+| updates | 1k | 2k | 3k | 4k | 5k | 6k | 7k | 8k | 9k | 10k | 11k | 12k | 13k | 14k | 15k | 16k | 17k |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| recovery % | 36.1 | 36.7 | 37.2 | 37.3 | 37.9 | 37.9 | 37.9 | 37.9 | 38.0 | 37.6 | 37.6 | 38.2 | 38.2 | 38.4 | 38.2 | 38.8 | **39.2** |
+
+The flat stretch was real — four consecutive evals at 37.9 %, then a dip to 37.6 % — but it **broke
+out**, and the run has gained 1.2 points since the point at which it was declared finished. So "the
+recipe is done" was a plateau called from inside one, which is the standard way to call one wrongly:
+a four-eval flat is not evidence of convergence when the per-eval step is ~0.3 points and the noise is
+about the same size. The honest reading is that recovery is still climbing slowly and 20,000 updates
+will not be where it stops.
+
+No action follows: `--updates 20000` is stored, the run is at 17,000 at 1.0 s/update, so it finishes on
+its own in under an hour and **g1 starts then** — the dependency gate resolves itself.
+
+**A second fault, caught before it was recorded.** The first extraction of that trajectory counted
+`held out after N updates` and `sequence recovery X%` with two independent regexes and zipped them.
+There are 17 blocks and **18** recovery lines in the log, so every pair was shifted by one and the
+curve read 37.1, 36.1, 36.7, ... — plausible, monotone-ish, and wrong at every point, including a
+fabricated 37.1 % first eval. Re-extracted by splitting into blocks and matching within each. Same
+class as the other faults in this file: it computed exactly what it was written to compute.
