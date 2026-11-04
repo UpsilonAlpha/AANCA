@@ -5151,3 +5151,44 @@ apart at all.
 Deliberately not done: sanitising the distribution and carrying on. A NaN here means something
 upstream is broken, and a run that quietly replaced it would keep training on a rule that had already
 diverged -- the same class of mistake as a loss that reads 0.000 over an empty set.
+
+### The balance probe's method does not transfer to trained weights, and the inf says so
+
+Job 31896987, `growth_balance_probe.py --checkpoint runs/g1/last.pt`, 6 seeds, 30 steps, 3 draws:
+
+```
+  term            value  activation       birth       frame    identity
+  fape           0.8865         inf         inf         inf    0.00e+00
+  bond          11.8109         inf         inf         inf    0.00e+00
+  reach          0.6697         inf         inf         inf    0.00e+00
+  completion     0.1805         inf         inf         inf    0.00e+00
+  identity       2.6129         inf         inf         inf         inf
+```
+
+**Every gradient norm is infinite and the bond term reads 11.81 against 0.772 at initialisation.**
+The tempting reading is that g1's weights are divergent, which would make the g2 crash obvious and
+would also condemn g3, since both warm-start from g1. **That reading is wrong, and the probe's own
+construction is why.**
+
+The probe isolates a term by **zeroing every other weight**, including the restraints. At
+initialisation that is harmless, because an untrained rule barely moves the coordinates in 30 steps.
+On a rule that has learned to move them, removing the peptide restraint removes the only thing
+holding the chain together -- so the geometry diverges, the coordinates go non-finite, and every
+gradient downstream is infinite. The `fape` row proves it: with FAPE as the *only* active term the
+gradients are already infinite, and FAPE clamps at 10 Å so it cannot itself produce an infinity. The
+non-finite value must already be in the coordinates.
+
+So **the measurement is of the probe, not of the rule**: ablate-one-term-at-a-time is valid only while
+the rule is too weak for the ablation to matter. That is a general trap for this kind of probe and it
+is worth stating plainly, because the ablation design is what made the *original* measurement possible
+(see the earlier note on `fape_weight` existing so FAPE could be switched off at all).
+
+**What a trained balance measurement has to do instead**: keep every weight at its real training
+value, run the real rollout once, and take each weighted term's gradient separately with
+`retain_graph`. That measures each term's actual contribution during training rather than its
+contribution in a counterfactual world with no restraints. Not yet built.
+
+**Three things this does not say.** It does not show g1's weights are divergent -- g2 ran 1,375
+updates from them with finite losses before crashing. It does not identify the g2 NaN, whose cause is
+still open and whose next occurrence the new rollout guard will localise. And it does not tell us
+whether `BOND_WEIGHT` is wrong at 8,000 updates, which was the question: that remains unmeasured.
