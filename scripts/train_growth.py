@@ -71,6 +71,14 @@ MANIFEST = ROOT / "data" / "manifest.json"
 PDB = ROOT / "data" / "pdb"
 RUNS = ROOT / "runs"
 
+#: The same set scripts/train.py pins, and for the same reason: these are the
+#: settings that decide which structures exist and how they are split, so a
+#: warm start that changed one would restore a split describing another pool.
+#: ``steps`` is deliberately absent -- changing it is the whole point.
+WARM_START_MUST_MATCH = (
+    "split", "structures", "eval_structures", "seed", "crop_size", "k",
+)
+
 
 def on_disk(specs) -> list:
     """Specs whose coordinates are present, with the path pointed at the file.
@@ -302,6 +310,19 @@ def main() -> int:
     parser.add_argument("--max-seconds", type=float, default=0.0)
     parser.add_argument("--stop-file", default=None)
     parser.add_argument("--resume", action="store_true")
+    parser.add_argument(
+        "--init-from",
+        default="",
+        help="start a NEW run from this checkpoint's weights and optimiser at "
+        "update 0, for changing the rollout length without discarding the "
+        "training already done. g2 needs it because g1's identity head reached "
+        "22.7 %% recovery and its activation head reached a wake probability of "
+        "1.000, and both are worth keeping while only --steps changes. The "
+        "settings that define the data must match, for the same reason as in "
+        "scripts/train.py: the eval split is restored with the weights, so a "
+        "different pool would renumber it and score structures the source run "
+        "trained on.",
+    )
     args = parser.parse_args()
 
     if args.identity_weight and args.birth == "torsion":
@@ -366,6 +387,38 @@ def main() -> int:
 
     start_update = 0
     best = float("inf")
+    if args.init_from and not (args.resume and last_path.exists()):
+        warm = ckpt.load(Path(args.init_from), map_location=device)
+        stored = warm.get("args") or {}
+        changed = {
+            key: (stored.get(key), vars(args).get(key))
+            for key in WARM_START_MUST_MATCH
+            if stored.get(key) != vars(args).get(key)
+        }
+        if changed:
+            detail = ", ".join(
+                f"{key}: checkpoint {was!r}, now {now!r}"
+                for key, (was, now) in sorted(changed.items())
+            )
+            print(
+                "--init-from needs a checkpoint over the same structures, "
+                "because its eval split is restored with the weights "
+                f"({detail}). Drop --init-from to start from scratch."
+            )
+            return 1
+        rule.load_state_dict(ckpt.rule_weights(warm))
+        if "optimiser" in warm:
+            optimiser.load_state_dict(warm["optimiser"])
+        # The source run's split, so the held-out set stays held out. Without
+        # this the new run would reshuffle and score structures g1 trained on,
+        # which is the same fault scripts/score_identity.py was written to fix.
+        if warm.get("eval_indices"):
+            eval_indices = list(warm["eval_indices"])
+            train_indices = [i for i in indices if i not in set(eval_indices)]
+        print(
+            f"warm-started from {args.init_from} at its update "
+            f"{warm.get('update', '?')}, continuing at update 0"
+        )
     if args.resume and last_path.exists():
         state = ckpt.load(last_path, map_location=device)
         rule.load_state_dict(state["rule"])
