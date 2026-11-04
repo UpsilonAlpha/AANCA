@@ -5192,3 +5192,46 @@ contribution in a counterfactual world with no restraints. Not yet built.
 updates from them with finite losses before crashing. It does not identify the g2 NaN, whose cause is
 still open and whose next occurrence the new rollout guard will localise. And it does not tell us
 whether `BOND_WEIGHT` is wrong at 8,000 updates, which was the question: that remains unmeasured.
+
+### Adjacent newborns err 3.2 Å apart, so the point-cloud route cannot thread
+
+`scripts/adjacent_error_probe.py` measures the condition
+`scripts/threading_error_probe.py` proved necessary and left open: whether two
+*adjacent* residues err in the same direction. Both holes of a pair are deleted at once, which is the
+growth case -- predicting them one at a time from otherwise-complete structures would let each see the
+other's true position and measure something strictly easier than growth meets.
+
+115 adjacent pairs from 25 validation structures:
+
+| | `hole_v2`, 1 hop | `hole_h3`, 3 hops |
+|---|---|---|
+| per-hole error, RMS \|e\| | 4.048 Å | **2.863 Å** |
+| difference error, RMS \|e0−e1\| | 4.007 Å | **3.240 Å** |
+| independent prediction, sigma·√2 | 5.724 Å | 4.050 Å |
+| ratio (1 = independent, 0 = together) | 0.700 | 0.800 |
+| mean cos(e0, e1) | 0.210 | 0.230 |
+
+**A gap of two is a different problem from a gap of one.** The per-hole error is **2.863 Å** where
+`hole_by_structure.py` reports 0.92 Å on bonded positions -- a factor of three. The reason is
+structural rather than statistical: an isolated hole keeps **both** covalent neighbours, which pin it
+to a circle of radius 2.26 Å, while in a gap of two each hole has only one, and the constraint that
+made the 0.92 Å possible is simply gone. Every number this project has quoted about placement
+precision was measured on the easier case, and growth faces gaps of many rather than one.
+
+**The errors are only weakly correlated, so the common-mode result does not transfer.** Mean cosine
+0.23 and a ratio of 0.80 -- adjacent holes do lean the same way, but barely. That is the distinction
+worth keeping: three hops halving per-witness error while leaving the fused error alone said the
+residual is correlated *across the witnesses of one hole*; it does not follow that two *different*
+holes agree, and measured, they mostly do not.
+
+**So threading fails on this route by a wide margin.** The difference error is what a peptide bond
+sees, and at **3.24 Å** against a native margin of about 1.1 Å it is not marginal: the threading probe
+loses 34 % of bonds at a relative error of 1.3 Å, and this is two and a half times that. Three hops
+help (4.01 -> 3.24 Å) and nowhere near enough, consistent with depth not being the limit.
+
+**What this does and does not close.** It closes **growth as a point cloud**, the variant the hole head
+was built to test, where residues appear without known sequence indices and the directed C-to-N graph
+must recover the threading. It does **not** bear on the growth rule that g1, g2 and g3 actually run:
+`give_birth` is indexed by parent and direction -- `born_c[i]` means "i wakes i+1" -- so the sequence
+relationship is carried explicitly and never inferred from geometry. Threading was only ever needed
+for the index-free variant, and that is the variant this rules out.
