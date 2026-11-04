@@ -185,6 +185,28 @@ def main() -> int:
         "  that carries no information about the site."
     )
 
+    # **Is a residue a hub, or is it just common?** The top-flip list is
+    # dominated by a handful of residues, which looks like the head using a
+    # low-commitment default and bouncing off it. But a residue it commits
+    # often heads the list for that reason alone, so participation has to be
+    # read against the same marginal as everything else here. A ratio near 1
+    # means "appears in flips as often as it is used"; well above 1 means the
+    # label is unstable *per use*, which is what a hub actually is.
+    endpoints: Counter = Counter()
+    for (first, second), n in flips.items():
+        endpoints[first] += n
+        endpoints[second] += n
+    total_ends = max(sum(endpoints.values()), 1)
+    print("\n  flip participation per use (ratio > 1 = unstable per use):")
+    print(f"    {'residue':<9}{'endpoints':>10}{'share':>8}{'committed':>11}{'ratio':>8}")
+    rows = []
+    for name, n in endpoints.items():
+        share = n / total_ends
+        used = weight.get(name, 0.0)
+        rows.append((share / used if used else float("inf"), name, n, share, used))
+    for ratio, name, n, share, used in sorted(rows, reverse=True)[:10]:
+        print(f"    {name:<9}{n:>10}{share:>8.1%}{used:>11.1%}{ratio:>8.2f}")
+
     print("\n  most frequent flips:")
     for (a, b), n in flips.most_common(12):
         same = "same" if rc.chemical_class(a) == rc.chemical_class(b) else "CROSS"
