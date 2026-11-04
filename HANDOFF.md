@@ -4722,3 +4722,73 @@ There are 17 blocks and **18** recovery lines in the log, so every pair was shif
 curve read 37.1, 36.1, 36.7, ... — plausible, monotone-ish, and wrong at every point, including a
 fabricated 37.1 % first eval. Re-extracted by splitting into blocks and matching within each. Same
 class as the other faults in this file: it computed exactly what it was written to compute.
+
+### v9_if finished: 38.3 %, and both my readings of its curve were noise
+
+**Done, exit 0, 334.7 min, 20,000 updates.** The full held-out recovery curve:
+
+| 1k | 2k | 3k | 4k | 5k | 6k | 7k | 8k | 9k | 10k | 11k | 12k | 13k | 14k | 15k | 16k | 17k | 18k | 19k | 20k |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| 36.1 | 36.7 | 37.2 | 37.3 | 37.9 | 37.9 | 37.9 | 37.9 | 38.0 | 37.6 | 37.6 | 38.2 | 38.2 | 38.4 | 38.2 | 38.8 | 39.2 | 38.1 | 39.2 | **38.3** |
+
+From 9,000 onward: **12 evals, mean 38.32 %, sd 0.52, range 37.6-39.2.**
+
+**Both earlier calls were over-readings of that noise, in opposite directions.** The plateau was called
+from four evals at 37.9; the retraction was called from 38.2 -> 38.8 -> 39.2. The per-eval sd is 0.52,
+so neither window could support a trend, and the curve then went 39.2 -> 38.1 -> 39.2 -> 38.3. **The
+conclusion that this recipe is finished near 38 % is correct and my original justification for it was
+not** — it is supported by a twelve-eval flat with an error bar, not by a short run of equal numbers.
+There is a possible residual drift (first six of those evals mean 38.03, last six 38.63, a gap of
+about two standard errors) which is too marginal to act on.
+
+Discipline for this file: quote 38.3 % final, or 38.3 +/- 0.5, and never a two-eval difference.
+
+### Growth trains, and it stops at half a protein with the loss satisfied
+
+**g1 (31758141) started the moment v9_if exited and is the first growth training this project has
+run.** `--updates 8000 --eval-every 500 --identity-weight 93.7 --seeds 4 --steps 40`, 253,463
+parameters, cartesian birth, crop 128, 0.55 s/update.
+
+```
+     125  total 296.291  fape 0.672  rmsd  6.19 A  alive 27.6%  rec 4.7%
+     250  total 271.814  fape 0.784  rmsd 10.12 A  alive 47.9%  rec 7.1%
+     500  total 272.768  fape 0.818  rmsd 10.20 A  alive 50.9%  rec 6.7%
+     750  total 274.812  fape 0.775  rmsd 10.53 A  alive 49.0%  rec 6.0%
+
+held out at 500:  total 275.654  fape 0.834  rmsd 10.68 A  alive 47.9%
+                  bond 2.779  reach 0.136  closures 58.5  done 0.004
+                  type NLL 2.931 (floor 2.996), recovery 7.5%
+```
+
+**It grows, which is the first-order question answered: `completion_weight` at 27.2 does defeat the
+degenerate optimum.** The alive fraction climbs 27.6 % -> 47.9 % in 250 updates and does not collapse
+back to the seeds.
+
+**It then stops at about half the slots, and the loss does not object.** This is the finding, and it is
+a design fault rather than a training artefact:
+
+* `done` — the completion term — reads **0.004**, i.e. essentially satisfied, while **52 % of slots are
+  dormant.** The term is a BCE over the *current frontier's* activation logits toward waking, with an
+  explicit `else` branch returning exactly zero when the frontier is empty. So a structure that has
+  stopped growing scores as well as a finished one: the term rewards **wanting** to grow, not **having
+  grown**.
+* `alive_fraction` is computed and reported and **appears nowhere in `total`** (verified: the sum is
+  fape + bond + completion + identity + reach). Nothing in the objective charges for a dormant slot.
+
+So the earlier claim in this file that `completion_weight` is "load-bearing" and closes the degenerate
+optimum is **half right**: it starts growth, and it cannot finish it, because once the frontier is
+eager or empty the term is blind to how much is missing.
+
+**Geometry is bad and that part is expected this early**: rmsd 10.5 Å is a blob rather than a fold,
+and `bond` at 2.779 against a crystal's ~0.002 says peptide bonds are not being formed. Note rmsd
+*rises* as the alive fraction rises (6.19 -> 10.12 -> 10.68 Å), which is the newborn placement error
+entering the average exactly as the threading probe predicts it would.
+
+**Sequence has barely started**: type NLL 2.931 against the 2.996 floor, recovery 7.5 % against a
+background near 5 %.
+
+**The measurement that settles the mechanism, and it is one line**: log the frontier size next to
+`done`. An empty frontier at 48 % alive would mean no alive residue is adjacent to a dormant slot,
+which given the topology means the segments have ends that coincide — coalescence — and the remaining
+dormant slots are unreachable. A large frontier with saturated logits would mean something else limits
+births. The two have different fixes and the current log cannot tell them apart.
