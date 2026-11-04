@@ -77,6 +77,20 @@ def main() -> int:
     parser.add_argument("--steps", type=int, default=30)
     parser.add_argument("--k", type=int, default=24)
     parser.add_argument("--repeats", type=int, default=3)
+    parser.add_argument(
+        "--checkpoint",
+        default=None,
+        help="measure the balance on these trained weights instead of at "
+        "initialisation. **The reason this exists is written into the weights "
+        "it produced.** The note recording BOND_WEIGHT, REACH_WEIGHT and "
+        "COMPLETION_WEIGHT says in writing that they balance the terms 'at "
+        "initialisation and nowhere else', that the bond term 'should shrink "
+        "as the chain improves', and to re-measure a few thousand updates in. "
+        "That was never done, and g1 and g2 then ran 9,000 updates between "
+        "them with bond climbing 2.779 -> 3.903 against a crystal's 0.002 -- "
+        "so the restraint was being weighted for a situation that had stopped "
+        "being true.",
+    )
     args = parser.parse_args()
 
     path = RAW / f"{args.pdb}.pdb"
@@ -85,9 +99,18 @@ def main() -> int:
         return 1
     topo, native = feature_topology(load_protein(path))
 
+    trained = None
+    if args.checkpoint:
+        from aanca import checkpoint as ckpt
+
+        trained = ckpt.rule_weights(
+            ckpt.load(Path(args.checkpoint), map_location="cpu")
+        )
+
     print(
         f"{args.pdb}, {args.seeds} seeds, {args.steps} steps, "
         f"mean of {args.repeats} runs, every weight but one set to zero\n"
+        f"rule: {args.checkpoint or 'at initialisation'}\n"
     )
     header = f"  {'term':<12}{'value':>9}" + "".join(f"{h.replace('_head',''):>12}" for h in HEADS)
     print(header)
@@ -99,6 +122,8 @@ def main() -> int:
             rule = AANCARule(
                 growth=True, birth="cartesian", identity=True, identity_keep=2.0
             )
+            if trained is not None:
+                rule.load_state_dict(trained)
             config = RolloutConfig(
                 steps=args.steps,
                 truncate=args.steps,
