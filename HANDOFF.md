@@ -4640,3 +4640,58 @@ Not a contradiction: the probe scores the **committed sampled label**, `state.id
 churn is defined on what the rule commits, while the eval scores the head's **mode**,
 `type_marginal(softmax(logits)).argmax`. Sampling is lossy against the mode, and the gap is the cost
 of sampling rather than a drop in quality. Both are correct for their own question.
+
+### Threading needs the placement error to be correlated, and no threshold substitutes
+
+`scripts/threading_error_probe.py` tests the margin `peptide_shell_probe.py` measured on native
+coordinates against the error the placement head actually makes. 26 structures, 13,425 residues; each
+residue translated rigidly by a Gaussian field of controlled magnitude and correlation length, so its
+internal N-CA-C geometry stays exact — **the optimistic case, and an upper bound.**
+
+**Why correlation length is the axis and not an afterthought.** A peptide bond is a constraint between
+two residues, so threading sees the error in |C(i) − N(i+1)|: a *difference* of two placement errors.
+Independent placement at sigma carries sigma·sqrt(2) into that difference, and at the measured 0.92 Å
+that is 1.3 Å against a native margin of only ~1.1 Å between the bonded range's top (1.392) and the
+nearest non-bonded pair (2.509). So the absolute error is not the question; the relative error is.
+
+At the measured **sigma = 0.92 Å**, as false edges / missed bonds / degree violations:
+
+| threshold | L = 0 (independent) | L = 3.8 Å (one CA-CA step) | L = 8 Å | L = 16 Å |
+|---|---|---|---|---|
+| 2.0 Å | 1.5 % / **34.1 %** / 1.9 % | 0.1 % / 3.0 % / 0.1 % | 0 / 0 / 0 | 0 / 0 / 0 |
+| 2.2 Å | 2.8 % / 24.3 % / 4.2 % | **0.3 % / 0.8 % / 0.5 %** | 0 / 0 / 0 | 0 / 0 / 0 |
+| 2.4 Å | 5.2 % / 16.0 % / 8.8 % | 0.9 % / 0.1 % / 1.8 % | 0 / 0 / 0 | 0 / 0 / 0 |
+| 2.5 Å | 6.7 % / 12.8 % / **11.6 %** | 1.7 % / 0.1 % / 3.3 % | 0.1 % / 0 / 0.2 % | 0 / 0 / 0 |
+
+**Three results.**
+
+**Independent placement at 0.92 Å destroys threading: a third of all peptide bonds go missing** at the
+2.0 Å cut. The directed graph is not a set of chains; it is a set of fragments.
+
+**No threshold rescues it.** Raising the cut trades misses for degree violations at roughly 1 : 1.5 —
+at 2.5 Å there are still 12.8 % misses *and* 11.6 % of residues now carry an illegal in- or
+out-degree. There is no operating point at which independent error threads, because the error exceeds
+the margin and a cut cannot create information.
+
+**Correlation over a single CA-CA step very nearly fixes it, and 2.2 Å is the better cut.** At L = 3.8
+Å the 2.2 Å threshold gives 0.3 % false, 0.8 % missed, 0.5 % degree — against 0.1 / 3.0 / 0.1 at the
+2.0 Å cut currently assumed. At L = 8 Å it is exact at every threshold tried.
+
+**The failure mode is benign, which changes the remedy.** Misses dominate false edges by twenty to one
+at the 2.0 Å cut, so a degraded graph fragments rather than mis-threads: the pieces keep their correct
+N-to-C direction and nothing is wired to the wrong partner. A fragmented-but-correct graph can be
+repaired by a second pass or a wider cut, where a scrambled one could not be.
+
+#### What this does and does not license
+
+The design is safe **iff** the placement residuals of adjacent newborns are correlated over at least a
+few Å. The common-mode result is suggestive but **does not establish it**: three hops halving
+per-witness error while leaving the fused error alone says the residual is correlated *across the
+witnesses of one hole*, which is a statement about several predictors of one position. Whether *two
+adjacent newborns* err in the same direction is a different statement and is unmeasured.
+
+**That is the next measurement, and it is cheap**: delete two sequence-adjacent residues, predict both,
+and measure the correlation between their error vectors. If it is high, threading works and the cut
+should move to 2.2 Å. If it is near zero, Cartesian birth cannot thread unaided and needs either an
+explicit bond-geometry term at birth or a relaxation pass that couples neighbours — which the hops
+ablation already showed more depth alone will not provide.
