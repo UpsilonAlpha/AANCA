@@ -4318,3 +4318,77 @@ genuinely lacked a head.
 **v9_if submitted as 31754529**, warm-started from `v8c_if/last.pt` so the 20,000 updates already
 spent are not thrown away, `--eval-every 1000` so the held-out identity trajectory and the churn curve
 are recorded as it trains rather than reconstructed afterwards.
+
+### Churn flips towards similar residues, but only weakly — 2026-11-04
+
+`scripts/churn_composition.py` on `runs/v8c_if/last.pt` (job 31757240, 12 held-out structures, 64
+steps, **24,111 flips**) answers the question directly. Every statistic is against a null drawn from
+the head's *own* marginal over committed labels, which is what a flip would look like if the choice
+ignored the position — the level alone means nothing, the gap is the claim.
+
+| statistic | observed | null | ratio |
+|---|---|---|---|
+| flip stays in chemical class | 26.0 % | 18.0 % | **1.44** |
+| mean \|side-chain size change\| | 2.16 | 2.59 | **0.84** |
+
+**So yes, but modestly.** Both point the right way — same-class flips are 44 % more common than
+chance and flips are 16 % smaller in size change — so the head is not flipping at random. But 26 %
+in absolute terms means **three quarters of flips still cross chemical class**, which is not what
+"choosing the residue with the best energy for how its atoms sit" would look like.
+
+The top-flip list splits into two behaviours that the aggregate ratio hides:
+
+* **The good case, and it is real.** ILE→VAL (424) and VAL→ILE (413) are the second and third most
+  frequent flips: a near-degenerate aliphatic pair the backbone barely distinguishes, which is
+  exactly the flat-surface sampling that churn *should* consist of. ALA→LEU and ALA→VAL likewise.
+* **A charge reversal, which is the clearest counterexample.** GLU→LYS (312) and LYS→GLU (307) are a
+  matched pair: same size, opposite charge. The head has apparently learned "this site wants a long
+  charged residue" without learning *which sign*, and that is precisely the information the local
+  environment is supposed to supply. The energy difference at a salt bridge is large and
+  sign-specific, so this is not a flat region of the surface being sampled.
+
+ALA sits at one end of **seven of the top twelve pairs**, which looks like a low-commitment default
+the head bounces off. That reading is not yet earned: a residue the head commits often will head the
+list for that reason alone. So the script now reports participation **per use** against the same
+marginal, where only a ratio well above 1 is a hub; rerun queued.
+
+### Growth had an objective and nothing that trained it
+
+Every number this project held about growth came from probes on an **untrained** rule, because
+`growth_objective` was complete with measured weights while `scripts/train.py` had no growth path.
+`scripts/train_growth.py` closes that: one structure, one rollout, one backward pass per update, no
+sample pool. `bunya_train.slurm` grew an `AANCA_ENTRY` hook — exported, not merely read, so a segment
+that exits 64 cannot silently resubmit itself as a packing run.
+
+Building it surfaced two faults, each of which read as a result.
+
+**FAPE read exactly 0.000 with its RMSD reading `nan` beside it.** `supervised_mask` is the crop's
+interior — residues whose 10 Å perception is complete — and `seed_alive` scatters seeds uniformly
+over every slot, so at the small crops growth needs in order to finish inside a rollout **the two
+sets did not intersect at all**. The loss was a mean over the empty set. The mask exists because a
+truncated neighbourhood makes a chi, or an amino-acid identity, unlearnable: both are inferences
+*from* the environment. A native CA position is not — it is exact regardless — and under growth every
+residue has a truncated neighbourhood by construction, so that is the regime rather than an artefact
+of cropping. Geometry now scores every alive residue and identity keeps the mask. Measured supervised
+fraction, which is what sets the trainer's default crop of 128: **12.8 % at crop 48, 19.9 % at 64,
+41.4 % at 96, 54.8 % at 128, 71.4 % at 192, 97.2 % at 384.**
+
+**The sequence loss started at 7.6 nats against a floor of 3.0**, because `AANCARule`'s
+`identity_keep` defaults to 8.0 while v8c_if reached 36.8 % recovery with 2.0. At initialisation the
+growth type NLL reads **7.017 at keep 8.0, 4.234 at 4.0, 3.753 at 2.0, 3.659 at 0.0** (ln 20 = 3.00).
+A keep of 8 is not merely a bad starting point: the head's logits have a standard deviation near 1,
+so the bonus can never be overcome and the sequence **freezes on whichever label was first sampled at
+random**. It bites harder here than in packing because a newborn arrives unlabelled and must decide,
+and it would have shown up as "growth cannot learn sequence" rather than as a misconfigured constant.
+The trainer defaults to 2.0 and exposes the flag.
+
+Both were caught by refusing a number rather than by a test — a perfect FAPE sitting beside a `nan`,
+and a loss above its own uninformative floor. That is now five or six times in this project that a
+measurement computed exactly what it was written to compute and still said something false.
+
+**g1 submitted as 31758141**, `--dependency=afterany:31754529` so it cannot take a second GPU slot
+while v9_if holds one and the user's `pmhccamp` array is waiting on the 4-GPU QOS: `--split train
+--updates 8000 --eval-every 500 --identity-weight 93.7 --seeds 4 --steps 40`. The first thing it
+settles is whether `completion_weight` at 27.2 is enough to forbid the degenerate optimum — a low
+RMSD at a low alive fraction is the rule declining to grow, which is why the trainer never prints
+one without the other.
