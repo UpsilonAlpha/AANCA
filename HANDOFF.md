@@ -5375,3 +5375,30 @@ asked for.
 `BOND_WEIGHT` 0.022 -> 0.122 and `COMPLETION_WEIGHT` 27.2 -> 5.23. The constants are still unchanged,
 deliberately, because changing them mid-experiment is a decision about the scientific setup rather
 than a bug fix -- and g3 is now the clean baseline that correction would be measured against.
+
+**g3 at 2,875 updates is flat on everything**, which settles the weight question as far as a run can:
+
+| updates | 500 | 1000 | 1500 | 2000 | 2500 |
+|---|---|---|---|---|---|
+| alive | 97.7 % | 97.7 % | 97.7 % | 97.7 % | 97.7 % |
+| rmsd | 13.60 Å | 14.07 | 14.24 | 14.27 | 13.90 |
+| bond | 21.84 | 33.05 | 16.60 | 19.76 | 17.65 |
+| reach | 1.200 | 1.955 | 0.979 | 1.224 | 1.043 |
+| type NLL | 2.653 | 2.659 | 2.654 | 2.650 | 2.619 |
+| recovery | 15.6 % | 15.2 % | 14.3 % | 15.2 % | 15.1 % |
+
+Two thousand five hundred updates and **nothing moves**: coverage pinned, RMSD flat near 14 Å,
+recovery flat near 15 %, type NLL creeping 0.03. The objective is converged and the structure it has
+converged on is a tangle. So the flat geometry in g1 and g2 was not a coverage artefact either -- at
+98 % coverage, with every residue present to be scored, the rule still does not improve.
+
+**`bond` swings 16.6 to 33.1 between evals**, a factor of two on the same held-out set, which is worse
+than merely large: the term is not just badly weighted but unstable, and a restraint that varies 2x
+between measurements cannot be steering anything. It is also the one term whose gradient the balance
+measurement says is 5.6x short.
+
+**The skip count is still 1 in 2,875 updates**, so the gradient guard is not quietly discarding the
+run -- the training it reports is the training that happened.
+
+Nothing further will come from this configuration. The correction to measure against this baseline is
+`BOND_WEIGHT` 0.022 -> 0.122 with `COMPLETION_WEIGHT` 27.2 -> 5.23, and it is still not applied.
