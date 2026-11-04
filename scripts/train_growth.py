@@ -61,6 +61,8 @@ from aanca.growth import (
     COMPLETION_WEIGHT,
     REACH_WEIGHT,
     GrowthConfig,
+    count_runs,
+    growth_links,
     growth_objective,
 )
 from aanca.model import AANCARule
@@ -443,6 +445,34 @@ def main() -> int:
         f"{args.completion_weight:g}, reach {args.reach_weight:g}, identity "
         f"{args.identity_weight:g}"
     )
+    # **Say whether the seed count can reach the whole crop.** A crop is a
+    # spatial ball, so it contains several covalent runs, and growth cannot
+    # cross a chain break -- g2 stalled at 55.5 % alive with an empty frontier
+    # for exactly this reason. Measuring it here means a seed-starved run
+    # announces itself rather than being diagnosed afterwards from a flat
+    # alive fraction.
+    sampled = []
+    probe_rng = random.Random(args.seed)
+    for index in train_indices[: min(8, len(train_indices))]:
+        try:
+            probe_topo, _n, _c, _u = dataset.load_crop(index, rng=probe_rng)
+        except Exception:
+            continue
+        sampled.append(count_runs(growth_links(probe_topo)))
+    if sampled:
+        mean_runs = sum(sampled) / len(sampled)
+        print(
+            f"covalent runs per crop: mean {mean_runs:.1f} "
+            f"(range {min(sampled)}-{max(sampled)}) over {len(sampled)} crops; "
+            f"{args.seeds} seeds"
+        )
+        if args.seeds < mean_runs:
+            print(
+                f"  WARNING: fewer seeds than runs, so about "
+                f"{mean_runs - args.seeds:.1f} runs per crop get no seed and "
+                "can never be reached.\n  The alive fraction is capped below 1 "
+                "by topology and no step budget will lift it."
+            )
     print(
         "The alive fraction is the number to watch first. Completion at 27.2 "
         "is\nthe weight that forbids the degenerate optimum of a seed alone "

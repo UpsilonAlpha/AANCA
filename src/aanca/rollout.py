@@ -525,6 +525,32 @@ def step_once(
                 f"unknown identity_sampling {config.identity_sampling!r}; "
                 "expected 'sample' or 'argmax'"
             )
+        # **Locate a non-finite label distribution instead of sampling it.**
+        # g2 died at update ~1375 with ``torch.multinomial``'s bare
+        # "probability tensor contains either `inf`, `nan` or element < 0",
+        # which says nothing about where the NaN came from -- and the two
+        # candidates need opposite fixes. If the coordinates are already
+        # non-finite the geometry diverged and the restraints are at fault; if
+        # they are finite and only the logits are not, the identity head blew
+        # up on its own. The message says which, with the step and the count,
+        # so one crash is enough to tell them apart.
+        if not torch.isfinite(logits).all():
+            bad_logits = int((~torch.isfinite(logits)).sum())
+            coords_finite = bool(torch.isfinite(state.coords).all())
+            bad_coords = int((~torch.isfinite(state.coords)).sum())
+            raise RuntimeError(
+                f"non-finite identity logits at step {state.step}: "
+                f"{bad_logits} of {logits.numel()} entries. Incoming "
+                f"coordinates were "
+                + (
+                    "FINITE, so the identity head diverged on its own and the "
+                    "geometry is not the cause"
+                    if coords_finite
+                    else f"ALREADY non-finite ({bad_coords} atoms), so the "
+                    "geometry diverged first and this is a symptom"
+                )
+                + " (aanca.rollout; see HANDOFF.md on g2's crash)."
+            )
         scaled = logits / max(config.identity_temperature, 1e-6)
         drawn = straight_through(
             scaled, generator=generator, sample=config.identity_sampling == "sample"

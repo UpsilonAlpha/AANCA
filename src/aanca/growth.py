@@ -173,21 +173,83 @@ def seed_alive(
     seeds: int = 1,
     generator: torch.Generator | None = None,
     device: torch.device | str = "cpu",
+    links: Tensor | None = None,
 ) -> Tensor:
     """``(R,)`` bool with ``seeds`` residues alive, drawn without replacement.
 
     Seeds are drawn on the CPU and moved, like every other random choice in
     this project, so the sequence is a property of the seed and not of the
     device.
+
+    **With ``links``, every covalent run gets a seed before any run gets a
+    second.** This exists because g2 measured the ceiling it fixes: at 120
+    steps it stopped with ``frontier`` exactly 0.0 and 44.5 % of slots still
+    dormant, having fallen from 4 segments to 2.8. Growth had not run out of
+    time but out of places -- :func:`frontier` is gated on ``links``, so a
+    segment cannot cross a chain break, and a crop of 128 residues at the
+    measured link density of 0.92-1.00 contains about **nine** covalent runs.
+    Four seeds drawn uniformly land in at most four of them and the rest can
+    never be reached, whatever the step budget.
+
+    Uniform seeding hid this because it was validated on 1UBQ, a single
+    unbroken chain where there is exactly one run and the distinction does not
+    exist. Asking for fewer seeds than runs still leaves runs empty, so the
+    shortfall is reported by the caller rather than silently accepted; asking
+    for more spreads the surplus over the runs at random, largest-first being
+    the wrong choice since it would bias growth towards the long runs that are
+    easiest to fill.
     """
     if seeds < 1:
         raise ValueError(f"seeds must be at least 1, got {seeds}")
     if seeds > n_residues:
         raise ValueError(f"{seeds} seeds asked for in {n_residues} slots")
-    order = torch.randperm(n_residues, generator=generator)
     alive = torch.zeros(n_residues, dtype=torch.bool)
-    alive[order[:seeds]] = True
+    if links is None:
+        order = torch.randperm(n_residues, generator=generator)
+        alive[order[:seeds]] = True
+        return alive.to(device)
+
+    # Run boundaries: residue i starts a run when it has no covalent link back.
+    starts = torch.ones(n_residues, dtype=torch.bool)
+    starts[1:] = ~links.to("cpu")
+    run_id = torch.cumsum(starts.to(torch.long), dim=0) - 1
+    n_runs = int(run_id[-1]) + 1
+
+    order = torch.randperm(n_residues, generator=generator)
+    placed = 0
+    seeded_runs: set[int] = set()
+    # One pass placing a seed in each unseeded run, in a random residue order
+    # so which member of the run is chosen stays a property of the generator.
+    for index in order.tolist():
+        if placed >= seeds:
+            break
+        run = int(run_id[index])
+        if run in seeded_runs:
+            continue
+        alive[index] = True
+        seeded_runs.add(run)
+        placed += 1
+    # Any surplus goes anywhere still dormant, which is how a seed count above
+    # the run count buys a second front inside a long run.
+    for index in order.tolist():
+        if placed >= seeds:
+            break
+        if not bool(alive[index]):
+            alive[index] = True
+            placed += 1
     return alive.to(device)
+
+
+def count_runs(links: Tensor) -> int:
+    """How many maximal covalently linked runs the topology has.
+
+    The number of seeds below which some run is unreachable. Reported by the
+    growth trainer so a configuration that cannot finish says so in its own
+    log rather than being inferred later from a stalled alive fraction.
+    """
+    if links.numel() == 0:
+        return 1
+    return int((~links).sum()) + 1
 
 
 def frontier(alive: Tensor, links: Tensor, cward_only: bool = False) -> tuple[Tensor, Tensor]:
@@ -841,10 +903,12 @@ def growth_objective(
     if growth is None:
         raise ValueError("growth_objective needs a RolloutConfig with growth set")
 
-    alive = seed_alive(
-        topo.n_residues, growth.seeds, generator, native_coords.device
-    )
     links = growth_links(topo)
+    # Seeded per covalent run: see seed_alive on why uniform seeding caps the
+    # alive fraction at the share of the crop its seeds' runs happen to cover.
+    alive = seed_alive(
+        topo.n_residues, growth.seeds, generator, native_coords.device, links=links
+    )
     identity_start_state = None
     if identity_weight:
         identity_start_state = initial_identity(

@@ -5118,3 +5118,36 @@ v3_noop4_wrongsplit v4_gpu v4_noop4 v4_probe v5_native v7_clash`.
 
 The `rm -rf` was refused by the agent's safety classifier, so it has **not** been done and must be run
 by hand from `runs/`.
+
+### A crop has about eleven covalent runs, so four seeds could never have finished
+
+Measured by the growth trainer's new banner over six validation crops at size 128: **mean 11.2
+covalent runs per crop, range 1-26.** That is the number g2's ceiling was made of. Four seeds reach
+at most four runs, so the reachable share of the crop was fixed before the first step, and g2's 55.5 %
+is close to what four of eleven runs covers. No step budget could have changed it.
+
+Three fixes, all following from that measurement:
+
+**`seed_alive` now seeds per run** when given `links`: every covalent run gets a seed before any run
+gets a second, with the surplus spread at random rather than largest-run-first, which would bias
+growth towards the runs easiest to fill. `growth_objective` passes `links`, so this is on by default.
+
+**The trainer prints the run count and warns when seeds are short of it.** A configuration that cannot
+reach the whole crop now says so in its own first ten lines instead of being diagnosed afterwards from
+a flat alive fraction -- which is what cost g1 and g2 between them about two and a half GPU-hours.
+
+**`count_runs` added** so the quantity has a name and can be asserted on.
+
+### The NaN now names its own cause
+
+g2's crash was `torch.multinomial`'s bare "probability tensor contains either `inf`, `nan` or element
+< 0`, which does not say where the NaN came from -- and the two candidates need opposite fixes. The
+rollout now checks the identity logits before sampling and raises with the step, the count, and
+**whether the incoming coordinates were already non-finite**: if they were, the geometry diverged and
+the restraints are at fault; if they were finite and only the logits are not, the identity head blew up
+on its own. One crash is now enough to tell those apart, where before it was not enough to tell them
+apart at all.
+
+Deliberately not done: sanitising the distribution and carrying on. A NaN here means something
+upstream is broken, and a run that quietly replaced it would keep training on a rule that had already
+diverged -- the same class of mistake as a loss that reads 0.000 over an empty set.
