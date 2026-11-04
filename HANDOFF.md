@@ -4912,3 +4912,47 @@ less than the 8 available, since a seed landing at a chain end has one blocked s
 **So the next growth run is `--steps 120 --seeds 4` or better**, not a re-weighted objective. Job
 **31890939** is running the same sweep on g1's trained weights, where the wake probability is 1.000
 and the rate should match or beat the bias-4.0 row.
+
+### Trained growth completes 1UBQ in 47 steps at four seeds, and the cap is definitively not the lever
+
+Job 31890939, `runs/g1/last.pt` on 1UBQ, 120 steps, 3 draws:
+
+| seeds | cap | complete at | final | front@1 | front@mid | segs@end |
+|---|---|---|---|---|---|---|
+| 1 | 8 | >120 (1/3) | 83.3 % | 2.0 | 1.0 | 1.0 |
+| 2 | 8 | 86 | 100 % | 3.3 | 0.7 | 1.0 |
+| 4 | 8 | **47** | 100 % | 6.7 | 0.0 | 1.0 |
+| 8 | 8 | **33** | 100 % | 14.3 | 0.0 | 1.0 |
+| 16 | 16 | **29** | 100 % | 25.7 | 0.0 | 1.0 |
+| 4 | **2** | 47 | 100 % | 6.7 | 0.0 | 1.0 |
+| 4 | **16** | 47 | 100 % | 6.7 | 0.0 | 1.0 |
+
+**The trained rule grows faster than any untrained setting**: 47 steps against the best untrained row's
+50 (bias 4.0). So training has improved growth *rate* even though it did not improve growth *geometry*
+— consistent with the activation head learning (wake probability 1.000) while the birth and frame
+heads did not.
+
+**The cap is not the lever, now beyond argument**: 2, 8 and 16 all complete at exactly 47 steps with
+four seeds. Any future discussion of `max_births` as a growth knob should stop here.
+
+**Seeds are the lever, with diminishing returns**: 86 -> 47 -> 33 -> 29 steps at 2, 4, 8, 16 seeds. One
+seed still fails (83.3 %, finishing 1 of 3 draws), so two is the minimum that works and four is where
+the cost per seed stops paying.
+
+**Revised arithmetic for g1.** 76 residues complete in 47 steps at four seeds, so a 128-residue crop
+needs about `47 x 128/76 = 79` steps. g1 was given **40**, or 51 % of the requirement, against the
+44.6 % it reached. (The earlier estimate of ~93 steps used the untrained bias-4.0 row; the trained
+number is 47, not 50, so 79 is the better figure. Both say g1 had about half.)
+
+**An open detail, recorded rather than guessed.** The mean birth rate at four seeds is `72/47 = 1.5`
+residues per step, which is well below both the cap (8) and the step-1 frontier (6.7). Frontier
+residues only give birth on steps where they tick, and `update_probability` is 0.5, which predicts
+~3.35 per step — still roughly twice what is observed. So a third factor is limiting the rate and it
+is not identified; the candidates are frontier decay through the run (only the endpoints are measured
+here) and the birth path declining on steps where it is woken. Worth resolving before tuning steps
+finely, since it is a factor of two on the step budget.
+
+**The concrete recipe for the next growth run**: `--seeds 4 --steps 120` at crop 128, which leaves
+50 % headroom over the 79-step estimate and keeps completion inside the loss window. Re-measure
+`BOND_WEIGHT` on *that* run rather than on g1, since a weight fitted to a run that covers 45 % of the
+structure would repeat the initialisation-only error.
