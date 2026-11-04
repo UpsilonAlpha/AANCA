@@ -4792,3 +4792,44 @@ background near 5 %.
 which given the topology means the segments have ends that coincide — coalescence — and the remaining
 dormant slots are unreachable. A large frontier with saturated logits would mean something else limits
 births. The two have different fixes and the current log cannot tell them apart.
+
+### g1 finished: growth learns the sequence and does not learn the geometry
+
+**Done, exit 0, 8,000 updates, 74.6 min.** The first growth training this project has run, and the
+result is a clean dissociation between its two tracks.
+
+| update | fape | rmsd | alive | bond | closures | done | type NLL | recovery |
+|---|---|---|---|---|---|---|---|---|
+| 0.5k | 0.834 | 10.68 Å | 47.9 % | 2.779 | 58.5 | 0.004 | 2.931 | 7.5 % |
+| 1.0k | 0.794 | 11.29 Å | 48.2 % | 2.686 | 58.9 | 0.001 | 2.932 | 6.2 % |
+| 5.5k | 0.817 | 9.96 Å | 43.5 % | 2.062 | 52.8 | 0.206 | 2.486 | 22.3 % |
+| 7.0k | 0.864 | 11.16 Å | 47.3 % | 3.648 | 57.7 | 0.000 | 2.448 | 21.0 % |
+| 8.0k | 0.853 | 11.17 Å | 44.6 % | 3.585 | 54.2 | 0.000 | **2.431** | **22.7 %** |
+
+**The sequence track works.** Type NLL falls **2.931 -> 2.431** against the ln 20 = 3.00 floor and
+recovery rises **7.5 % -> 22.7 %** against a background near 5 %. So identity is learnable from a
+growth rollout, on a backbone the rule is building itself, with newborns arriving unlabelled. That is
+the part of the de novo claim that now has evidence behind it. It is well below the 38.3 % of the
+packing-style runs, which is expected rather than disappointing: half the structure is missing and
+there are no side chains to read.
+
+**The geometry track does not move at all.** Over 8,000 updates FAPE goes 0.834 -> 0.853, RMSD stays
+at 10-11 Å, and the alive fraction never exceeds 48.2 % and drifts *down* to 44.6 %. Eight thousand
+updates of training bought no geometric improvement whatsoever.
+
+**And the peptide restraint got worse: `bond` 2.779 -> 3.585**, against a crystal structure's ~0.002.
+Nothing is holding the bonds together. `BOND_WEIGHT = 0.022` was measured to equalise its gradient
+against FAPE's **at initialisation**, and the note recording it warned in writing that it "should
+shrink as the chain improves" and to re-measure a few thousand updates in. The chain did not improve
+and the weight was not re-measured, so the restraint has been 50x too weak to matter for most of the
+run. **That is the first concrete thing to fix.**
+
+**`done` is satisfied throughout** -- 0.004, 0.001, 0.000, with occasional excursions to 0.2 -- while
+half the slots stay dormant, which is the stall recorded above. `scripts/growth_diagnose.py` and the
+new `frontier` / `wake_probability` / `segments` / `unreachable` counters exist to say which of the
+two mechanisms it is; job **31889896** is computing them on `runs/g1/last.pt`.
+
+**Reading this against the threading probe.** RMSD at 10-11 Å is far outside the regime where
+threading could work at all -- that probe showed independent error at 0.92 Å already loses a third of
+the bonds -- so g1's output is not a threadable chain and was never going to be. The sequence result
+stands on its own, but nothing about backbone construction is yet demonstrated.
