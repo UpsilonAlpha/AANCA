@@ -4412,3 +4412,42 @@ rollout re-deciding the sequence from a masked start. **Stated as a candidate, n
 the discrepancy recorded earlier (my scoring run read 0.0° on the same checkpoint) is narrowed to a
 configuration difference but not yet pinned to one, and the geometry-convergence question stays open
 until it is.
+
+### Three hops does not close the gap, so the limit is not depth — 2026-11-04
+
+The hops ablation is finished and answered. `runs/hole_h3/best.pt` reached its full 12,000 updates at
+`--hops 3`; `scripts/hole_by_structure.py` was then run on **both** checkpoints under the current code
+so the comparison is like for like rather than against a number from an older script, over the same
+313 covalently-bonded holes.
+
+| hops | all | alpha helix | irregular | extended | near collinear | excluded cases |
+|---|---|---|---|---|---|---|
+| 1 (`hole_v2`) | **0.95 A** | 0.88 | 0.93 | 1.13 | 0.99 | 4.42 A |
+| 3 (`hole_h3`) | **0.92 A** | 0.86 | 1.06 | 0.96 | 1.02 | 3.22 A |
+
+**Tripling the depth bought 3 %.** Against the peptide bond's ~0.6 A tolerance the gap was 1.6x at
+one hop and is 1.5x at three, so it is not closed. And the per-conformation numbers move in *both*
+directions — helix and extended improve, irregular and near-collinear get worse — which is the
+signature of noise rather than a systematic gain.
+
+**So the limit is not depth**, which is the finding the ablation was built to deliver and it rules out
+the cheaper of the two remedies: growth does **not** need merely a few more relaxation steps per
+birth. This confirms the common-mode result recorded earlier at the structure-resolved level. Three
+hops halved the *per-witness* error while leaving the *fused* error alone, meaning the residual is
+correlated across witnesses; depth adds more views of the same neighbourhood and does not decorrelate
+them, so the fused estimate cannot improve. The information that would fix a residue to peptide-bond
+precision is not in the local neighbourhood at any depth.
+
+The one place three hops does help is the cases with no circle bound — chain ends and holes not
+bonded to both neighbours — which fall **4.42 A to 3.22 A**, a 27 % improvement. That is consistent
+with the same reading: where the geometry leaves the position genuinely underdetermined, more context
+helps; where two covalent neighbours already pin it to a circle, the remaining error is correlated and
+depth is spent on nothing.
+
+**What this does and does not say about threading.** 0.92 A is the error on a *CA position*, while the
+threading margin measured earlier is on C-N: bonded lengths within [1.262, 1.392] A against a nearest
+non-bonded C-N of 2.509 A anywhere in 670k pairs. The two are not the same quantity and one does not
+convert into the other, but they are the same order — so threading from *predicted* positions is
+marginal rather than safe, and whether the directed C->N graph stays a clean set of chains when its
+inputs carry ~0.9 A of correlated error is **an open question this measurement does not settle.**
+Threading was verified on native coordinates only.
