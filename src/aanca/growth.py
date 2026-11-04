@@ -160,6 +160,30 @@ class GrowthConfig:
 # 0.772 and should shrink as the chain improves. Re-measure a few thousand
 # updates in, and watch the alive fraction on the first run -- completion at 27
 # is a large change in the direction of growing faster.
+# **These three are measured under the wrong backprop window and are known to be
+# wrong. They are left in place deliberately, un-changed, because altering them
+# silently would make g1 and g2 incomparable with whatever runs next.**
+#
+# The probe that produced them set ``truncate = steps`` (30) while
+# ``train_growth.py`` trains at ``truncate = 12``, so every gradient norm above
+# was measured under a different objective than the one being optimised. At
+# training's truncate, 6 seeds / 30 steps / 3 draws at initialisation
+# (``scripts/growth_balance_live.py``):
+#
+#     term          weighted   activation grad   implied weight
+#     fape            0.6174       4.02          1.0 (reference)
+#     bond            0.0493       0.723         0.022 -> 0.122
+#     completion     57.85        20.9           27.2  -> 5.23
+#
+# So **bond is 5.6x too weak and completion 5.2x too strong**, and both errors
+# push the same way: the rule is paid to grow and barely charged for the bonds
+# it breaks doing it. That is the behaviour observed -- ``bond`` climbing 2.779
+# to 3.903 over g1 and g2 against a crystal's 0.002, with geometry flat while
+# the alive fraction moved.
+#
+# Changing them is a change to the scientific setup mid-experiment, so it waits
+# on a decision rather than being done here. The replacements, when taken, are
+# 0.122 and 5.23.
 BOND_WEIGHT = 0.022
 REACH_WEIGHT = 0.086
 COMPLETION_WEIGHT = 27.2

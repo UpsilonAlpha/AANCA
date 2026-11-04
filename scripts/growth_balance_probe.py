@@ -78,6 +78,14 @@ def main() -> int:
     parser.add_argument("--k", type=int, default=24)
     parser.add_argument("--repeats", type=int, default=3)
     parser.add_argument(
+        "--truncate",
+        type=int,
+        default=0,
+        help="backprop window; 0 means 12, which is what train_growth.py uses. "
+        "Never set this to --steps: that is the fault that produced the stored "
+        "weights.",
+    )
+    parser.add_argument(
         "--checkpoint",
         default=None,
         help="measure the balance on these trained weights instead of at "
@@ -126,7 +134,15 @@ def main() -> int:
                 rule.load_state_dict(trained)
             config = RolloutConfig(
                 steps=args.steps,
-                truncate=args.steps,
+                # **Training's truncate, not ``steps``.** This line read
+                # ``args.steps`` and that is why the weights it produced are
+                # wrong: it backpropagated through all 30 steps where
+                # ``train_growth.py`` uses a 12-step window, so every gradient
+                # norm was measured under a different objective than the one
+                # being trained. At truncate 30 the gradients also overflow to
+                # ``inf`` on a trained rule, which is what made the earlier
+                # trained table unreadable.
+                truncate=args.truncate or 12,
                 k=args.k,
                 blind=True,
                 growth=GrowthConfig(seeds=args.seeds, birth="cartesian"),

@@ -5276,3 +5276,17 @@ probes backpropagating through 30 steps where training uses 12. **Any probe that
 measurement still needs a run (g1's earlier trained table is void, since it used truncate 30). And it
 does **not** explain the g2 NaN: with training truncating at 12, exploding gradients through a 120-step
 rollout are no longer the mechanism, so that cause is open again and one candidate fewer.
+
+**Scoped the truncate fix rather than sweeping it.** Of the probes that build their own
+`RolloutConfig`, only `growth_balance_probe.py` takes gradients -- every other one
+(`growth_rate_probe`, `birth_funnel_probe`, `growth_probe`, `churn_calibration`,
+`churn_composition`) runs under `no_grad`, where `truncate` controls graph detachment only and cannot
+change a reported number. So the fault is in one file and the others need no change; "fixing" them
+would be churn. `growth_balance_probe.py` now defaults to 12 and its `--truncate` help says never to
+set it to `--steps`.
+
+**The corrected weights are recorded beside the constants and the constants are unchanged.** 0.122 for
+bond and 5.23 for completion are written into `aanca.growth`'s comment with the measurement that
+produced them, but `BOND_WEIGHT` and `COMPLETION_WEIGHT` still read 0.022 and 27.2. Changing them
+silently would make g1 and g2 incomparable with whatever runs next, and it is a change to the
+scientific setup rather than a bug fix, so it waits on a decision.
