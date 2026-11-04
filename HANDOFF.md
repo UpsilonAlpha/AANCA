@@ -4542,3 +4542,25 @@ the split, so this also makes that comparison like for like rather than pooled-a
 **Calibration job 31763318 is queued** (`PD (Resources)`, the general partition is busy) and has not
 produced numbers yet. The claim above about what churn *predicts* is therefore still unmeasured on a
 trained rule; only the confound is established.
+
+### v9_if has stopped improving at 38 %, so more of this recipe will not help — 2026-11-04
+
+At 9,500 updates (2:43 on the MI355X, `id` 2.108) the held-out identity numbers over the last four
+evals read **37.9 %, 37.9 %, 37.9 %, 38.0 %** sequence recovery, with type NLL flat at 1.928-1.940 and
+joint NLL at 2.277-2.284. The curve rose 36.7 -> 37.2 -> 37.9 and then stopped.
+
+**That is a plateau, not slow progress.** Warm-starting from `v8c_if/last.pt` bought about 1.2 points
+over its 36.8 % and has now converged, so the next gain in inverse folding has to come from a change
+of recipe rather than more compute — which also means there is no reason to spend further GPU-hours
+extending this run. The comparison set stands at PottsMPNN ~44 % and ProteinMPNN ~58 % on their own
+benchmarks, so this is in kind but not yet near either.
+
+`label churn` is unchanged at 0.12, now reproduced across the whole run.
+
+**No `recovery by burial` line appears in this log, which is correct rather than a fault**: v9_if
+started before that split was added to `evaluate`, so the first run to carry it will be g1 or
+whatever follows. The burial breakdown for v8c_if's weights is what job 31763318 is computing.
+
+**Calibration job 31763318 is running** (bun155, 18 min in, header written and no table yet). It is
+slower than the composition job because it accumulates per-step entropy and confidence over a
+384-residue crop as well as the flips, so it has produced no numbers to report.
