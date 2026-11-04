@@ -5046,3 +5046,75 @@ threatens this quota; the 14 GB structure library and the environments do.
 printed only its header, so the `pmhccamp` array has finished and nothing is being crowded.
 `--tag g2 --steps 120 --seeds 4 --identity-weight 93.7 --init-from runs/g1/last.pt`, with
 `BOND_WEIGHT` deliberately left at its default so the only change from g1 is the step budget.
+
+### g2: more steps did help, and the real ceiling is the crop's chain breaks, not time
+
+g2 (31894090) ran 1,375+ updates at `--steps 120 --seeds 4`, warm-started from g1, then **crashed**:
+
+```
+RuntimeError: probability tensor contains either `inf`, `nan` or element < 0
+  rng.py:68 draw_multinomial -> torch.multinomial
+  identity.py:248 straight_through
+```
+
+Exit 1, so the chain stopped rather than retrying, which is the intended behaviour for a crash.
+
+**Before dying it beat g1 on every track the step budget was supposed to fix:**
+
+| | g1 (40 steps) | g2 (120 steps) |
+|---|---|---|
+| alive | 44.6 % | **55.5 %** (peaking 60.2 %) |
+| recovery | 22.7 % | **24.3 %** |
+| type NLL | 2.431 | **2.359** |
+| rmsd | 11.17 Å | 12.60 Å |
+| bond | 3.585 | 3.903 |
+
+So the step budget was a real limit and raising it moved growth and sequence together. Geometry did
+not improve -- RMSD is slightly worse, which is expected when more residues are alive to be scored.
+
+**But the new diagnostics show the ceiling is topological, not temporal**, and this is the finding:
+
+```
+frontier 0.0   wake p n/a   segments 2.8   unreachable 57.0   done 0.000
+```
+
+**The frontier is empty with 44.5 % of slots still dormant.** Growth has not run out of time; it has
+run out of places to grow. With `segments` at 2.8 from 4 seeds, the live segments' ends all sit where
+`links` is False -- chain breaks and crop boundaries -- and `frontier` is gated on `links`, so a
+segment cannot cross one. Growth is therefore confined to the contiguous covalent runs its seeds
+happened to land in.
+
+**This corrects an earlier entry in this file.** I measured link density at 0.92-1.00 over six crops
+and concluded "the crop is fine". The density was right and the implication was wrong: 0.92 over 128
+residues is about **nine breaks**, which fragments the crop into runs that growth cannot cross. 1UBQ
+completes to 100 % in the rate probe precisely because it is one unbroken chain with `links` all true
+-- so the structure I validated the step budget on is the one structure that cannot show this
+failure. A probe on an unrepresentative input confirmed a budget and hid a ceiling.
+
+**What follows.** Seeds must cover the runs: with ~9 runs per crop, 4 seeds can reach at most 4 of
+them whatever the step count. Either seed per run rather than per structure, or let a dormant slot in
+an unseeded run nucleate on its own. The first is a change to `seed_alive`; the second is closer to
+"there should be another residue here" and is the mechanism originally wanted.
+
+**The crash is unexplained and must be fixed before resubmitting.** A NaN reaching the identity
+softmax most likely arrives through the coordinates -- `bond` was 3.903 and rising, so a diverging
+peptide geometry producing a non-finite distance is the first place to look. `growth_objective` guards
+`total` with `torch.isfinite` *after* the rollout, which is too late: the rollout itself samples a
+label every step, so the guard cannot catch a NaN that appears mid-rollout.
+
+### Housekeeping: the run deletion is authorised but blocked
+
+Deleting the superseded packing runs was approved, and I **narrowed the list** rather than taking the
+whole v1-v7b sweep, because two of those are load-bearing:
+
+* **`v6_mixed` kept** -- the clash-weight sweep at 3/10/50 recorded earlier starts from this
+  checkpoint, so deleting it would destroy an agreed experiment's starting point.
+* **`v7b_clash` kept** -- the best packing rule (chi1 36.7°, 33.8 % accuracy). `growth_objective`'s
+  docstring says side-chain placement is "the existing packing rule's job", so composing growth with
+  packing needs these weights.
+
+To delete (13 directories, ~551 MB): `v1_gpu v1_noop4 v2_gpu v2_noop4 v3_gpu v3_noop4 v3_noop4_cpu
+v3_noop4_wrongsplit v4_gpu v4_noop4 v4_probe v5_native v7_clash`.
+
+The `rm -rf` was refused by the agent's safety classifier, so it has **not** been done and must be run
+by hand from `runs/`.
