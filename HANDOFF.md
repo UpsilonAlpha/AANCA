@@ -5235,3 +5235,44 @@ must recover the threading. It does **not** bear on the growth rule that g1, g2 
 `give_birth` is indexed by parent and direction -- `born_c[i]` means "i wakes i+1" -- so the sequence
 relationship is carried explicitly and never inferred from geometry. Threading was only ever needed
 for the index-free variant, and that is the variant this rules out.
+
+### The term weights were fitted under full BPTT and are used under truncate 12
+
+**This is the answer to "is `BOND_WEIGHT` wrong", and it is wrong for a different reason than
+assumed.** Not because the chain improved and the restraint should have shrunk -- because the probe
+that measured it backpropagated through a different number of steps than training does.
+
+`RolloutConfig.truncate` is **12** in training (`train_growth.py`'s default). Both balance probes set
+`truncate = steps`, i.e. **30**, so they measured gradients under full backprop-through-time while
+training uses a 12-step window. Measured at training's truncate, 6 seeds, 30 steps, 3 draws, at
+initialisation:
+
+| term | weighted | activation grad | implied weight |
+|---|---|---|---|
+| fape | 0.6174 | **4.02** | 1.0 (reference) |
+| bond | 0.0493 | **0.723** | 0.022 -> **0.122** |
+| completion | 57.85 | **20.9** | 27.2 -> **5.23** |
+| identity | 292.5 | 20.1 (identity head) | |
+| reach | 0.0166 | 0.00 | |
+
+**`bond` is 5.6x too weak and `completion` 5.2x too strong**, against weights explicitly chosen to
+equalise each term's gradient with FAPE's. Both errors point the same way: the rule is paid to grow
+and barely charged for the bonds it breaks doing it. That is precisely the observed behaviour --
+`bond` climbing 2.779 -> 3.903 across g1 and g2 against a crystal's 0.002, with geometry flat while
+the alive fraction moved.
+
+**And the infinite gradients were the same fault, one step earlier.** Under `truncate = steps` the
+gradients overflow to `inf`; under training's 12 they are finite. So g1's weights are not divergent,
+the earlier `inf` table was the probe's configuration, and `--detect-anomaly` not firing was itself
+the clue -- anomaly mode raises on NaN, not on overflow to infinity.
+
+**Third instance of one pattern, now worth stating as a rule.** A probe whose configuration diverges
+from training measures the probe: the ablation probe zeroing restraints a trained rule needs; the rate
+probe validating a step budget on 1UBQ, the one structure with no chain breaks; and now both balance
+probes backpropagating through 30 steps where training uses 12. **Any probe that builds its own
+`RolloutConfig` must take the stored one's values, and the new `--truncate` default does.**
+
+**What this does not settle.** These are initialisation numbers at the corrected truncate; the trained
+measurement still needs a run (g1's earlier trained table is void, since it used truncate 30). And it
+does **not** explain the g2 NaN: with training truncating at 12, exploding gradients through a 120-step
+rollout are no longer the mechanism, so that cause is open again and one candidate fewer.

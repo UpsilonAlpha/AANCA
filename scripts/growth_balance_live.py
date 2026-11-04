@@ -85,6 +85,18 @@ def main() -> int:
     parser.add_argument("--pdb", default="1UBQ")
     parser.add_argument("--seeds", type=int, default=6)
     parser.add_argument("--steps", type=int, default=30)
+    parser.add_argument(
+        "--truncate",
+        type=int,
+        default=0,
+        help="backprop-through-time window; 0 takes the checkpoint's own value, "
+        "falling back to 12. **Not `steps`, which is what both balance probes "
+        "were doing and why they reported infinite gradients.** Training "
+        "truncates at 12 while the probes backpropagated through all 30, so "
+        "the infinity was the probe's configuration and not a property of the "
+        "rule -- the third time in this project that a probe diverging from "
+        "the training setup produced a number that looked like a finding.",
+    )
     parser.add_argument("--k", type=int, default=24)
     parser.add_argument("--repeats", type=int, default=3)
     parser.add_argument("--bond-weight", type=float, default=BOND_WEIGHT)
@@ -123,6 +135,8 @@ def main() -> int:
         stored = state.get("args") or {}
         trained = ckpt.rule_weights(state)
 
+    truncate = args.truncate or int(stored.get("truncate") or 12)
+
     from aanca.fape import fape as fape_loss
     from aanca.identity import library_index, type_loss
     from aanca.torch_geometry import measure_chis
@@ -142,7 +156,7 @@ def main() -> int:
         if trained is not None:
             rule.load_state_dict(trained)
         config = RolloutConfig(
-            steps=args.steps, truncate=args.steps, k=args.k, blind=True,
+            steps=args.steps, truncate=truncate, k=args.k, blind=True,
             identity_start=str(stored.get("identity_start", "masked")),
             growth=GrowthConfig(
                 seeds=args.seeds, birth=str(stored.get("birth", "cartesian"))
@@ -214,6 +228,7 @@ def main() -> int:
     print(
         f"{args.pdb}, {args.seeds} seeds, {args.steps} steps, mean of "
         f"{args.repeats} runs\nrule: {args.checkpoint or 'at initialisation'}\n"
+        f"truncate {truncate} (training's, not steps)\n"
         f"weights: bond {args.bond_weight:g}, reach {args.reach_weight:g}, "
         f"completion {args.completion_weight:g}, identity {args.identity_weight:g}\n"
         "Every weight at its training value; one rollout; per-term gradients "
