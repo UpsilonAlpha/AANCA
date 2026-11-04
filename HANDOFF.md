@@ -5402,3 +5402,26 @@ run -- the training it reports is the training that happened.
 
 Nothing further will come from this configuration. The correction to measure against this baseline is
 `BOND_WEIGHT` 0.022 -> 0.122 with `COMPLETION_WEIGHT` 27.2 -> 5.23, and it is still not applied.
+
+### Weights corrected: bond 0.122, completion 5.23
+
+Applied. Verified at training's truncate, 6 seeds / 30 steps / 3 draws at initialisation, the
+activation gradients now read **fape 3.90, bond 3.87, completion 4.01** -- within 3 % of each other,
+against 4.02 / 0.723 / 20.9 before. That is what the weights were always meant to do and had never
+done, because the probe that fitted them backpropagated through 30 steps where training uses 12.
+
+`REACH_WEIGHT` and the identity weight are deliberately unchanged. Reach's activation gradient is
+exactly 0.00 at training's truncate -- it bites only once a closure is foreclosed, so there is nothing
+to balance against at initialisation -- and the identity term's gradient lands on the identity head
+rather than the activation head, so "matching FAPE" would compare different parameters. Rescaling
+either on this measurement would be arithmetic without a meaning, and the identity track is the one
+part of growth that already works (24.3 % recovery in g2).
+
+**g3 is the baseline this is measured against**, and it is converged: 97.7 % alive, RMSD ~14 Å, bond
+16.6-33.1, recovery 15.2 %, flat across five evals over 2,500 updates. The question g4 answers is
+whether geometry improves once the objective actually charges for it. The prediction, stated before
+the run so it can be wrong: `bond` should fall by roughly the weight ratio or better, the alive
+fraction should drop below 97.7 % as growth stops being over-rewarded, and if RMSD does **not** improve
+then the geometry track is a model-capacity problem rather than a weighting one -- which would be the
+first real evidence for that, since every previous flat-geometry result is now explained by the
+weights.

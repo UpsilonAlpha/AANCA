@@ -160,33 +160,52 @@ class GrowthConfig:
 # 0.772 and should shrink as the chain improves. Re-measure a few thousand
 # updates in, and watch the alive fraction on the first run -- completion at 27
 # is a large change in the direction of growing faster.
-# **These three are measured under the wrong backprop window and are known to be
-# wrong. They are left in place deliberately, un-changed, because altering them
-# silently would make g1 and g2 incomparable with whatever runs next.**
+# **Corrected 2026-11-05. The table above was measured under the wrong backprop
+# window.** The probe that produced it set ``truncate = steps`` (30) while
+# ``train_growth.py`` trains at ``truncate = 12``, so every gradient norm in it
+# was taken under a different objective than the one being optimised. Re-measured
+# at training's truncate, 6 seeds / 30 steps / 3 draws at initialisation
+# (``scripts/growth_balance_live.py``, which keeps every weight at its training
+# value and takes per-term gradients with ``retain_graph`` rather than ablating):
 #
-# The probe that produced them set ``truncate = steps`` (30) while
-# ``train_growth.py`` trains at ``truncate = 12``, so every gradient norm above
-# was measured under a different objective than the one being optimised. At
-# training's truncate, 6 seeds / 30 steps / 3 draws at initialisation
-# (``scripts/growth_balance_live.py``):
-#
-#     term          weighted   activation grad   implied weight
+#     term          weighted   activation grad   weight
 #     fape            0.6174       4.02          1.0 (reference)
 #     bond            0.0493       0.723         0.022 -> 0.122
 #     completion     57.85        20.9           27.2  -> 5.23
 #
-# So **bond is 5.6x too weak and completion 5.2x too strong**, and both errors
-# push the same way: the rule is paid to grow and barely charged for the bonds
-# it breaks doing it. That is the behaviour observed -- ``bond`` climbing 2.779
-# to 3.903 over g1 and g2 against a crystal's 0.002, with geometry flat while
-# the alive fraction moved.
+# **bond was 5.6x too weak and completion 5.2x too strong**, and both errors push
+# the same way: the rule was paid to grow and barely charged for the bonds it
+# broke doing it.
 #
-# Changing them is a change to the scientific setup mid-experiment, so it waits
-# on a decision rather than being done here. The replacements, when taken, are
-# 0.122 and 5.23.
-BOND_WEIGHT = 0.022
+# The evidence that this is the binding fault, in order of how hard it is to
+# explain away:
+#
+# * g1 (4 seeds, 40 steps) reached 44.6 % alive with ``bond`` 3.585 and flat
+#   geometry over 8,000 updates.
+# * g2 (4 seeds, 120 steps) reached 55.5 % with ``bond`` 3.903, also flat.
+# * g3 (16 seeds, 120 steps, per-run seeding) reached **97.7 %** alive -- so
+#   coverage was never the limit -- and ``bond`` rose to **33.05** against a
+#   crystal structure's 0.002, while RMSD sat near 14 A and recovery *fell* to
+#   15.2 %. Two thousand five hundred updates moved none of it, and ``bond``
+#   swung 16.6 to 33.1 between evals on one held-out set, so the restraint was
+#   not merely underweighted but too noisy to steer anything.
+#
+# So the flat geometry in g1 and g2 was not evidence that the geometry track is
+# unlearnable. It is evidence that it was never being asked for.
+#
+# ``REACH_WEIGHT`` and the caller's identity weight are **not** corrected here,
+# deliberately. The reach term's activation gradient reads exactly 0.00 at
+# training's truncate -- it bites only once a closure is foreclosed, so there is
+# nothing to balance against at initialisation -- and the identity term's
+# gradient lands on the identity head rather than the activation head, which
+# makes "matching FAPE" a comparison between different parameters. Rescaling
+# either on this measurement would be arithmetic without a meaning.
+#
+# g3 at 97.7 % alive is the baseline these replace, and it is converged, so the
+# comparison is against a settled number rather than a moving one.
+BOND_WEIGHT = 0.122
 REACH_WEIGHT = 0.086
-COMPLETION_WEIGHT = 27.2
+COMPLETION_WEIGHT = 5.23
 #: Measured at 93.7. Left for the caller because ``identity_weight`` defaults
 #: to 0 -- the identity track is opt-in, not a weight to tune by default.
 IDENTITY_WEIGHT = 93.7
