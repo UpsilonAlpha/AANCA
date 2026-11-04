@@ -4451,3 +4451,51 @@ convert into the other, but they are the same order — so threading from *predi
 marginal rather than safe, and whether the directed C->N graph stays a clean set of chains when its
 inputs carry ~0.9 A of correlated error is **an open question this measurement does not settle.**
 Threading was verified on native coordinates only.
+
+### The churn lives at polar and charged positions, and ALA was not a hub
+
+The per-use participation rerun (job 31758223, exit 0) **refutes the ALA-hub reading** that the raw
+flip list invited. ALA does not appear in the ten most unstable residues at all: it headed the
+frequency list purely because the head commits it often, which is exactly why the statistic was
+divided by use before being believed.
+
+What the table shows instead is sharper than the thing it ruled out. The ten most unstable labels per
+use are:
+
+| residue | ratio | class | | residue | ratio | class |
+|---|---|---|---|---|---|---|
+| ASN | 1.45 | polar | | ARG | 1.31 | positive |
+| ASP | 1.42 | negative | | HIS | 1.30 | positive |
+| LYS | 1.41 | positive | | THR | 1.28 | polar |
+| GLN | 1.40 | polar | | CYS | 1.16 | special |
+| GLU | 1.40 | negative | | | | |
+| SER | 1.33 | polar | | | | |
+
+**Every one is polar, charged or CYS. Not a single aliphatic or aromatic residue reaches 1.16** — so
+LEU, ILE, VAL, PHE, MET and TRP are all more stable per use than the least stable polar residue.
+Churn is not spread evenly over the sequence; it is concentrated at the polar and charged positions
+while the hydrophobic positions hold.
+
+This matches the prediction made when the label-flipping design was argued for — hydrophobic stays
+hydrophobic, polar stays polar — but states it more usefully: the flipping is **localised to the
+chemistry where the structural signal is weakest.** A buried hydrophobic position is strongly
+determined by packing, since the cavity's size says which greasy side chain fits; a solvent-exposed
+polar position is genuinely under-determined by local geometry, because many polar residues satisfy
+the same site and the environment does not discriminate between them. On that reading the plateau at
+0.12 is not the rule failing to converge everywhere, but converging on the core and remaining
+undecided on the surface.
+
+It also reframes the GLU<->LYS charge reversal recorded above. GLU (1.40) and LYS (1.41) are both top
+five, so the 619 reversals are not a specific confusion between those two residues; they are one
+visible case of a general instability at charged positions.
+
+**The burial claim is an inference, not a measurement.** "Polar and charged" is being read as
+"surface" from chemistry alone. Burial *is* measurable here -- the packing eval already splits
+core/surf -- and this analysis does not split by it. Churn resolved by burial is the measurement that
+would turn this into a result, and it is the obvious next one: if the churn ratio tracks solvent
+exposure rather than chemical class, the reading above is confirmed; if a buried ASN churns as much
+as an exposed one, it is not.
+
+**v9_if at 1:43** continues to climb: sequence recovery 36.7 % at 2,000 -> 37.2 % at 3,000 -> **37.9 %**,
+type NLL 1.930, churn still flat at 0.12. **g1 (31758141) is still correctly gated** behind it while
+the `pmhccamp` array holds the 4-GPU QOS.
