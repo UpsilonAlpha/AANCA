@@ -91,7 +91,23 @@ def main() -> int:
     parser.add_argument("--reach-weight", type=float, default=REACH_WEIGHT)
     parser.add_argument("--completion-weight", type=float, default=COMPLETION_WEIGHT)
     parser.add_argument("--identity-weight", type=float, default=93.7)
+    parser.add_argument(
+        "--detect-anomaly",
+        action="store_true",
+        help="run the backward pass under torch.autograd.set_detect_anomaly, "
+        "which raises at the first non-finite gradient and names the forward "
+        "op that produced it. **This is the diagnostic for g1's non-finite "
+        "gradients**: on g1's weights every `draws` count is 0 while the term "
+        "*values* are finite -- fape 0.8826, bond 0.3255, identity 244.8 -- so "
+        "the forward pass is healthy and the backward is not, which makes it a "
+        "gradient singularity rather than a diverging rollout. Guessing at the "
+        "op is what this replaces: `_bounded` was the obvious candidate and is "
+        "demonstrably safe even at an exactly-zero vector, gradient (1, 1, 1). "
+        "Slow, so use one repeat.",
+    )
     args = parser.parse_args()
+    if args.detect_anomaly:
+        torch.autograd.set_detect_anomaly(True)
 
     path = RAW / f"{args.pdb}.pdb"
     if not path.exists():
