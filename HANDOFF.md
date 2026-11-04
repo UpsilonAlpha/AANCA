@@ -4874,3 +4874,41 @@ A hypothesis it caused me to form and then disproved: that the spatial crop dest
 adjacency, so growth cannot propagate. Measured over six validation crops at size 128, the fraction of
 present `links` is **0.92-1.00**, with 1-11 contiguous runs and longest runs of 46-124 residues. A
 spatial ball mostly picks sequence neighbours, because proteins are locally compact. The crop is fine.
+
+### g1 was given 40 steps for a job that needs about 90: growth completes when allowed to
+
+The rewritten `scripts/growth_rate_probe.py` on 1UBQ (76 residues), 120 steps, untrained:
+
+| bias | p(wake) | seeds | complete at | final | front@1 | front@mid | front@end | segs@end |
+|---|---|---|---|---|---|---|---|---|
+| −2.0 | 0.12 | 4 | >120 | 59.2 % | 7.0 | 5.5 | 4.5 | 2.5 |
+| 0.0 | 0.50 | 4 | >120 (1/2) | 98.0 % | 7.0 | 2.5 | 0.5 | 1.0 |
+| 2.0 | 0.88 | 4 | **62** | **100 %** | 7.0 | 1.0 | 0.0 | 1.0 |
+| 4.0 | 0.98 | 4 | **50** | **100 %** | 7.0 | 0.0 | 0.0 | 1.0 |
+| 4.0 | 0.98 | 1 | >120 (1/2) | 86.8 % | 2.0 | 1.0 | 0.5 | 1.0 |
+
+**Growth does complete.** At a high wake probability with four seeds the structure is finished at
+50-62 steps of 120, so it finishes well inside the loss window — which also settles the old question
+this probe was written for, in the affirmative.
+
+**And that explains g1 quantitatively rather than qualitatively.** 76 residues need ~50-62 steps at
+four seeds. g1 ran **40 steps on a 128-residue crop**. Scaling by length, 128 residues need roughly
+`128/76 x 55 = 93` steps, so g1 had **43 % of the steps required** — against the **44.6 %** alive
+fraction it actually reached. The match is close enough that the shortfall needs no other explanation:
+**g1 did not stall, and it was not mis-weighted. It was stopped less than half way.**
+
+Scaling by length is an estimate, not a proof -- the frontier decays as segments coalesce, so the
+relationship is not exactly linear -- but it is the right order and it lands on the observed number.
+
+**A single seed never finishes**, topping out at 86.8 % even at p = 0.98, because one segment offers
+only two growable ends. Multi-seed growth is therefore not an elaboration but a requirement, which
+`growth_objective`'s docstring already asserted on different grounds (a single segment cannot finish
+inside the loss window) and this now measures.
+
+**The birth cap is not the lever and should stop being treated as one**: 8 against 2 changes almost
+nothing, because the frontier never reaches either ceiling. `front@1` is 7.0 for four seeds -- one
+less than the 8 available, since a seed landing at a chain end has one blocked side.
+
+**So the next growth run is `--steps 120 --seeds 4` or better**, not a re-weighted objective. Job
+**31890939** is running the same sweep on g1's trained weights, where the wake probability is 1.000
+and the rate should match or beat the bias-4.0 row.
