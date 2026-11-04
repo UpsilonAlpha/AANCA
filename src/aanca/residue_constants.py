@@ -596,3 +596,45 @@ def clash_exempt_pairs(
 CLASH_EXEMPT_PAIRS: dict[str, frozenset[tuple[str, str]]] = {
     res: clash_exempt_pairs(res) for res in AA3
 }
+
+
+# -- chemical classes, for reading what a label flip means ------------------
+#
+# Added to answer one question: when the identity head flips a committed label
+# -- and it flips 12 % of positions every step, indefinitely
+# (``scripts/score_identity.py`` on v8c_if) -- does it flip between *similar*
+# residues or between unrelated ones? A flip from LEU to ILE is the head being
+# uncertain between two choices the structure barely distinguishes, and the
+# energy surface there is nearly flat. A flip from LEU to ASP is not.
+#
+# The grouping is the conventional one and the boundaries are conventions
+# rather than facts: TYR is aromatic *and* polar and is filed under aromatic;
+# CYS is grouped with the polars though it is the least polar of them; GLY and
+# PRO are their own class because their backbone behaviour, not their side
+# chain, is what distinguishes them. Anything read off this should survive a
+# reasonable person moving one residue to a neighbouring class.
+CHEMICAL_CLASS: dict[str, str] = {
+    "ALA": "aliphatic", "VAL": "aliphatic", "LEU": "aliphatic",
+    "ILE": "aliphatic", "MET": "aliphatic",
+    "PHE": "aromatic", "TYR": "aromatic", "TRP": "aromatic",
+    "SER": "polar", "THR": "polar", "ASN": "polar", "GLN": "polar",
+    "CYS": "polar",
+    "LYS": "positive", "ARG": "positive", "HIS": "positive",
+    "ASP": "negative", "GLU": "negative",
+    "GLY": "special", "PRO": "special",
+}
+
+
+def chemical_class(resname: str) -> str:
+    """Which of :data:`CHEMICAL_CLASS` a residue belongs to."""
+    return CHEMICAL_CLASS[resname]
+
+
+def sidechain_size(resname: str) -> int:
+    """Heavy atoms in the side chain, as a size proxy.
+
+    Derived from :func:`sidechain_atoms` rather than from a volume table, so it
+    cannot disagree with the atom sets the rest of the project uses. GLY is 0,
+    ALA is 1, TRP is 8.
+    """
+    return len(sidechain_atoms(resname))
