@@ -740,6 +740,26 @@ class GrowthTerms:
     #: these, so without the count it cannot be read -- a large mean over one
     #: closure is a different situation from a small mean over twenty.
     closures: int
+    #: **Diagnostics for a stall, added because g1 stopped at 48 % alive while
+    #: ``completion`` read 0.004.** That pair is consistent with two different
+    #: situations needing opposite fixes, and the objective alone cannot tell
+    #: them apart: either the frontier is *empty*, so there is nothing the
+    #: completion term could push on and the remaining slots are unreachable,
+    #: or it is non-empty with saturated logits, so the rule wants to grow and
+    #: something else is limiting births. These four settle it.
+    #:
+    #: ``frontier`` counts (residue, direction) growth opportunities, exactly
+    #: the set the completion term means over. ``wake_probability`` is the mean
+    #: sigmoid of the activation logit over that set, so a small loss from an
+    #: eager frontier is distinguishable from a small loss from no frontier.
+    #: ``segments`` counts maximal alive runs, which falls when segments
+    #: coalesce. ``unreachable`` counts dormant slots with no covalently
+    #: linked alive neighbour -- slots growth can never reach from here, which
+    #: is the quantity that makes a stall permanent rather than slow.
+    frontier: int
+    wake_probability: float
+    segments: int
+    unreachable: int
     #: Fraction of alive residues whose most likely type is the native one.
     #: This is sequence recovery, and it is the number ProteinMPNN (~58 %),
     #: PottsMPNN (~44 %) and RFD4-Proteina report -- so it is the one to quote,
@@ -887,6 +907,25 @@ def growth_objective(
     else:
         completion_term = torch.zeros((), device=logits.device, dtype=logits.dtype)
 
+    # The stall diagnostics. ``unfinished`` is the completion term's own set,
+    # so ``frontier`` and ``wake_probability`` describe exactly what that loss
+    # saw rather than a reconstruction of it.
+    with torch.no_grad():
+        frontier_count = int(unfinished.sum())
+        wake_probability = (
+            float(torch.sigmoid(logits[unfinished]).mean())
+            if frontier_count
+            else float("nan")
+        )
+        starts = final.alive.clone()
+        starts[1:] &= ~(final.alive[:-1] & links)
+        segments = int(starts.sum())
+        dormant = ~final.alive
+        reachable = torch.zeros_like(dormant)
+        reachable[:-1] |= dormant[:-1] & links & final.alive[1:]
+        reachable[1:] |= dormant[1:] & links & final.alive[:-1]
+        unreachable = int((dormant & ~reachable).sum())
+
     identity_term = torch.zeros((), device=fape.device, dtype=fape.dtype)
     recovery = float("nan")
     if identity_weight:
@@ -934,6 +973,10 @@ def growth_objective(
             recovery=recovery,
             reach=reach_term.detach(),
             closures=int(closure_left.numel()),
+            frontier=frontier_count,
+            wake_probability=wake_probability,
+            segments=segments,
+            unreachable=unreachable,
         ),
         result,
     )

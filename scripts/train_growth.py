@@ -128,6 +128,7 @@ def score(rule, dataset, indices, args, config, seed: int = 0) -> dict[str, floa
     keys = (
         "total", "fape", "bond", "completion", "reach",
         "identity", "rmsd", "alive", "recovery", "closures",
+        "frontier", "wake", "segments", "unreachable",
     )
     sums = {key: 0.0 for key in keys}
     n = 0
@@ -159,6 +160,11 @@ def score(rule, dataset, indices, args, config, seed: int = 0) -> dict[str, floa
             sums["rmsd"] += float(terms.rmsd)
             sums["alive"] += float(terms.alive_fraction)
             sums["closures"] += float(terms.closures)
+            sums["frontier"] += float(terms.frontier)
+            sums["segments"] += float(terms.segments)
+            sums["unreachable"] += float(terms.unreachable)
+            if not math.isnan(terms.wake_probability):
+                sums["wake"] += float(terms.wake_probability)
             if not math.isnan(terms.recovery):
                 sums["recovery"] += float(terms.recovery)
             n += 1
@@ -178,6 +184,17 @@ def report(scores: dict[str, float], identity: bool) -> str:
         f"{scores['rmsd']:>7.2f} A{scores['alive']:>7.1%}"
         f"{scores['bond']:>8.3f}{scores['reach']:>8.3f}"
         f"{scores['closures']:>10.1f}{scores['completion']:>7.3f}"
+    )
+    # The stall diagnostics. Read `done` beside `frontier`: a small completion
+    # loss means "the rule wants to grow" only if the frontier is non-empty,
+    # and with an empty frontier it means the term saw nothing at all.
+    # `unreachable` is the one that says whether a stall is permanent.
+    lines.append(
+        f"\n  {'frontier':>9}{'wake p':>9}{'segments':>10}{'unreachable':>13}"
+    )
+    lines.append(
+        f"  {scores['frontier']:>9.1f}{scores['wake']:>9.3f}"
+        f"{scores['segments']:>10.1f}{scores['unreachable']:>13.1f}"
     )
     if identity:
         lines.append(
