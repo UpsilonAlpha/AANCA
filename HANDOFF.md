@@ -4265,3 +4265,56 @@ correct — a number measuring something other than what it is named — one lev
 
 `--weights` scores a different file's parameters against those indices, which `best.pt` needs: it
 holds weights alone under `state_dict` and carries no split.
+
+### Inverse folding generalises: 36.8 % held-out sequence recovery — 2026-11-04
+
+`scripts/score_identity.py` on `runs/v8c_if/last.pt` (job 31750581, CPU, `general`), the run's own
+twelve held-out structures and 36 cases, 64 steps:
+
+```
+identity: joint NLL 2.322 (floor ln 54 = 3.99), type NLL 1.977 (floor ln 20 = 3.00),
+          sequence recovery 36.8%
+label churn per step: 0.15 0.15 0.14 ... 0.12 0.12 0.12 0.12   (plateau, not decay)
+```
+
+**The memorisation worry is answered, and the answer is no.** The held-out joint NLL is **2.322**
+against the training running mean's **2.243** — a gap of 0.08 nat. With 400 structures seen about
+fifty times each under different crops there was room for "this backbone is structure X, whose
+residue 47 is LEU", and the margin says that is not what happened.
+
+**36.8 % sequence recovery on held-out structures.** Against a background of roughly 9 % — guess the
+most frequent amino acid everywhere — and against PottsMPNN's ~44 % and ProteinMPNN's ~58 %. Not
+directly comparable, since those are published on their own benchmarks and this is twelve structures
+from our train split's held-out slice, but it is the first number this project has had in that
+currency at all, and it is the right side of background by a factor of four.
+
+**And label churn plateaus at 0.12 rather than decaying to zero.** Twelve per cent of positions flip
+their committed label *every step*, indefinitely, after 20,000 updates of training. `identity.py`'s
+own docstring called this exactly: "a plateau at a nonzero value is a limit cycle, not slow
+convergence". So the discrete half of the ripple does not converge, and the sequence the rollout
+"settles on" is not settled — it is a distribution being sampled. That matters for the design, because
+the whole identity story rests on a discrete fixed point, and this says there isn't one.
+
+**One discrepancy I have not resolved, flagged rather than explained away.** This scoring run's
+`mean |delta| per step` decays to **0.0°**, while v8c_if's own final eval on the *same checkpoint*
+printed 43.0° falling to 21.3°. A factor of several hundred at the first step. Candidate differences
+are `--eval-steps` (its eval ran 30 steps, this ran 64), and that `train.py`'s `eval_config` passes
+`cutoff` and `device_neighbours` explicitly where this script does not — none of which plausibly
+accounts for 400×. Until it is accounted for, **the geometry-convergence question is open**, and the
+earlier reading of that 21° plateau as "the rollout does not settle" should not be relied on. The
+identity numbers above do not depend on it: they are read off the final state's logits, and the churn
+curve is computed from the labels directly.
+
+**Two bugs in the scoring script, both mine, both instructive.** Its first version truncated the
+structure pool to `structures + eval_structures` and so renumbered every stored eval index — it
+crashed rather than scoring the wrong twelve structures, which was luck. Its second read `steps` as
+`stored.get("steps_max", stored.get("steps", 30))`, but `--steps-max` defaults to **0** meaning
+"unset", so the stored 0 is present-and-falsy rather than absent and a default only fires on absence.
+That gave a zero-step rollout, which never calls `step_once` — and so reported "the rule has no
+identity head" when the head was built and correct, and printed the *damaged inputs* as though they
+were predictions. The misleading part was the message, which would have been true had the run
+genuinely lacked a head.
+
+**v9_if submitted as 31754529**, warm-started from `v8c_if/last.pt` so the 20,000 updates already
+spent are not thrown away, `--eval-every 1000` so the held-out identity trajectory and the churn curve
+are recorded as it trains rather than reconstructed afterwards.
