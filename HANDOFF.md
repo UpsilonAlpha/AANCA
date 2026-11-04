@@ -4564,3 +4564,79 @@ whatever follows. The burial breakdown for v8c_if's weights is what job 31763318
 **Calibration job 31763318 is running** (bun155, 18 min in, header written and no table yet). It is
 slower than the composition job because it accumulates per-step entropy and confidence over a
 384-residue crop as well as the flips, so it has produced no numbers to report.
+
+### Churn and entropy predict correctness at AUC 0.77-0.82, but the head is over-confident
+
+Job 31763318 finished (exit 0, 12 held-out structures, 64 steps, 3,015 supervised residues). It
+settles the core/surface reading, and the answer is **partly yes, confirmed through a different
+quantity than the one it was claimed with.**
+
+#### The confound was real and large
+
+| band | churn/upd | churn/step | ticks | entropy | confidence | recovery | CB nbrs | n |
+|---|---|---|---|---|---|---|---|---|
+| core | 0.663 | 0.085 | 0.131 | **1.662** | **0.470** | **31.9 %** | 23.4 | 1196 |
+| intermediate | 0.734 | 0.108 | 0.148 | 1.926 | 0.381 | 24.4 % | 17.6 | 655 |
+| surface | 0.756 | 0.167 | 0.220 | **1.950** | **0.362** | 28.1 % | 11.4 | 1164 |
+
+`churn/step` runs 0.085 -> 0.167, a **1.96x** surface-to-core gradient, and the tick rate runs 0.131
+-> 0.220, a **1.68x** gradient of its own. Per update the churn gradient collapses to **1.14x**. So
+most of what looked like a confidence signal in churn-per-step was the scheduler declining to ask
+buried residues, exactly as the smoke test warned.
+
+**The reading survives, but on entropy rather than churn.** Entropy runs 1.662 on the core against
+1.950 on the surface and confidence runs 0.470 against 0.362, both monotone. Neither is a count of
+events that require a tick to occur, so neither is confounded the way a flip rate is. **The head
+genuinely is more certain on the core.**
+
+**One correction to the earlier reading: recovery is not monotone in burial.** It runs core 31.9 %,
+**intermediate 24.4 %**, surface 28.1 % -- so core is best, but the surface *beats* the intermediate
+band rather than being worst. At n = 655 the intermediate gap is about two standard errors, so it is
+marginal rather than solid, but the clean "core good, surface bad" story is not what the data says and
+should not be quoted as though it were.
+
+#### As confidence scores, both work, and the entropy is the better one
+
+| score | AUC |
+|---|---|
+| -entropy | **0.820** |
+| confidence | 0.814 |
+| -churn (per update) | 0.771 |
+| -churn (per step) | 0.730 |
+| update rate (ticks) | 0.547 *(control)* |
+| CB neighbour count | 0.528 *(control)* |
+
+Both controls sit near 0.5, which is what licenses reading the rest: the signal is not the scheduler
+and not a property of the target structure. Recovery by churn quintile spans **73.0 % down to 12.9 %**
+and by confidence quintile **8.6 % up to 76.9 %**. So a per-residue self-reported number does predict
+its own accuracy, which is the property that makes pLDDT worth having.
+
+**Churn is complementary rather than redundant, but only where it matters least and most.** Its AUC
+within confidence terciles is 0.573, 0.524 and **0.788** -- so among residues the head is already
+confident about, the flipping still separates right from wrong strongly. It catches the confidently-
+wrong-but-unstable case that a single step's distribution does not.
+
+#### The caveat that stops this being shippable yet
+
+| predicted | observed | gap | n |
+|---|---|---|---|
+| 0.0-0.2 | 8.8 % | **-8.0 %** | 593 |
+| 0.2-0.4 | 14.7 % | **-12.9 %** | 1313 |
+| 0.4-0.6 | 31.6 % | **-17.2 %** | 512 |
+| 0.6-0.8 | 50.0 % | **-18.9 %** | 202 |
+| 0.8-1.0 | 91.4 % | **-5.3 %** | 395 |
+
+**Every gap is negative: the head claims more than it delivers at every confidence level**, worst in
+the middle, with an expected calibration error of **12.0 %**. pLDDT earns its keep by being *both*
+well-ranked and well-calibrated, and this is the first and not the second. That is the benign version
+of the problem -- ranking is the hard part and temperature or isotonic scaling fitted on a held-out
+split is the standard remedy -- but the raw max-probability must not be quoted as a probability until
+that is done.
+
+#### A protocol difference, so 28.8 % is not a regression
+
+This probe reports overall recovery **28.8 %** where the eval reports 36.8-38.0 % on the same weights.
+Not a contradiction: the probe scores the **committed sampled label**, `state.identity.argmax`, because
+churn is defined on what the rule commits, while the eval scores the head's **mode**,
+`type_marginal(softmax(logits)).argmax`. Sampling is lossy against the mode, and the gap is the cost
+of sampling rather than a drop in quality. Both are correct for their own question.
