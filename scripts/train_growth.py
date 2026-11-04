@@ -539,7 +539,7 @@ def main() -> int:
             if skipped_updates in (1, 10, 100) or skipped_updates % 500 == 0:
                 print(
                     f"  update {update}: non-finite gradient with a finite "
-                    f"loss ({float(terms.total):.3f}); skipped. "
+                    f"loss ({float(terms.total.detach()):.3f}); skipped. "
                     f"{skipped_updates} so far.",
                     flush=True,
                 )

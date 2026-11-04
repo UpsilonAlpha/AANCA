@@ -5333,3 +5333,45 @@ up exactly as an exploding-gradient story predicts.
 is not the same as fixing it, and the skip count will now say how often it happens. The mis-weighted
 objective is the obvious suspect -- `completion` 5.2x too strong and `bond` 5.6x too weak at training's
 truncate -- but that is a hypothesis, and the weights have deliberately not been changed.
+
+### g3 grows 98 % of the structure, and the objective cannot hold it together
+
+**Per-run seeding works, and the ceiling was exactly what it was diagnosed to be.** g3 (31900114) is
+running at `--seeds 16 --steps 120`:
+
+| | g1 (4 seeds, 40 steps) | g2 (4 seeds, 120) | **g3 (16 seeds, 120)** |
+|---|---|---|---|
+| alive | 44.6 % | 55.5 % | **97.7 %** |
+| unreachable slots | 69.5 | 57.0 | **3.0** |
+| segments | 2.9 | 2.8 | 13.3 |
+| rmsd | 11.17 Å | 12.60 Å | **14.07 Å** |
+| bond | 3.585 | 3.903 | **33.053** |
+| reach | — | 0.204 | **1.955** |
+| recovery | 22.7 % | 24.3 % | **15.2 %** |
+| type NLL | 2.431 | 2.359 | **2.659** |
+
+**The topological ceiling is gone**: 44.6 % -> 97.7 % alive, with unreachable slots falling from 69.5
+to 3.0. Seeding per covalent run was the whole fix, and the measurement that predicted it (mean 9.5
+runs per crop against 4 seeds) was right.
+
+**The gradient guard also works**: it fired once at update 120 -- "non-finite gradient with a finite
+loss (268.013); skipped" -- and the run continued past 1,100 updates where g3's previous attempt died
+inside sixty. One skip in 1,100 updates, so the pathology is rare rather than endemic.
+
+**And growing the whole structure makes everything else worse.** `bond` goes **3.585 -> 33.053**
+against a crystal's 0.002, which is not explained by there simply being more bonds to score: the alive
+fraction rose 2.2x and the bond term rose 9x, so the error per bond worsened too. Sequence recovery
+**fell** 24.3 % -> 15.2 % and type NLL rose 2.359 -> 2.659. RMSD is 14.07 Å, so the output is a
+complete and thoroughly tangled chain.
+
+**This is the mis-weighted objective doing exactly what the weights predict, now visible because the
+structure is complete enough for it to show.** At training's truncate `completion` is 5.2x too strong
+and `bond` 5.6x too weak -- the rule is paid to grow and barely charged for the bonds it breaks -- and
+g1 and g2 could only ever express that at 45-55 % alive. At 98 % it is unmistakable. The earlier runs
+were not evidence that the geometry track is unlearnable; they were evidence that it was never being
+asked for.
+
+**So the weight correction is no longer a hypothesis-driven tweak but the obvious next experiment**:
+`BOND_WEIGHT` 0.022 -> 0.122 and `COMPLETION_WEIGHT` 27.2 -> 5.23. The constants are still unchanged,
+deliberately, because changing them mid-experiment is a decision about the scientific setup rather
+than a bug fix -- and g3 is now the clean baseline that correction would be measured against.
