@@ -841,9 +841,32 @@ def growth_objective(
         record=False,
     )
     final = result.state
+    # **Two scoring sets, because the crop mask exists for a reason that does
+    # not transfer to a backbone position.** ``supervised_mask`` is the crop's
+    # interior: residues whose 10 A perception is complete, and so -- in
+    # packing -- the only ones whose *chi* is a learnable target. A truncated
+    # neighbourhood genuinely makes a rotamer unlearnable, and it genuinely
+    # makes an amino-acid identity unlearnable, because both are inferences
+    # *from* the environment.
+    #
+    # A native CA position is not. It is exact whether or not the residue can
+    # see all its neighbours, and under growth every residue has a truncated
+    # neighbourhood by construction -- that is the regime, not an artefact of
+    # cropping. Masking the boundary shell out of FAPE therefore discards most
+    # of the geometric signal for a reason that does not apply: measured over
+    # eight validation entries, the supervised fraction is **12.8 % at crop 48,
+    # 19.9 % at 64, 54.8 % at 128 and 97.2 % at 384**. At the small crops
+    # growth needs in order to finish inside a rollout, scoring only the
+    # interior left FAPE a mean over the empty set -- it read exactly 0.000
+    # with the RMSD alongside it reading ``nan``, which is what caught it.
+    #
+    # So geometry scores every alive residue and identity keeps the mask. That
+    # split is not a compromise; it is the mask's own justification applied
+    # where it holds and withheld where it does not.
+    geometric = final.alive
     scored = final.alive & topo.supervised_mask
 
-    fape = fape_loss(final.coords, native_coords, topo, scored)
+    fape = fape_loss(final.coords, native_coords, topo, geometric)
     bond = peptide_bond_restraint(final.coords, topo, final.alive, links)
     reach_term = reachability_restraint(final.coords, topo, final.alive, links)
     closure_left, _closure_right = pending_closures(final.alive, links)
@@ -904,7 +927,9 @@ def growth_objective(
             bond=bond.detach(),
             completion=completion_term.detach(),
             alive_fraction=completion(final.alive),
-            rmsd=float(backbone_rmsd(final.coords, native_coords, topo, scored).detach()),
+            rmsd=float(
+                backbone_rmsd(final.coords, native_coords, topo, geometric).detach()
+            ),
             identity=identity_term.detach(),
             recovery=recovery,
             reach=reach_term.detach(),
