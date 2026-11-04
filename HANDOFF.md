@@ -5425,3 +5425,41 @@ fraction should drop below 97.7 % as growth stops being over-rewarded, and if RM
 then the geometry track is a model-capacity problem rather than a weighting one -- which would be the
 first real evidence for that, since every previous flat-geometry result is now explained by the
 weights.
+
+### Correction: g3 was not flat. I called it from the first 31 % of the run
+
+g3 finished all 8,000 updates, exit 0, 5 skipped gradients (0.1 %). Its **final** held-out eval:
+
+| | at 2,500 (where I called it flat) | at 8,000 (final) |
+|---|---|---|
+| rmsd | 13.90 Å | **12.78 Å** |
+| bond | 17.65 | **16.33** |
+| reach | 1.043 | **0.936** |
+| type NLL | 2.619 | **2.533** |
+| recovery | 15.1 % | **18.7 %** |
+| alive | 97.7 % | 97.7 % |
+
+**Everything improved.** Recovery rose 3.6 points, RMSD fell 1.1 Å, bond halved from its 33.05 peak,
+type NLL fell 0.13. I wrote "2,500 updates and nothing moves" and "nothing further will come from this
+configuration" from five evals spanning updates 500-2,500 -- **the first 31 % of an 8,000-update run.**
+
+This is the same error as the v9_if plateau call, and worse, because after that one I wrote the rule
+into this file: *quote the final value, never a two-eval difference.* I then broke it on a five-eval
+window, which is a longer window and still far too short when the run had three quarters left. The
+rule needs the stronger form: **do not characterise a run's trajectory until it has finished, or say
+explicitly which fraction of it the claim covers.**
+
+**The consequence is not just bookkeeping: the baseline g4 is measured against was wrong in my own
+record.** Had this stood, g4 would have been compared against "flat at 15.2 % recovery, RMSD 14.27"
+instead of the true 18.7 % and 12.78 Å, and a weight correction that did nothing could have looked
+like a clear win.
+
+**What survives the correction.** The weights really were mis-measured -- that is an independent
+measurement of gradient norms, not an inference from the trajectory -- and `bond` at 16.33 against a
+crystal's 0.002 is still four orders of magnitude out, with a 2x swing between evals. So g4 is still
+the right experiment. But "g1 and g2's geometry was flat because the objective never asked for it" is
+now weaker than stated: g3 shows the geometry track *does* move under the old weights, just slowly.
+
+**Corrected baseline for g4 (31905384)**, which differs from g3 only in `BOND_WEIGHT` 0.122 and
+`COMPLETION_WEIGHT` 5.23: rmsd **12.78 Å**, bond **16.33**, type NLL **2.533**, recovery **18.7 %**,
+alive **97.7 %**, at 8,000 updates.
