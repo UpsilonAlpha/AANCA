@@ -4956,3 +4956,39 @@ finely, since it is a factor of two on the step budget.
 50 % headroom over the 79-step estimate and keeps completion inside the loss window. Re-measure
 `BOND_WEIGHT` on *that* run rather than on g1, since a weight fitted to a run that covers 45 % of the
 structure would repeat the initialisation-only error.
+
+### There was no missing factor: I compared a run's mean birth rate against its step-1 frontier
+
+`scripts/birth_funnel_probe.py` traces frontier, gap-1 competition and actual births per step. At a
+saturated wake probability (bias 4.0, p = 0.98, emulating g1's 1.000 without needing its weights),
+four seeds on 1UBQ:
+
+| step | 1 | 5 | 12 | 17 | 23 | 31 | 50 |
+|---|---|---|---|---|---|---|---|
+| alive | 9.2 % | 23.2 % | 46.1 % | 59.6 % | 75.0 % | 89.5 % | 99.6 % |
+| frontier | 6.67 | 5.67 | 5.00 | 3.67 | 2.67 | 1.33 | 0.33 |
+| births | 3.00 | 3.00 | 1.67 | 2.33 | 1.67 | 1.00 | 0.33 |
+
+**The funnel closes with nothing left over: `births / (frontier x 0.5) = 0.969`.** So
+`births = frontier x tick x wake` is the complete account, and there is no third limiter.
+
+**The frontier decays monotonically through the run** -- 6.67 at step 1 to 0.33 at step 50, **mean
+2.48** -- for the obvious reason that a filling structure has fewer dormant slots left. And
+`2.48 x 0.5 = 1.24` expected births a step against **1.20** observed.
+
+**So the factor of two was mine.** I took the observed mean birth rate (total births over total steps)
+and compared it against the frontier *at step 1*, which overstates the run mean by about 2.7x. The
+quantities were never comparable. `gap-1` competition, the mechanism I thought most likely, is
+essentially zero throughout and explains nothing.
+
+**This is the third time in this file that my own summary statistic was the fault** rather than the
+system: the regex that zipped 17 held-out blocks against 18 recovery lines, the `unreachable` counter
+that is `dormant - frontier` by construction, and now a rate compared against a non-mean. The pattern
+is the same each time -- an aggregate quoted against a quantity measured at a different point.
+
+**Consequence for the step budget, and it is a correction of method rather than of number.** Because
+the frontier decays, completion time is *not* `N / (frontier_1 x 0.5)`; that formula would predict ~23
+steps where the measurement says 51. The step budget has to be read off the rate probe empirically,
+which is what it already measured: **47 steps for 76 residues at four seeds on trained weights.** The
+recommendation of `--seeds 4 --steps 120` at crop 128 therefore stands unchanged, and now carries no
+outstanding caveat. Job for confirmation on g1's actual weights is running.

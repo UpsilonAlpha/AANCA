@@ -68,6 +68,18 @@ def main() -> int:
     parser.add_argument("--steps", type=int, default=60)
     parser.add_argument("--seeds", type=int, default=4)
     parser.add_argument("--repeats", type=int, default=3)
+    parser.add_argument(
+        "--bias",
+        type=float,
+        default=None,
+        help="activation bias for an untrained rule. The point of setting it "
+        "high is that it emulates a trained head's saturated wake probability "
+        "-- 4.0 gives p = 0.98 against g1's 1.000 -- so the funnel can be "
+        "traced through a run that actually *completes* without needing the "
+        "trained weights. At the default -2 growth is too slow to fill the "
+        "structure, which is precisely why the first trace could not see "
+        "whether the frontier collapses at the end.",
+    )
     args = parser.parse_args()
 
     topo, native = feature_topology(load_protein(ROOT / args.structure))
@@ -92,7 +104,11 @@ def main() -> int:
         rule = AANCARule(
             growth=True,
             birth=str(stored.get("birth", "cartesian")),
-            activation_init=float(stored.get("activation_init", -2.0)),
+            activation_init=(
+                args.bias
+                if args.bias is not None
+                else float(stored.get("activation_init", -2.0))
+            ),
             identity=bool(identity_weight),
             identity_keep=float(stored.get("identity_keep", 2.0)),
         )
