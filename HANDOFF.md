@@ -5004,3 +5004,45 @@ contradict the rate probe's "complete at 47" -- that figure is the mean of the p
 steps, while this one is the step by which the slowest draw finished. And the funnel ratio sitting a
 little below the proxy's is not evidence of a residual limiter: it is 0.88 against 0.97 on three draws
 each, which is noise, and chasing it would repeat exactly the error this entry resolves.
+
+### Scratch is at 278 GB of a 300 GB quota, so there is 22 GB of headroom
+
+Measured, after `rquota` finally returned rows (it prints a bare header on some nodes):
+
+```
+FileSystem     Used(GB) Limit    Files      Limit
+home           38       50       626466     1048576
+scratch        278      300      722456     1000000
+
+Project fileset S0253    489      10240     226073    1000000
+```
+
+**Scratch is 93 % full with 22 GB left, and the inode count is at 72 %.** Home is at 76 %. The project
+fileset S0253, by contrast, has used 489 GB of 10,240 — about 9.7 TB free. That asymmetry is the
+important part: the constraint is the per-user scratch quota, not the allocation.
+
+Where the 278 GB is, largest first: `channel` 41G, `glp1r_md` 41G, **`AANCA` 27G**, `hf` 25G, `rfd4`
+23G, `boltzgen` 16G, `pmhc` 7.7G, `CSR` 6.1G, `ProtonPottsMPNN` 3.5G, `NeuralCubes` 3.1G, `BindCraft2`
+3.0G, `envs` 1.4G.
+
+Inside AANCA's 27G: `data` **14G**, `runs` 789M, `logs` 836K, `.cc` 93K — leaving ~12G that is the
+Bunya virtualenvs and `.git`.
+
+**What this project could give back, none of it done** (deleting checkpoints is irreversible and was
+not asked for):
+
+* **~700 MB of superseded packing runs** at ~60 MB each, v1 through v7b. Two are plainly redundant:
+  `v3_noop4_wrongsplit` (60M, named for a split already known to be wrong) and `v3_noop4_cpu` (61M, a
+  CPU duplicate of `v3_noop4`). Against 22 GB of headroom this is 3 % — worth doing, not a fix.
+* The ~12 GB venv-and-git remainder, **if** the venvs are duplicated per CPU generation, which is
+  plausible since `bunya_stage.sh` supports `AANCA_VENV=..._${HAVE}`. Recoverable without touching any
+  data, and worth looking at before anything else because it is the largest single candidate.
+
+**A growth run is not the problem**: g1's entire run directory is 3.9 MB, because checkpoints are
+overwritten at each eval rather than accumulated, so g2 adds about 4 MB. No growth or packing run
+threatens this quota; the 14 GB structure library and the environments do.
+
+**g2 submitted as 31894090**, and the GPU queue was empty when it went in — `squeue -p gpu_rocm`
+printed only its header, so the `pmhccamp` array has finished and nothing is being crowded.
+`--tag g2 --steps 120 --seeds 4 --identity-weight 93.7 --init-from runs/g1/last.pt`, with
+`BOND_WEIGHT` deliberately left at its default so the only change from g1 is the step budget.
