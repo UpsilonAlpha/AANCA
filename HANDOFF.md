@@ -4499,3 +4499,46 @@ as an exposed one, it is not.
 **v9_if at 1:43** continues to climb: sequence recovery 36.7 % at 2,000 -> 37.2 % at 3,000 -> **37.9 %**,
 type NLL 1.930, churn still flat at 0.12. **g1 (31758141) is still correctly gated** behind it while
 the `pmhccamp` array holds the 4-GPU QOS.
+
+### Churn per step is confounded with burial, and the confound nearly passed as the result
+
+The core/surface reading above was an inference from chemistry, so
+`scripts/churn_calibration.py` was built to measure it: churn against *measured* burial, against the
+head's own entropy and confidence, and against per-residue correctness, with AUC so the candidate
+scores are comparable rather than merely all plausible. Burial uses `aanca.metrics`' existing
+convention — AttnPacker's core at 20 or more CB neighbours within 10 Å, surface at 15 or fewer — which
+is the same definition the packing eval's core/surf columns use.
+
+**Why this is a confidence-score question and not a protein question.** pLDDT earns its keep because
+its value predicts its own accuracy: a low number is a truthful warning. So whether churn correlates
+with burial is a statement about proteins, while whether churn predicts **per-residue correctness**
+is the statement about the model knowing what it does not know. Only the second makes it shippable.
+
+**The probe nearly produced a false confirmation, on the smoke test.** Churn ordered core 0.103 <
+intermediate 0.148 < surface 0.209 on a rule trained for *six updates* — which has learned nothing and
+cannot have a calibrated confidence, so the ordering had to be mechanical. It was: **a residue that is
+not asked to update cannot flip**, and under the `independent` schedule an independent set excludes
+neighbours, so a residue with more neighbours is asked less often. The measured tick rate runs **core
+0.137, intermediate 0.148, surface 0.227** — almost exactly the shape of the churn curve it was about
+to explain.
+
+So churn is now reported **per update** — the conditional "when this residue was asked, how often did
+it change?" — with churn per step and the tick rate kept beside it as controls. Per update the
+untrained gap narrows from 2.0x to 1.5x (0.538 core against 0.808 surface). Two controls are in the
+AUC table for the same reason: CB neighbour count is a property of the target structure and not of the
+model at all, and the update rate is a property of the scheduler. A score has to beat both.
+
+Had this been run first on the trained checkpoint, it would have confirmed the core/surface reading
+**for the wrong reason**, and the confirmation would have been quoted as a confidence score.
+
+**Recovery by burial is now in `evaluate` itself**, not only in the probe, so every future run reports
+it without a separate job: `core`, `surface`, on the same convention, with the report stating that
+intermediate is neither so the two do not average back to the pooled figure. Sequence recovery is not
+uniform over a protein — a buried position is pinned by the size of the cavity it must fill, while an
+exposed polar position is satisfied by several residues at once — so a single pooled figure averages
+two different problems and hides which one the rule is bad at. ProteinMPNN and PottsMPNN both report
+the split, so this also makes that comparison like for like rather than pooled-against-stratified.
+
+**Calibration job 31763318 is queued** (`PD (Resources)`, the general partition is busy) and has not
+produced numbers yet. The claim above about what churn *predicts* is therefore still unmeasured on a
+trained rule; only the confound is established.

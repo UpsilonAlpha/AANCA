@@ -48,7 +48,13 @@ import torch
 from torch import Tensor
 
 from .data import RepackingDataset, von_mises_deltas
-from .metrics import BenchmarkRow, Convention, benchmark_table
+from .metrics import (
+    BenchmarkRow,
+    Convention,
+    benchmark_table,
+    cb_neighbour_counts,
+    classify_burial,
+)
 from .model import AANCARule
 from .identity import (
     identity_loss,
@@ -150,6 +156,11 @@ class EvalResult:
     identity_nll: float | None = None
     type_nll: float | None = None
     recovery: float | None = None
+    #: Recovery split by burial on ``aanca.metrics``' convention, the same one
+    #: the packing columns use. Not a partition: ``intermediate`` is neither,
+    #: so these two do not average back to ``recovery``.
+    recovery_core: float | None = None
+    recovery_surface: float | None = None
     #: Max coordinate drift in Angstrom over a rollout started from native,
     #: worst case over the evaluation set. A guard, not a trend: it is a max
     #: over atoms of a max over structures, so one side chain flipping a
@@ -185,6 +196,21 @@ class EvalResult:
                 f"3.99), type NLL {self.type_nll:.3f} (floor ln 20 = 3.00), "
                 f"sequence recovery {self.recovery:.1%}"
             )
+            if self.recovery_core is not None or self.recovery_surface is not None:
+                core = (
+                    f"{self.recovery_core:.1%}"
+                    if self.recovery_core is not None
+                    else "n/a"
+                )
+                surface = (
+                    f"{self.recovery_surface:.1%}"
+                    if self.recovery_surface is not None
+                    else "n/a"
+                )
+                lines.append(
+                    f"  recovery by burial: core {core}, surface {surface} "
+                    f"(intermediate is neither, so these do not average back)"
+                )
         lines.append(
             f"drift from a native start: {self.native_drift_mean:.4f} A mean, "
             f"{self.native_drift:.3f} A worst atom"
@@ -220,6 +246,8 @@ def evaluate(
         type_nll_total = 0.0
         recovered_num = 0.0
         recovered_den = 0.0
+        band_num: dict[str, float] = {}
+        band_den: dict[str, float] = {}
         identity_cases = 0
 
         for case in cases:
@@ -265,6 +293,24 @@ def evaluate(
                 right = (predicted_type == type_index(target)) & supervised
                 recovered_num += float(right.sum())
                 recovered_den += float(supervised.sum())
+                # **Recovery split by burial, using the same convention the
+                # packing columns already use** (``aanca.metrics``: core at 20
+                # or more CB neighbours within 10 A, surface at 15 or fewer).
+                # Sequence recovery is not uniform over a protein -- a buried
+                # position is pinned by the size of the cavity it has to fill,
+                # while an exposed polar position is satisfied by several
+                # residues at once -- so a single pooled figure averages two
+                # different problems and hides which one the rule is bad at.
+                # ProteinMPNN and PottsMPNN both report the split for that
+                # reason, so this is also what makes the comparison like for
+                # like rather than pooled-against-stratified.
+                bands = classify_burial(cb_neighbour_counts(case.native, topo))
+                for name in ("core", "surface"):
+                    in_band = supervised & bands[name]
+                    band_num[name] = band_num.get(name, 0.0) + float(
+                        (right & in_band).sum()
+                    )
+                    band_den[name] = band_den.get(name, 0.0) + float(in_band.sum())
                 identity_cases += 1
             predicted = result.state.coords
             label = f"kappa {case.concentration:g}"
@@ -305,6 +351,16 @@ def evaluate(
             out.identity_nll = identity_nll_total / identity_cases
             out.type_nll = type_nll_total / identity_cases
             out.recovery = recovered_num / max(recovered_den, 1.0)
+            out.recovery_core = (
+                band_num.get("core", 0.0) / band_den["core"]
+                if band_den.get("core")
+                else None
+            )
+            out.recovery_surface = (
+                band_num.get("surface", 0.0) / band_den["surface"]
+                if band_den.get("surface")
+                else None
+            )
         if churn_curves:
             width = min(len(c) for c in churn_curves)
             out.churn = [
