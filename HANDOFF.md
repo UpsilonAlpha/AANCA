@@ -4392,3 +4392,23 @@ while v9_if holds one and the user's `pmhccamp` array is waiting on the 4-GPU QO
 settles is whether `completion_weight` at 27.2 is enough to forbid the degenerate optimum — a low
 RMSD at a low alive fraction is the rule declining to grow, which is why the trainer never prints
 one without the other.
+
+### v9_if at 3,250 updates, and the |delta| plateau does not reproduce
+
+Held out at 3,000 updates: **sequence recovery 37.2 %**, type NLL 1.953, joint NLL 2.304, pooled chi1
+34.68°, accuracy 59.5 %. Recovery is creeping (36.7 % at 2,000 → 37.2 % at 3,000) rather than
+jumping, which is what a warm start from an already-converged head should look like.
+
+**`label churn` plateaus at 0.12 again**, independently reproducing the figure the composition
+analysis above was run on: 0.16 at step 1 decaying to 0.12 by step 17 and flat thereafter. Two runs
+now agree there is no discrete fixed point.
+
+**`mean |delta| per step` reads 0.1° flat across all thirty steps.** That is worth recording because
+it does *not* reproduce v8c_if's 43° → 21° plateau on what are the same weights — v9_if is
+warm-started from `v8c_if/last.pt`. So the plateau was a property of the configuration rather than of
+the parameters, and the candidate explanation is the eval set: v9_if's table includes the kappa 100
+and kappa 20 cases, which start near-native, while the quantity that plateaued was measured on a
+rollout re-deciding the sequence from a masked start. **Stated as a candidate, not a conclusion** —
+the discrepancy recorded earlier (my scoring run read 0.0° on the same checkpoint) is narrowed to a
+configuration difference but not yet pinned to one, and the geometry-convergence question stays open
+until it is.
