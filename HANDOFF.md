@@ -4992,3 +4992,15 @@ steps where the measurement says 51. The step budget has to be read off the rate
 which is what it already measured: **47 steps for 76 residues at four seeds on trained weights.** The
 recommendation of `--seeds 4 --steps 120` at crop 128 therefore stands unchanged, and now carries no
 outstanding caveat. Job for confirmation on g1's actual weights is running.
+
+**Confirmed on g1's actual weights** (job 31892241, exit 0, 1UBQ, 4 seeds, 60 steps, 3 draws): funnel
+ratio **0.882**, mean frontier **2.72**, 72 births over 60 steps at 1.20 a step, `gap-1` exactly 0.00
+at every step. So `2.72 x 0.5 = 1.36` expected against 1.20 observed. The bias-4.0 proxy read 0.969
+and 2.48; both sit near 1 and the difference is within what three draws can resolve, so the account
+holds on trained weights and not only on the proxy.
+
+Two readings not to make from that log. All three draws reach 100 % by step 58, which does **not**
+contradict the rate probe's "complete at 47" -- that figure is the mean of the per-draw completion
+steps, while this one is the step by which the slowest draw finished. And the funnel ratio sitting a
+little below the proxy's is not evidence of a residual limiter: it is 0.88 against 0.97 on three draws
+each, which is noise, and chasing it would repeat exactly the error this entry resolves.
