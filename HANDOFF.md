@@ -5290,3 +5290,46 @@ bond and 5.23 for completion are written into `aanca.growth`'s comment with the 
 produced them, but `BOND_WEIGHT` and `COMPLETION_WEIGHT` still read 0.022 and 27.2. Changing them
 silently would make g1 and g2 incomparable with whatever runs next, and it is a change to the
 scientific setup rather than a bug fix, so it waits on a decision.
+
+### The crash: a finite loss with an infinite gradient, which clipping turns into NaN weights
+
+**Root cause found, and the existing guard could never have caught it.** The chain, each link measured
+rather than assumed:
+
+1. **g3's rollout guard** reported `6912 of 6912 identity logits non-finite at step 0` with **incoming
+   coordinates finite**, so the geometry was exonerated -- the suspect for two days.
+2. **`runs/g1/last.pt` is clean**: 0 non-finite parameter tensors at update 8000. Not a corrupt
+   checkpoint.
+3. **`scripts/growth_nan.py`** hooked every leaf module and ran one step at 4 and 16 seeds. **Neither
+   failed**, no module emitted a non-finite output, parked coordinates peaking at a harmless 6.4e4.
+   So it is not the forward pass and not the seed count.
+4. That left the training loop -- and corrected my own reading of the error. **`state.step` resets
+   every update**, so "step 0" is the first step of *whichever* update died, not of update 1. g3 ran
+   five minutes and never reached its first progress line at update 125, so it diverged somewhere in
+   its first sixty updates.
+5. **Measured directly**: give one entry of one gradient an infinity and clip to 1.0.
+   `clip_grad_norm_` computes `total_norm = inf`, so the scale is `clip / inf = 0`, and `0 * inf =
+   NaN`. The parameters holding that gradient go NaN on `step()`; if they are in the shared trunk,
+   every logit downstream is NaN -- which is why it was 6912 of 6912 rather than a handful.
+
+**The load-bearing fact is that the loss stayed finite.** In the test, `loss finite = True` while the
+gradients were not, so `if not torch.isfinite(terms.total): continue` passes the update straight
+through to the optimiser. The project has guarded the wrong quantity: the loss is checked and the
+gradient, which is what actually touches the weights, is not.
+
+Fixed in `train_growth.py`: the gradient is checked for finiteness before clipping, the update is
+**skipped** rather than clamped -- an infinite gradient means the rollout produced something the
+objective cannot price, and a clamped version of it is a fabricated direction -- and the count is
+reported at the end as a share of updates, because a run that silently dropped a third of its updates
+is not the run its tag claims.
+
+**One correction to an earlier entry.** I wrote that truncation at 12 "removes exploding gradients
+through a 120-step rollout as the mechanism". That was wrong in its conclusion: truncation bounds how
+far gradients propagate, not their magnitude, and the gradients do still reach infinity -- g2 at 40
+steps survived 1,375 updates while g3 at 120 died inside sixty, which is the rollout length showing
+up exactly as an exploding-gradient story predicts.
+
+**Still open**: why the gradient reaches infinity at all. The guard makes training survive it, which
+is not the same as fixing it, and the skip count will now say how often it happens. The mis-weighted
+objective is the obvious suspect -- `completion` 5.2x too strong and `bond` 5.6x too weak at training's
+truncate -- but that is a hypothesis, and the weights have deliberately not been changed.

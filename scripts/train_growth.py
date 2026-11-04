@@ -481,6 +481,10 @@ def main() -> int:
     )
 
     started = time.perf_counter()
+    #: Updates dropped for a non-finite gradient. Reported at the end, because
+    #: a run that silently skipped a third of its updates is not the run its
+    #: own log claims to be.
+    skipped_updates = 0
     recent: dict[str, list[float]] = {
         key: [] for key in ("total", "fape", "rmsd", "alive", "recovery")
     }
@@ -507,6 +511,39 @@ def main() -> int:
             continue
         optimiser.zero_grad()
         terms.total.backward()
+        # **A finite loss does not imply a finite gradient, and clipping turns
+        # one infinity into NaN parameters.** This is what killed g2 at update
+        # ~1375 and g3 within its first sixty, and the guard above cannot see
+        # it: ``terms.total`` was finite in both cases.
+        #
+        # Measured directly. Give one entry of one gradient an infinity, then
+        # clip to 1.0: ``clip_grad_norm_`` computes ``total_norm = inf``, so the
+        # scale factor is ``clip / inf = 0``, and ``0 * inf = NaN``. The
+        # parameters holding that gradient go NaN on ``step()``, and if they sit
+        # in the shared trunk every logit downstream is NaN -- which is exactly
+        # the "6912 of 6912 identity logits non-finite" the rollout guard
+        # reported, rather than the handful a local fault would give.
+        #
+        # So the gradient is checked before it is allowed to touch the weights.
+        # Skipping the update is right rather than clamping: an infinite
+        # gradient means this rollout produced something the objective cannot
+        # price, and a clamped version of it is a fabricated direction.
+        finite_grad = all(
+            torch.isfinite(p.grad).all()
+            for p in rule.parameters()
+            if p.grad is not None
+        )
+        if not finite_grad:
+            skipped_updates += 1
+            optimiser.zero_grad(set_to_none=True)
+            if skipped_updates in (1, 10, 100) or skipped_updates % 500 == 0:
+                print(
+                    f"  update {update}: non-finite gradient with a finite "
+                    f"loss ({float(terms.total):.3f}); skipped. "
+                    f"{skipped_updates} so far.",
+                    flush=True,
+                )
+            continue
         torch.nn.utils.clip_grad_norm_(rule.parameters(), args.clip)
         optimiser.step()
 
@@ -568,6 +605,14 @@ def main() -> int:
 
     minutes = (time.perf_counter() - started) / 60
     print(f"done in {minutes:.1f} min; {out_dir}")
+    if skipped_updates:
+        done = max(args.updates - start_update, 1)
+        print(
+            f"{skipped_updates} of {done} updates were skipped for a "
+            f"non-finite gradient ({skipped_updates / done:.1%}). A large "
+            "share means the run trained on far fewer updates than its tag "
+            "says and the objective is producing gradients it cannot price."
+        )
     return 0
 
 
