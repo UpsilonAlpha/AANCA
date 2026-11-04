@@ -117,8 +117,24 @@ print('gpu        :', torch.cuda.is_available(),
 # which cost a wrong "it has stalled" reading. The history file is written at
 # every eval and is the authoritative progress source either way, but the two
 # should not disagree.
-python -u scripts/train.py "$@" --device "${DEVICE}" --threads "${THREADS}" \
-    --max-seconds "${BUDGET}" &
+# ``AANCA_ENTRY`` selects the trainer, defaulting to packing so every existing
+# caller and every resubmission in flight behaves exactly as before. Growth is
+# a second trainer rather than a flag on the first because it supervises a
+# different thing -- FAPE over a backbone being built, not chis on a backbone
+# that exists -- and sharing one entry point would mean one argument parser
+# carrying two disjoint halves.
+#
+# ``--threads`` is not forwarded: scripts/train_growth.py does not take it.
+# Exported, not merely read: a segment that exits 64 resubmits itself through
+# bunya_submit.sh, and an entry point that reverted to packing on segment 2
+# would be precisely the kind of silent configuration drift this project has
+# been bitten by -- the run would carry on and train the wrong thing.
+ENTRY="${AANCA_ENTRY:-scripts/train.py}"
+export AANCA_ENTRY="${ENTRY}"
+EXTRA=(--device "${DEVICE}" --max-seconds "${BUDGET}")
+[[ "${ENTRY}" == "scripts/train.py" ]] && EXTRA+=(--threads "${THREADS}")
+
+python -u "${ENTRY}" "$@" "${EXTRA[@]}" &
 CHILD=$!
 forward() { kill -"$1" "${CHILD}" 2>/dev/null || true; }
 trap 'echo "forwarding USR1"; forward USR1' USR1
