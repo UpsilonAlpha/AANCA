@@ -4833,3 +4833,44 @@ two mechanisms it is; job **31889896** is computing them on `runs/g1/last.pt`.
 threading could work at all -- that probe showed independent error at 0.92 Å already loses a third of
 the bonds -- so g1's output is not a threadable chain and was never going to be. The sequence result
 stands on its own, but nothing about backbone construction is yet demonstrated.
+
+### Growth is not stalled, it is rate-limited by the frontier — and my `unreachable` counter is near-tautological
+
+`scripts/growth_diagnose.py` on `runs/g1/last.pt` (job 31889896, exit 0, 12 held-out structures):
+
+```
+    mean  alive 44.6%   frontier 1.4   wake p 1.000   segments 2.9   unreach 69.5   done 0.000
+```
+
+**`wake p` is 1.000 wherever a frontier exists.** The activation head is fully saturated: the rule
+wants to grow at every opportunity it has. So the hypothesis recorded above -- that the loss is blind
+to the shortfall and needs a dormant-slot penalty -- is **refuted**. A term charging for dormant slots
+would push on an already-maximised quantity and change nothing. `done` reads 0.000 because the term is
+*correct*: everything the rule can grow from, it is already trying to grow from.
+
+**The limit is the frontier's size, which is 1.4 slots.** The arithmetic closes: a frontier of ~1.4
+with a wake probability of 1.0 over 40 steps gives ~56 births, plus 4 seeds, against the 57 residues
+actually alive. Growth was never stuck -- it ran at exactly the rate the frontier permitted and the
+rollout ended. With 4 seeds growing both ways the frontier *should* be up to 8, and it is 1.4 because
+`segments` fell from 4 to 2.9 (segments coalesced, consuming two growable ends each time) and because
+the remaining ends sit where `links` is False.
+
+**So the fix is not a new loss term.** It is more steps, more seeds, or a birth rule that is not
+limited to one residue per segment end per step. `scripts/growth_rate_probe.py` exists to pick those
+numbers and was run on an *untrained* rule; it should be re-run against this checkpoint, where the
+wake probability is 1.0 rather than 0.12 and the arithmetic is completely different.
+
+#### A correction to my own instrument
+
+**`unreachable` is near-tautological and should not be quoted as evidence of anything.** It counts
+dormant slots with no covalently linked alive neighbour -- but in a gap of length k, only the two
+slots at its edges have one, so `unreachable` is always approximately `dormant - frontier` whatever the
+state. Here: 71 dormant, 1.4 frontier, 69.5 unreachable. It is arithmetic, not a measurement, and it
+does **not** mean those slots are permanently unreachable: growth is a wavefront, and an interior gap
+slot becomes reachable as soon as the edge slot ahead of it is born. I introduced it as "the quantity
+that makes a stall permanent rather than slow" and that description is wrong.
+
+A hypothesis it caused me to form and then disproved: that the spatial crop destroys sequence
+adjacency, so growth cannot propagate. Measured over six validation crops at size 128, the fraction of
+present `links` is **0.92-1.00**, with 1-11 contiguous runs and longest runs of 46-124 residues. A
+spatial ball mostly picks sequence neighbours, because proteins are locally compact. The crop is fine.
