@@ -85,7 +85,10 @@ WARM_START_MUST_MATCH = (
     # shape error at the first forward pass -- and "mat1 and mat2 shapes cannot
     # be multiplied" is the wrong thing to tell someone who warm-started from
     # the wrong run.
-    "birth", "morphogen",
+    # ``initial`` is not architecture, but it is not data either: it decides
+    # where the rollout starts, so resuming a ``helix`` run as ``extended``
+    # would silently splice two different experiments into one curve.
+    "birth", "morphogen", "initial",
 )
 
 
@@ -130,6 +133,7 @@ def build_config(args, activation: str) -> RolloutConfig:
             max_births=args.max_births,
             max_rotation=args.max_rotation,
             max_translation=args.max_translation,
+            initial=args.initial,
             placement_steps=args.placement_steps,
             placement_rotation=args.placement_rotation,
             placement_translation=args.placement_translation,
@@ -266,7 +270,18 @@ def main() -> int:
     parser.add_argument("--seeds", type=int, default=4)
     parser.add_argument("--cward-only", action="store_true")
     parser.add_argument(
-        "--birth", choices=("torsion", "cartesian", "free"), default="cartesian"
+        "--birth", choices=("torsion", "cartesian", "free", "none"),
+        default="cartesian",
+    )
+    parser.add_argument(
+        "--initial", choices=("helix", "extended", "random"), default="helix",
+        help=(
+            "which baseline conformation --birth none starts from; ignored by "
+            "every other mode. helix is the null model, since it is where "
+            "untrained growth ends up; extended and random are elsewhere, so "
+            "an arm that lands in the same place from two of them has not "
+            "merely kept its initialisation"
+        ),
     )
     # Zero by default so every mode but ``free`` is unchanged; the free mode
     # sets it below unless the caller asked for something else, because free
@@ -386,6 +401,30 @@ def main() -> int:
             "window in which it may travel further than a settled residue."
         )
 
+    if args.birth == "none":
+        if args.placement_steps:
+            # Not defaulted up, unlike ``free``. Under ``none`` there is no
+            # birth event to recover from -- every residue is placing itself
+            # from step 0 and has the whole rollout to do it, so the tight
+            # bound is the regime rather than a restriction. 120 steps at
+            # 0.1 rad is 12 radians of available rotation and 36 A of travel,
+            # which is not the binding constraint. And a window here would let
+            # all R residues move 4 A independently on the same step, which is
+            # a shredded chain and not a placement.
+            print(
+                f"note: --placement-steps {args.placement_steps} with --birth "
+                "none lets every residue move its full placement bound at "
+                "once, which breaks the chain rather than placing it. The "
+                "tight per-step bound is the intended regime here."
+            )
+        if args.seeds != 1:
+            print(
+                f"note: --seeds {args.seeds} is ignored under --birth none. "
+                "Every slot is alive from step 0 and the anchors are one "
+                "residue per covalent run, which is the same information "
+                "budget a grown run gets from its seeds."
+            )
+
     if args.identity_weight and args.birth == "torsion":
         # Not fatal, but worth saying: a torsion birth reads the parent's type
         # to pick its geometry, and under a blind rollout the newborn has no
@@ -499,6 +538,7 @@ def main() -> int:
         f"{rule.parameter_count()} parameters, {args.seeds} seed(s), "
         f"{args.steps} steps, {args.birth} birth, crop {args.crop_size}, "
         f"activation bias {args.activation_init}"
+        + (f", {args.initial} baseline" if args.birth == "none" else "")
     )
     print(
         f"weights: bond {args.bond_weight:g}, completion "

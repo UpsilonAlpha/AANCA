@@ -6530,3 +6530,112 @@ a native rotation, under FAPE alone and under a direct geodesic charge. The
 next thing to try is the architecture Ulban named: every node present from the
 start, each learning to place itself, where a residue's pose is read from its
 neighbourhood rather than inherited through a chain of parents.
+
+### Built 2026-11-06: self-placing nodes, `--birth none`
+
+Ulban's fallback, named back when he corrected the O(N^2) argument: *add
+baseline AANCA nodes to the graph and train them to place themselves, rather
+than requiring a parent to spawn them.* After g5 it is no longer a fallback.
+
+**The progression this completes.** `torsion` -> `cartesian` -> `free` ->
+`none` is a progression in how much of a residue's pose it inherits:
+
+| mode | who sets the pose | what the residue contributes |
+|---|---|---|
+| `torsion` | parent, from three predicted torsions | nothing until it relaxes |
+| `cartesian` | parent, from an emitted frame | nothing until it relaxes |
+| `free` | parent, at the unlearned reference pose | the whole learned part |
+| **`none`** | **nobody** | **all of it, from step 0** |
+
+g5 measured the first three and a direct geodesic charge on the bond rotation,
+and all four arms gave the same answer: a rule collapsed onto its helical
+initialisation, whose every departure from that one conformation made the
+rotation error *worse*. `free` changed nothing because it removed only
+`rot_spin`. What none of those arms varied is the inheritance itself --
+`rot_child = rot_parent @ rot_reference @ rot_spin` is present under every one
+of them, so an orientation error at one birth still rotates everything grown
+through it. `none` removes the composition, not a term in it: every slot is
+alive at step 0 and a residue's pose is its own absolute frame, corrected from
+its own neighbourhood by the frame head.
+
+**The design, and the one thing it has to get right.** `baseline_coords` places
+every residue by a fixed reference walk off **one native anchor per covalent
+run** -- and that is the same information budget growth already has, which is
+what makes the arms comparable. `seed_alive` puts a seed in every run and a
+seed starts at its native pose, so a grown run and a baseline run are each
+handed exactly one correct frame. Measured on the real crops: **15.9 covalent
+runs per 128-residue crop**, against the `--seeds 16` every g5 arm ran with. The
+budgets match to within a tenth of a seed, by accident rather than by design,
+and it is worth saying out loud because the comparison would be worthless
+otherwise.
+
+The walk is the Cartesian birth's own construction with the head held at zero,
+so **every peptide bond is ideal by construction whatever the baseline is**:
+0.0035-0.0057 against the crystal's own 0.002. A baseline with broken bonds
+would make the bond restraint the whole problem from step 0 and a failure would
+say nothing about placement.
+
+**Three baselines, and which one to run is a measurement, not a taste.**
+`scripts/baseline_probe.py` runs no model: it builds each baseline on the 12
+held-out crops a run would see and reports what the rule is handed.
+
+| baseline | rmsd | fape | live | bond | twist |
+|---|---|---|---|---|---|
+| `helix` | **19.64 A** | 0.842 | **25.7 %** | 0.0036 | 73.4 |
+| `extended` | 42.11 A | 0.910 | 15.6 % | 0.0057 | 77.6 |
+| `random` | 16.10 A | 0.912 | 16.3 % | 0.0035 | 89.5 |
+
+`live` is the share of FAPE's scored pairs under the 10 A clamp, and it is the
+column that decided this. **`clamp_max` has exactly zero gradient above the
+clamp**, so a residue whose frame-local error is 40 A contributes a constant and
+no signal; a baseline can be too far away to train from, which is a property of
+the objective rather than of the architecture and would be a miserable thing to
+discover after eight thousand updates. At 15-26 % live the gradient that remains
+is the near-diagonal pairs -- a residue against its own sequence neighbours --
+which is the right shape for a chain that has to fold locally first, but it is
+thin and it is the first thing to suspect if nothing moves.
+
+Note that `random` has the *lowest* RMSD and the *highest* FAPE. That is not a
+contradiction: RMSD is global after superposition and FAPE is frame-local, so a
+coil is locally wrong everywhere while a helix is locally right and globally
+misplaced. The two numbers disagreeing is a reminder that the thing being
+optimised is the second one.
+
+**So `helix` is the arm and `extended` is its control.** `helix` has the most
+live gradient and it is the null model -- it starts the rollout exactly where
+untrained growth ends up, which is where g5 measured the rule to have collapsed.
+`extended` starts somewhere no fold resembles, so an arm that lands in the same
+place from both has not merely kept its initialisation. That is the confound
+that cost a wrong commit this morning, and this time the control is in the
+design rather than bolted on afterwards.
+
+**The floor, and the number to beat.** A rule that learns nothing reports the
+baseline's own RMSD: **19.64 A**. g5_ctrl, growing, reached **14.25 A**. So the
+self-placing arm starts 5.4 A *behind* the architecture it is competing with and
+has to make that up before it has said anything. Worth knowing in advance rather
+than reading it as a failure at update 500.
+
+**The predicted failure mode, recorded before the run rather than after.**
+Under every other mode the CA-CA distance is exact at birth; here the baseline's
+bonds are exact but nothing holds them there, because 128 residues each applying
+their own bounded rigid move is a constraint system and
+`peptide_bond_restraint` is the only thing keeping the chain a chain. So the
+rule may simply learn to hold still -- a frame head that outputs zero keeps the
+bond term at its floor and FAPE at the baseline's value. **The bond term is the
+first column to read**, and a run whose bond term stays at 0.004 while RMSD
+stays at 19.6 has learned nothing and is saying so clearly.
+
+The placement window is deliberately *not* defaulted up here, unlike `free`.
+There is no birth event to recover from: every residue is placing itself from
+step 0 and has the whole rollout to do it, 120 steps at 0.1 rad being 12 radians
+of available rotation and 36 A of travel. A window would let all R residues move
+4 A independently on the same step, which shreds a chain rather than placing it.
+
+Fourteen cases in `tests/test_self_placing.py` pin the mechanism: the birth head
+is absent and the parameter count equals `free`'s exactly (so a difference
+between the arms cannot be a difference in model size); the baseline has ideal
+peptide geometry, is not the native structure, and carries no gradient; the
+anchor keeps its crystal pose and nothing else does; a chain break is walked as
+its own run; and the activation head takes **exactly zero** gradient, which is
+asserted rather than assumed -- a non-zero value there would mean some birth
+path is still live.

@@ -529,26 +529,35 @@ def step_once(
         coords = rigid_relax(coords, axis_angle, translation, topo, moving)
 
         was_alive = alive
-        nward, cward = frontier(alive, links, growth.cward_only)
-        nward = limit_births(nward & moving, growth.max_births, generator)
-        cward = limit_births(cward & moving, growth.max_births, generator)
-        sample = growth.activation == "sample"
-        if growth.activation not in ("sample", "threshold"):
-            raise ValueError(
-                f"unknown growth activation {growth.activation!r}; expected "
-                "'sample' or 'threshold'"
+        # Under ``birth="none"`` the relaxation above is the entire step. Every
+        # slot was alive before it and still is, so the frontier is empty by
+        # construction and there is nothing to wake -- the branch is here to
+        # keep ``give_birth`` off the path entirely rather than to compute a
+        # zero, and ``activation`` is produced but never read. Everything after
+        # it is shared: a self-placing residue has moved, so its carbonyl O is
+        # as stale as a newborn's, and a blind rollout holds no side chains
+        # under this mode either.
+        if growth.birth != "none":
+            nward, cward = frontier(alive, links, growth.cward_only)
+            nward = limit_births(nward & moving, growth.max_births, generator)
+            cward = limit_births(cward & moving, growth.max_births, generator)
+            sample = growth.activation == "sample"
+            if growth.activation not in ("sample", "threshold"):
+                raise ValueError(
+                    f"unknown growth activation {growth.activation!r}; expected "
+                    "'sample' or 'threshold'"
+                )
+            wake = straight_through_bernoulli(activation, sample, generator)
+            coords, alive = give_birth(
+                coords,
+                topo,
+                alive,
+                links,
+                torch.where(nward, wake[:, 0], torch.zeros_like(wake[:, 0])),
+                torch.where(cward, wake[:, 1], torch.zeros_like(wake[:, 1])),
+                torsions,
+                birth_mode=growth.birth,
             )
-        wake = straight_through_bernoulli(activation, sample, generator)
-        coords, alive = give_birth(
-            coords,
-            topo,
-            alive,
-            links,
-            torch.where(nward, wake[:, 0], torch.zeros_like(wake[:, 0])),
-            torch.where(cward, wake[:, 1], torch.zeros_like(wake[:, 1])),
-            torsions,
-            birth_mode=growth.birth,
-        )
         coords = correct_oxygens(coords, topo, alive, links)
         if state.age is not None:
             # Age counts steps since waking, so a residue born this step is

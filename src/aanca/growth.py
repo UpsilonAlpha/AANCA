@@ -141,6 +141,30 @@ class GrowthConfig:
     #: separate them: removing the birth head, and granting the placement
     #: window below. A Cartesian run with the window and nothing else says how
     #: much of any difference is the authority rather than the removal.
+    #: ``"none"`` is the end of that progression: **no parent, and no birth.**
+    #: Every slot is alive from step 0, placed by a fixed reference walk off one
+    #: native anchor per covalent run (:func:`baseline_coords`), and each
+    #: residue then moves itself with the frame head alone. Nothing is spawned,
+    #: nothing is inherited, and ``rot_parent @ rot_reference @ rot_spin`` does
+    #: not appear -- a residue's pose is its own absolute frame, corrected from
+    #: its own neighbourhood, so there is no chain of parents for an orientation
+    #: error to compose along.
+    #:
+    #: **Why this exists.** g5 measured the three birth modes and a direct
+    #: geodesic charge on the bond rotation, and all four arms came out the
+    #: same: a rule collapsed onto its helical initialisation, whose every
+    #: departure from that one conformation made the rotation error *worse*
+    #: (HANDOFF, 6 Nov). Free placement changed nothing because it removed only
+    #: ``rot_spin``; this removes the inheritance itself, which is the one part
+    #: of the mechanism those measurements never varied.
+    #:
+    #: **What it gives up, and it is not small.** Under every other mode the
+    #: CA-CA distance is exact at birth and stays exact unless relaxation
+    #: breaks it. Here the baseline's bonds are exact but nothing holds them
+    #: there: 128 residues each applying their own bounded rigid move is a
+    #: constraint system, and ``peptide_bond_restraint`` is the only thing
+    #: keeping the chain a chain. So the predicted failure mode is a rule that
+    #: learns to hold still, and the bond term is the first number to read.
     birth: str = "torsion"
     #: How a wake decision is drawn from the activation logit. ``"sample"``
     #: draws a Bernoulli and passes a straight-through gradient; ``"threshold"``
@@ -174,6 +198,16 @@ class GrowthConfig:
     #: across the crop.
     placement_rotation: float = 3.14159265
     placement_translation: float = 4.0
+    #: Which baseline conformation ``birth="none"`` starts from, one of
+    #: :data:`BASELINE_MODES`. Ignored by every other mode.
+    #:
+    #: Deliberately *not* defaulted to something neutral. ``"helix"`` starts the
+    #: rollout where untrained growth ends up, so it is the null model, and
+    #: ``"extended"`` starts it somewhere no fold resembles -- the pair is the
+    #: measurement, because an arm that lands in the same place from both has
+    #: not simply kept its initialisation. One run of each is worth more than
+    #: either alone.
+    initial: str = "helix"
 
 
 # -- term weights, measured rather than chosen ----------------------------
@@ -396,6 +430,162 @@ def park_coords(coords: Tensor, alive: Tensor, spacing: float = PARK_SPACING) ->
     return torch.where(alive[:, None, None], coords, coords + shift)
 
 
+#: The baseline conformations a self-placing rollout may start from.
+#:
+#: ``"helix"`` is the rule's own birth reference, so a baseline rollout starts
+#: exactly where *untrained growth ends up* -- which makes it the null model
+#: the arm has to beat rather than a neutral choice. ``"extended"`` is the
+#: fully extended chain at phi = psi = omega = 180, which no fold resembles,
+#: so a run that reaches the same answer from both cannot be the initialisation
+#: showing through. ``"random"`` draws phi and psi uniformly per residue: a
+#: random coil, and the only one of the three with no systematic handedness.
+#:
+#: All three have **exact peptide geometry by construction**, because all three
+#: are built by the same reference walk a Cartesian birth uses. That matters: a
+#: baseline whose bonds were already broken would make the bond restraint the
+#: whole problem from step 0 and say nothing about placement.
+BASELINE_MODES = ("helix", "extended", "random")
+
+#: Reference walks, cached by (phi, psi, omega, direction, dtype). Building one
+#: is a NeRF step and a frame measurement -- cheap, but not free, and the random
+#: baseline asks for one per residue per direction.
+_BASELINE_REFERENCE: dict[tuple, tuple[Tensor, Tensor]] = {}
+
+
+def _baseline_reference(
+    phi: float, psi: float, omega: float, direction: int, dtype: torch.dtype, device
+) -> tuple[Tensor, Tensor]:
+    key = (round(phi, 1), round(psi, 1), round(omega, 1), direction, dtype)
+    if key not in _BASELINE_REFERENCE:
+        axis_angle, offset = helical_birth_reference(
+            phi, psi, omega, cward=direction == 1
+        )
+        _BASELINE_REFERENCE[key] = (axis_angle.to(dtype), offset.to(dtype))
+    axis_angle, offset = _BASELINE_REFERENCE[key]
+    return axis_angle.to(device), offset.to(device)
+
+
+def run_anchors(
+    n_residues: int,
+    links: Tensor,
+    generator: torch.Generator | None = None,
+    device: torch.device | str = "cpu",
+) -> Tensor:
+    """One residue per covalent run, drawn at random.
+
+    :func:`seed_alive` with as many seeds as there are runs does exactly this;
+    this is a thin alias so a baseline rollout's call site says what it means
+    rather than asking for "seeds" when nothing is being seeded.
+    """
+    return seed_alive(n_residues, count_runs(links), generator, device, links=links)
+
+
+def baseline_coords(
+    coords: Tensor,
+    topo: FeatureTopology,
+    links: Tensor,
+    anchors: Tensor,
+    mode: str = "helix",
+    generator: torch.Generator | None = None,
+) -> Tensor:
+    """Every residue placed off one native anchor per covalent run.
+
+    The start state for ``birth="none"``: all slots alive, no parent having
+    spawned anything, and every residue sitting where a fixed reference walk
+    put it rather than where the crystal says it belongs. What the rollout has
+    to do from there is move each residue to its place from its own
+    neighbourhood, which is the architecture this exists to test.
+
+    **One native anchor per covalent run, and no more.** That is exactly the
+    information budget growth already has: :func:`seed_alive` puts a seed in
+    every run and a seed starts at its native pose, so a grown run and a
+    baseline run are handed the same thing -- one correct frame -- and differ
+    only in how the rest of the run is placed. Anchoring every run is necessary
+    rather than generous, because a run is a separate rigid body with no
+    covalent route to any other, so an unanchored run could be positioned only
+    by reading contacts across a chain break. That is a harder and different
+    question, and mixing it in would make a failure here ambiguous.
+
+    The walk is :func:`_cartesian_triad` with the head's output held at zero and
+    a chosen reference: ``rot_child = rot_parent @ rot_reference`` and
+    ``ca_child = ca_parent + rot_parent @ offset``. So the CA-CA distance is
+    3.804 A at every link by construction and the baseline's peptide bonds are
+    ideal whatever ``mode`` is. Each residue's own atoms then ride on a rigid
+    transform from its crystal pose, exactly as a newborn's do, so internal
+    geometry stays the crystal's.
+
+    Built under ``no_grad`` and returned detached: this is where the rollout
+    starts, not something the loss may move.
+    """
+    if mode not in BASELINE_MODES:
+        raise ValueError(
+            f"unknown baseline mode {mode!r}; expected one of {BASELINE_MODES}"
+        )
+    if anchors.dtype is not torch.bool or tuple(anchors.shape) != (coords.shape[0],):
+        raise ValueError(
+            f"anchors must be a ({coords.shape[0]},) bool mask, got "
+            f"{tuple(anchors.shape)} of {anchors.dtype}"
+        )
+    n_res = coords.shape[0]
+    if n_res == 0:
+        return coords
+    device, dtype = coords.device, coords.dtype
+
+    with torch.no_grad():
+        bb = backbone_atoms(coords, topo)
+        rot = frame_from_triad(bb[:, 0], bb[:, 1], bb[:, 2]).clone()
+        ca = bb[:, 1].clone()
+
+        from .model import BACKBONE_INIT_OMEGA, BACKBONE_INIT_PHI, BACKBONE_INIT_PSI
+
+        if mode == "helix":
+            fixed = (BACKBONE_INIT_PHI, BACKBONE_INIT_PSI, BACKBONE_INIT_OMEGA)
+        else:
+            fixed = (180.0, 180.0, 180.0)
+        draws = None
+        if mode == "random":
+            # Degrees, drawn on the CPU from the passed generator like every
+            # other random choice here, so the baseline is a property of the
+            # seed and not of the device.
+            draws = (
+                torch.rand(n_res, 2, 2, generator=generator) * 360.0 - 180.0
+            ).tolist()
+
+        def reference(residue: int, direction: int) -> tuple[Tensor, Tensor]:
+            if draws is None:
+                phi, psi = fixed[0], fixed[1]
+            else:
+                phi, psi = draws[residue][direction]
+            return _baseline_reference(phi, psi, fixed[2], direction, dtype, device)
+
+        link = links.to("cpu").tolist()
+        anchored = anchors.to("cpu").tolist()
+        for start in range(n_res):
+            if not anchored[start]:
+                continue
+            index = start
+            while index + 1 < n_res and bool(link[index]):
+                axis_angle, offset = reference(index, 1)
+                turn = rotation_from_vector(axis_angle).to(dtype)
+                ca[index + 1] = ca[index] + rot[index] @ offset
+                rot[index + 1] = rot[index] @ turn
+                index += 1
+            index = start
+            while index - 1 >= 0 and bool(link[index - 1]):
+                axis_angle, offset = reference(index, 0)
+                turn = rotation_from_vector(axis_angle).to(dtype)
+                ca[index - 1] = ca[index] + rot[index] @ offset
+                rot[index - 1] = rot[index] @ turn
+                index -= 1
+
+        target = triad_from_frame(rot, ca)
+        source = (bb[:, 0], bb[:, 1], bb[:, 2])
+        placed = rigid_onto_triad(coords, source, target)
+        # An anchor keeps its crystal atoms exactly, rather than the ideal
+        # triad ``triad_from_frame`` would round-trip it through.
+        return torch.where(anchors[:, None, None], coords, placed).detach()
+
+
 def alive_topology(topo: FeatureTopology, alive: Tensor) -> FeatureTopology:
     """``topo`` with dormant residues holding no atoms and no supervision.
 
@@ -565,10 +755,17 @@ def give_birth(
             triad = extend(
                 n, ca, c, angles[:, 0], angles[:, 1], angles[:, 2], geo
             )
+        elif birth_mode == "none":
+            raise ValueError(
+                "birth_mode='none' has no births to give: every slot is alive "
+                "from step 0 and places itself (see baseline_coords). Reaching "
+                "give_birth means the rollout built a frontier it should not "
+                "have -- check that rollout.step_once skips the birth block."
+            )
         else:
             raise ValueError(
                 f"unknown birth mode {birth_mode!r}; expected 'torsion', "
-                "'cartesian' or 'free'"
+                "'cartesian', 'free' or 'none'"
             )
         source = (bb[children, 0], bb[children, 1], bb[children, 2])
         placed = rigid_onto_triad(new_coords[children], source, triad)
@@ -1100,11 +1297,32 @@ def growth_objective(
         raise ValueError("growth_objective needs a RolloutConfig with growth set")
 
     links = growth_links(topo)
-    # Seeded per covalent run: see seed_alive on why uniform seeding caps the
-    # alive fraction at the share of the crop its seeds' runs happen to cover.
-    alive = seed_alive(
-        topo.n_residues, growth.seeds, generator, native_coords.device, links=links
-    )
+    self_placing = growth.birth == "none"
+    if self_placing:
+        # Every slot alive, and the rollout starts from a baseline conformation
+        # rather than from the native structure with the seeds alive. ``alive``
+        # stays an all-true mask rather than becoming ``None`` so every
+        # downstream path -- alive_topology, the edge masking, the closure
+        # block, the node feature width -- is byte-identical to a growth
+        # rollout's, and the only thing that differs is where the coordinates
+        # start and who moves them.
+        alive = torch.ones(
+            topo.n_residues, dtype=torch.bool, device=native_coords.device
+        )
+        anchors = run_anchors(
+            topo.n_residues, links, generator, native_coords.device
+        )
+        start_coords = baseline_coords(
+            native_coords, topo, links, anchors, growth.initial, generator
+        )
+    else:
+        # Seeded per covalent run: see seed_alive on why uniform seeding caps
+        # the alive fraction at the share of the crop its seeds' runs cover.
+        alive = seed_alive(
+            topo.n_residues, growth.seeds, generator, native_coords.device,
+            links=links,
+        )
+        start_coords = native_coords
     identity_start_state = None
     if identity_weight:
         identity_start_state = initial_identity(
@@ -1113,7 +1331,7 @@ def growth_objective(
     result = rollout(
         rule,
         initial_state(
-            native_coords, rule, identity=identity_start_state, alive=alive
+            start_coords, rule, identity=identity_start_state, alive=alive
         ),
         topo,
         config,
@@ -1165,7 +1383,14 @@ def growth_objective(
         )
     nward, cward = frontier(final.alive, links, growth.cward_only)
     unfinished = torch.stack([nward, cward], dim=-1)
-    if bool(unfinished.any()):
+    if self_placing:
+        # Nothing to complete: the frontier of an all-alive mask is empty, so
+        # this is the zero it would compute anyway -- written out so a reader
+        # does not have to derive it, and so the activation head provably takes
+        # no gradient from an objective it has no job in.
+        unfinished = torch.zeros_like(unfinished)
+        completion_term = torch.zeros((), device=logits.device, dtype=logits.dtype)
+    elif bool(unfinished.any()):
         wanted = logits[unfinished]
         completion_term = torch.nn.functional.binary_cross_entropy_with_logits(
             wanted, torch.ones_like(wanted)

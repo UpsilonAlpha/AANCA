@@ -282,10 +282,10 @@ class AANCARule(nn.Module):
         self.max_rotation = max_rotation
         self.max_translation = max_translation
         self.max_birth_direction = max_birth_direction
-        if birth not in ("torsion", "cartesian", "free"):
+        if birth not in ("torsion", "cartesian", "free", "none"):
             raise ValueError(
-                f"unknown birth {birth!r}; expected 'torsion', 'cartesian' or "
-                "'free'"
+                f"unknown birth {birth!r}; expected 'torsion', 'cartesian', "
+                "'free' or 'none'"
             )
         if growth:
             # Two logits: N-ward and C-ward. Separate rather than one, because
@@ -334,7 +334,11 @@ class AANCARule(nn.Module):
             # already works: "place a residue among its neighbours" reaches
             # 0.95 A on bonded positions in the hole task, while composing a
             # chain of births has never left 12.8 A.
-            if birth != "free":
+            # ``none`` has no birth head for the same reason ``free`` has
+            # none, carried one step further: under ``free`` a parent still
+            # places the child at the reference pose, while under ``none`` no
+            # parent places anything at all. See ``growth.GrowthConfig.birth``.
+            if birth not in ("free", "none"):
                 width = 2 * 6 if birth == "cartesian" else 2 * 3 * 2
                 self.birth_head = nn.Sequential(
                     nn.Linear(state_dim, 64), nn.GELU(), nn.Linear(64, width)
@@ -401,7 +405,7 @@ class AANCARule(nn.Module):
             with torch.no_grad():
                 final.bias.fill_(float(self.activation_init))
 
-        if self.growth and self.birth != "free":
+        if self.growth and self.birth not in ("free", "none"):
             final = self.birth_head[-1]
             nn.init.zeros_(final.weight)
             if self.birth == "cartesian":
@@ -598,7 +602,9 @@ class AANCARule(nn.Module):
           composing onto the reference orientation.
           Under ``birth="free"`` it is ``None``: there is no birth head, and a
           newborn goes to the unlearned reference pose and then places itself
-          with the frame head below.
+          with the frame head below. Under ``birth="none"`` it is ``None`` for
+          a stronger reason -- there are no births at all, so ``activation`` is
+          unused and the frame head below does the whole job.
 
         - ``axis_angle`` ``(R, 3)`` and ``translation`` ``(R, 3)``, both
           hard-bounded here so one relaxation step stays local whatever the
@@ -629,7 +635,7 @@ class AANCARule(nn.Module):
         state = torch.cat([node_features, hidden], dim=-1)
         activation = self.activation_head(state)
 
-        if self.birth == "free":
+        if self.birth in ("free", "none"):
             birth = None
         elif self.birth == "cartesian":
             raw = self.birth_head(state).view(-1, 2, 6)
