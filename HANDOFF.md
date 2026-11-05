@@ -6330,3 +6330,56 @@ rule stands: **nothing is flat until the run ends.**
 flags out of its own banner rather than trusting a filename. Writing a history
 file from the growth trainer would be better and is not done, because changing
 the trainer would not affect the four runs in flight.
+
+### Measured 2026-11-05, and this is the one that matters: the rule emits one conformation
+
+A 90-degree rotation error says the rotations are wrong without saying how, and
+the two possibilities need different fixes. `helix_collapse` in
+`scripts/segment_placement_probe.py` separates them by asking how far the
+model's bonded rotations are from the **helical reference its birth head is
+initialised to**, with a real protein's distance from the same reference as the
+control. Four held-out crops, 16 seeds, 120 steps, crop 128.
+
+| | distance from the helical reference | distance from native |
+|---|---|---|
+| untrained | **3.7 deg** | 96.6 deg |
+| trained g4 | **27.2 deg** | 103.0 deg |
+| a real protein | **95.0-97.2 deg** | 0 |
+
+**An untrained rule emits the helical reference to within four degrees, and
+eight thousand updates moved it twenty-seven degrees -- out of the ninety-five
+it had to travel.** So the rule has gone about a quarter of the way, in a
+direction that is not toward the native distribution: its distance from the
+native went *up*, 96.6 to 103.0 degrees.
+
+**The failure is a collapse onto one conformation, not noise.** The structure
+growth produces is approximately a single backbone conformation applied
+everywhere -- near, but no longer exactly, the helix its birth head starts at --
+and such a structure has a large fixed error against any real fold however
+accurately it is built. That is why:
+
+* RMSD sat at 12.8-14.3 A across four runs and did not move. One conformation
+  everywhere has a floor, and the runs were at it.
+* Local geometry looked fine in the sense that bonds and angles were right:
+  the chain *is* a well-formed backbone. It is well-formed and the same
+  everywhere.
+* Nothing architectural helped. Depth, burial, crop size, seeding and now
+  free placement and a chain field all change how a decision is computed, and
+  the rule is not failing to compute a decision -- it is emitting a constant.
+* Sheet parity being 96.1 % separable from one scalar is not contradicted.
+  The *information* is there in perception. Nothing in the objective asked the
+  rule to use it, so it does not.
+
+**This is the strongest case yet for the orientation term**, and it also says
+what to watch. FAPE moved the rule 27 of 95 degrees in 8,000 updates;
+`--orientation-weight` charges the geodesic distance to the native rotation
+directly, at 1.4 times FAPE's gradient on the birth head. If `g5_twist`'s
+`twist` column does not fall well below 84 degrees, the term is not enough
+either and the problem is upstream of the objective after all.
+
+**What the first readings say, honestly: not much yet.** g5_twist's twist reads
+76.6, 73.9, 77.1, 72.7 over its first 500 updates against an untrained 84 -- a
+slight downward drift, inside the noise, and confounded with the alive fraction
+climbing from 81.7 % to 96.6 % over the same span, since a newly born residue
+is the worst-oriented one and growing more adds more of them. The quantity has
+to be read at a matched alive fraction, which the held-out evals do.
