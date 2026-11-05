@@ -5589,3 +5589,38 @@ lattice either, and solves the same problem with positional information carried 
 is why the user's preference for a morphogen field over per-residue features is not just stylistically
 more NCA-ish but addresses the actual deficit. The missing ingredient may be a coordinate system the
 cells construct, not more parameters.
+
+### Sheet parity is already in the messages: the deficit is global position, not local geometry
+
+`scripts/sheet_parity_probe.py`, 36 structures, 1,211 parallel and 3,124 antiparallel strand pairs,
+measuring the relative-rotation block the model already receives as the angle
+`theta = arccos((tr(R_i^T R_j) - 1) / 2)`:
+
+| parity | mean | sd | n |
+|---|---|---|---|
+| parallel | **51.4°** | 44.2 | 1211 |
+| antiparallel | **167.0°** | 13.9 | 3124 |
+
+**Cohen's d 3.53, and a single threshold at 109° classifies 96.1 % of pairs correctly.** The 167°
+for antiparallel is also the physically right answer -- two strands running opposite ways have frames
+related by a near-180° rotation -- which validates the probe as well as the representation.
+
+So **the local representation is not the missing piece.** `edge_features` already carries
+`relative_rotation` (`R_i^T R_j`, nine numbers), `local_direction` (the neighbour's CA as a unit
+vector in the receiver's own frame), RBF distances over backbone and side-chain atoms, a ±16
+`sequence_offset` one-hot and a `same_chain` flag. Parallel and antiparallel sheets are distinguishable
+from one scalar of that, let alone the whole block -- and by the same token so are helices and the
+other local motifs, since they differ in exactly these quantities. Adding more *local* geometry would
+be work with nothing at the end of it.
+
+**What is genuinely absent is any signal of where a residue is.** Every feature in that list is
+pairwise and gated by a 10 Å cosine envelope. A cell therefore knows its neighbourhood's geometry
+richly and knows nothing about its position in the protein: no burial, no distance along the fold, no
+shared axis, nothing beyond 10 Å. Information can only travel one hop per step, and the hops ablation
+measured three hops buying 3 % over one, so it does not travel usefully either.
+
+That is the coordinate system a lattice NCA is handed for free, and it is the specific gap the
+morphogen direction addresses -- a field varying smoothly over the structure is how a cell infers
+"where am I" without a lattice, and it is the mechanism an embryo actually uses. **The redirect is
+therefore from "give the cells more geometry" to "give the cells a position", and the measurement
+above is what rules out the first.**
