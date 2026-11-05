@@ -44,7 +44,12 @@ sys.path.insert(0, str(ROOT / "src"))
 from aanca import checkpoint as ckpt  # noqa: E402
 from aanca.data import RepackingDataset, read_manifest  # noqa: E402
 from aanca.fape import backbone_rmsd  # noqa: E402
-from aanca.growth import GrowthConfig, growth_links, growth_objective  # noqa: E402
+from aanca.growth import (  # noqa: E402
+    GrowthConfig,
+    growth_links,
+    growth_objective,
+    relative_frame_restraint,
+)
 from aanca.model import AANCARule  # noqa: E402
 from aanca.rollout import RolloutConfig  # noqa: E402
 
@@ -188,7 +193,7 @@ def main() -> int:
     )
 
     print(f"\n{'entry':>6} {'alive':>6} {'global':>9} {'per-seg':>9} "
-          f"{'segs':>5} {'median':>7} {'largest':>8}")
+          f"{'segs':>5} {'median':>7} {'largest':>8} {'twist':>7}")
     rows = []
     windows = [int(w) for w in args.windows.split(",") if w] if args.windows else []
     by_window: dict[int, list[float]] = {}
@@ -212,6 +217,14 @@ def main() -> int:
             if not runs:
                 continue
             glob = float(backbone_rmsd(result.state.coords, native, topo, alive))
+            # The per-bond rotation error, measured rather than inferred.
+            # `lever_arm_probe.py` puts the error that would reproduce the
+            # RMSD at every length scale at 15-17 degrees; this is the same
+            # quantity read directly off the structure, so the inference can
+            # be checked instead of trusted.
+            _loss, twist = relative_frame_restraint(
+                result.state.coords, native, topo, alive, links
+            )
             # Weighted by residue count, so one four-residue run cannot
             # dominate a hundred-residue one. Squared then rooted, because
             # RMSDs do not average linearly.
@@ -246,10 +259,11 @@ def main() -> int:
                             by_window.setdefault(length, []).append(value)
             sizes.sort()
             rows.append((glob, per_segment, len(sizes), sizes[len(sizes) // 2],
-                         sizes[-1], float(alive.float().mean())))
+                         sizes[-1], float(alive.float().mean()), twist))
             print(f"{index:>6} {rows[-1][5] * 100:>5.1f}% {glob:>7.2f} A "
                   f"{per_segment:>7.2f} A {len(sizes):>5} "
-                  f"{sizes[len(sizes) // 2]:>7} {sizes[-1]:>8}")
+                  f"{sizes[len(sizes) // 2]:>7} {sizes[-1]:>8} "
+                  f"{twist:>7.1f}")
 
     if not rows:
         print("nothing grew far enough to measure")
@@ -263,6 +277,8 @@ def main() -> int:
           f"median length {sum(r[3] for r in rows) / n:.1f}, "
           f"largest {sum(r[4] for r in rows) / n:.1f}, "
           f"alive {100 * sum(r[5] for r in rows) / n:.1f}%")
+    print(f"per-bond rotation error {sum(r[6] for r in rows) / n:.1f} degrees "
+          "(exactly 0 on a crystal structure, about 75 on an untrained rule)")
 
     if by_window:
         # **The error as a function of the length it is measured over**, which

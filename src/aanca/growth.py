@@ -707,6 +707,75 @@ def peptide_bond_restraint(
     return ((length - C_N) ** 2).mean() + planarity.mean()
 
 
+def relative_frame_restraint(
+    coords: Tensor,
+    native: Tensor,
+    topo: FeatureTopology,
+    alive: Tensor,
+    links: Tensor,
+) -> tuple[Tensor, float]:
+    """The rotation of a peptide bond, against the rotation the crystal has.
+
+    Returns ``(loss, mean error in degrees)``.
+
+    **This exists because nothing else charges it.** The objective has a term
+    for a bond's *length* -- ``peptide_bond_restraint``, which also holds omega
+    planar -- and that quantity is already exact by construction under
+    Cartesian birth, where the CA-CA offset is the reference offset rotated. It
+    has no term for the bond's *rotation*: how residue ``i + 1``'s frame is
+    turned relative to residue ``i``'s, which is what phi and psi are and what
+    secondary structure is made of. FAPE charges it only through where the
+    child's atoms land, clamped at 10 A and averaged over every residue that
+    exists, so one birth's share of that gradient is very small.
+
+    And that is the quantity measured to be wrong. `segment_placement_probe.py`
+    puts a four-residue window at 2.28 A after optimal superposition on
+    ``runs/g4/best.pt``, where a real tetrapeptide superposes to a few tenths;
+    `lever_arm_probe.py` converts that to a per-birth orientation error of
+    about fifteen degrees, and the same number reproduces the error at eight,
+    sixteen and thirty-two residues. So the dominant error is a *local*
+    rotation, and nothing in the objective was asking about it.
+
+    ``R_i^T R_j`` rather than the frames themselves, so the term is invariant
+    to a global rotation exactly as FAPE is -- a structure rotated bodily
+    scores zero here, which is the whole reason to compare relative rotations
+    rather than absolute ones.
+
+    ``(3 - trace(E)) / 2`` rather than the geodesic angle, where
+    ``E = rel^T rel_native``. The two agree to second order (it is
+    ``1 - cos theta``), and the trace form is smooth everywhere while
+    ``arccos`` has an infinite derivative at both ends of its range -- at
+    ``theta = 0``, which is exactly where a converging run spends its time.
+    The angle is returned alongside, in degrees, because that is the number the
+    probes quote and a loss of 0.034 is not.
+
+    Unweighted, like the bond and clash terms, because it is a physical
+    quantity whose value on a crystal structure is exactly zero.
+    """
+    from .backbone import frame_from_triad
+
+    both = torch.zeros_like(alive)
+    both[:-1] = alive[:-1] & links & alive[1:]
+    index = torch.nonzero(both, as_tuple=False).flatten()
+    if index.numel() == 0:
+        zero = torch.zeros((), device=coords.device, dtype=coords.dtype)
+        return zero, 0.0
+    bb = backbone_atoms(coords, topo)
+    nb = backbone_atoms(native, topo)
+    rot = frame_from_triad(bb[:, 0], bb[:, 1], bb[:, 2])
+    rot_native = frame_from_triad(nb[:, 0], nb[:, 1], nb[:, 2])
+    nxt = index + 1
+    relative = rot[index].transpose(-1, -2) @ rot[nxt]
+    relative_native = rot_native[index].transpose(-1, -2) @ rot_native[nxt]
+    error = relative.transpose(-1, -2) @ relative_native
+    trace = error.diagonal(dim1=-2, dim2=-1).sum(-1)
+    loss = ((3.0 - trace) / 2.0).mean()
+    with torch.no_grad():
+        cosine = ((trace - 1.0) / 2.0).clamp(-1.0, 1.0)
+        degrees = float(torch.rad2deg(torch.arccos(cosine)).mean())
+    return loss, degrees
+
+
 # -- closure-aware growth --------------------------------------------------
 
 #: How far ``g`` bonded residues can reach, Angstrom, indexed by sequence
@@ -941,6 +1010,18 @@ class GrowthTerms:
     #: PottsMPNN (~44 %) and RFD4-Proteina report -- so it is the one to quote,
     #: alongside the chi accuracy nobody else has.
     recovery: float
+    #: ``(3 - trace(R_model^T R_native)) / 2`` over every bonded alive pair:
+    #: how wrongly a peptide bond is *rotated*, where the bond's length already
+    #: had a term and its rotation had none. Zero on a crystal structure.
+    #:
+    #: Defaulted, unlike every field above it, because the probes that build a
+    #: ``GrowthTerms`` by hand predate it and a required field would break them
+    #: at the call site rather than where the quantity is missing.
+    orientation: Tensor | None = None
+    #: The same quantity as a mean geodesic angle in degrees, which is what the
+    #: probes quote: 15-17 degrees is the per-birth error that reproduces the
+    #: measured RMSD at every length scale, where a loss of 0.034 says nothing.
+    orientation_degrees: float = 0.0
 
 
 def growth_objective(
@@ -955,6 +1036,7 @@ def growth_objective(
     identity_start: str = "masked",
     reach_weight: float = REACH_WEIGHT,
     fape_weight: float = 1.0,
+    orientation_weight: float = 0.0,
 ) -> tuple[GrowthTerms, object]:
     """Supervised regrowth: from a seed, rebuild the native backbone.
 
@@ -1066,6 +1148,12 @@ def growth_objective(
 
     fape = fape_loss(final.coords, native_coords, topo, geometric)
     bond = peptide_bond_restraint(final.coords, topo, final.alive, links)
+    # Measured on every run whether or not it is weighted, because it is the
+    # quantity the probes identified as the dominant error and a run that does
+    # not report it cannot be compared with one that does.
+    orientation, orientation_degrees = relative_frame_restraint(
+        final.coords, native_coords, topo, final.alive, links
+    )
     reach_term = reachability_restraint(final.coords, topo, final.alive, links)
     closure_left, _closure_right = pending_closures(final.alive, links)
 
@@ -1136,6 +1224,7 @@ def growth_objective(
         + completion_weight * completion_term.to(fape.dtype)
         + identity_weight * identity_term.to(fape.dtype)
         + reach_weight * reach_term.to(fape.dtype)
+        + orientation_weight * orientation.to(fape.dtype)
     )
     return (
         GrowthTerms(
@@ -1155,6 +1244,8 @@ def growth_objective(
             wake_probability=wake_probability,
             segments=segments,
             unreachable=unreachable,
+            orientation=orientation.detach(),
+            orientation_degrees=orientation_degrees,
         ),
         result,
     )

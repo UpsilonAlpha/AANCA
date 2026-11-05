@@ -145,7 +145,7 @@ def score(rule, dataset, indices, args, config, seed: int = 0) -> dict[str, floa
     """
     rule.eval()
     keys = (
-        "total", "fape", "bond", "completion", "reach",
+        "total", "fape", "bond", "completion", "reach", "twist",
         "identity", "rmsd", "alive", "recovery", "closures",
         "frontier", "wake", "segments", "unreachable",
     )
@@ -169,12 +169,17 @@ def score(rule, dataset, indices, args, config, seed: int = 0) -> dict[str, floa
                 identity_weight=args.identity_weight,
                 identity_start=args.identity_start,
                 reach_weight=args.reach_weight,
+                orientation_weight=args.orientation_weight,
             )
             sums["total"] += float(terms.total)
             sums["fape"] += float(terms.fape)
             sums["bond"] += float(terms.bond)
             sums["completion"] += float(terms.completion)
             sums["reach"] += float(terms.reach)
+            # Degrees, not the loss. The loss is ``1 - cos theta`` and a
+            # reader cannot tell 0.034 from 0.009; fifteen degrees against
+            # eight is the comparison the probes set up.
+            sums["twist"] += float(terms.orientation_degrees)
             sums["identity"] += float(terms.identity)
             sums["rmsd"] += float(terms.rmsd)
             sums["alive"] += float(terms.alive_fraction)
@@ -196,12 +201,13 @@ def score(rule, dataset, indices, args, config, seed: int = 0) -> dict[str, floa
 def report(scores: dict[str, float], identity: bool) -> str:
     lines = [
         f"  {'total':>8}{'fape':>8}{'rmsd':>9}{'alive':>8}"
-        f"{'bond':>8}{'reach':>8}{'closures':>10}{'done':>7}"
+        f"{'bond':>8}{'twist':>8}{'reach':>8}{'closures':>10}{'done':>7}"
     ]
     lines.append(
         f"  {scores['total']:>8.3f}{scores['fape']:>8.3f}"
         f"{scores['rmsd']:>7.2f} A{scores['alive']:>7.1%}"
-        f"{scores['bond']:>8.3f}{scores['reach']:>8.3f}"
+        f"{scores['bond']:>8.3f}{scores['twist']:>7.1f} deg"
+        f"{scores['reach']:>8.3f}"
         f"{scores['closures']:>10.1f}{scores['completion']:>7.3f}"
     )
     # The stall diagnostics. Read `done` beside `frontier`: a small completion
@@ -294,6 +300,16 @@ def main() -> int:
     parser.add_argument("--bond-weight", type=float, default=BOND_WEIGHT)
     parser.add_argument("--completion-weight", type=float, default=COMPLETION_WEIGHT)
     parser.add_argument("--reach-weight", type=float, default=REACH_WEIGHT)
+    parser.add_argument(
+        "--orientation-weight", type=float, default=0.0,
+        help=(
+            "weight on relative_frame_restraint: how wrongly a peptide bond is "
+            "rotated, against the crystal. Zero reproduces every run before "
+            "2026-11-05 exactly, and the quantity is reported either way -- "
+            "the probes put it at 15-17 degrees on g4, which alone accounts "
+            "for the measured error at every length scale"
+        ),
+    )
     parser.add_argument(
         "--identity-weight",
         type=float,
@@ -529,7 +545,8 @@ def main() -> int:
     #: own log claims to be.
     skipped_updates = 0
     recent: dict[str, list[float]] = {
-        key: [] for key in ("total", "fape", "rmsd", "alive", "recovery")
+        key: []
+        for key in ("total", "fape", "rmsd", "alive", "recovery", "twist")
     }
 
     for update in range(start_update + 1, args.updates + 1):
@@ -549,6 +566,7 @@ def main() -> int:
             identity_weight=args.identity_weight,
             identity_start=args.identity_start,
             reach_weight=args.reach_weight,
+            orientation_weight=args.orientation_weight,
         )
         if not torch.isfinite(terms.total):
             continue
@@ -594,6 +612,7 @@ def main() -> int:
         recent["fape"].append(float(terms.fape))
         recent["rmsd"].append(float(terms.rmsd))
         recent["alive"].append(float(terms.alive_fraction))
+        recent["twist"].append(float(terms.orientation_degrees))
         if not math.isnan(terms.recovery):
             recent["recovery"].append(float(terms.recovery))
 
@@ -609,6 +628,7 @@ def main() -> int:
                 f"fape {mean('fape'):>6.3f}  rmsd {mean('rmsd'):>6.2f} A  "
                 f"alive {mean('alive'):>5.1%}"
             )
+            line += f"  twist {mean('twist'):>4.1f}d"
             if args.identity_weight:
                 line += f"  rec {mean('recovery'):>5.1%}"
             line += f"  {(time.perf_counter() - started) / max(done, 1):>5.2f} s/u"
