@@ -5720,3 +5720,27 @@ centroid and no shape assumption, working for barrels, elongated and multi-domai
 which is what a boundary signal does in a real tissue. The dependency is clean and each step is local:
 **degree -> surface detection -> inward-diffusing depth.** The degree fix comes first because the other
 two rest on it.
+
+### Testing the density feature on the hole task, not on growth
+
+**Why here.** `train_hole.py` has no rollout, so a run is minutes rather than the 4.5 hours a growth
+run costs, and what it scores -- where a missing residue goes -- is exactly the geometry growth fails
+at. A density rule also cannot warm-start from `runs/g1/last.pt`, since the node dimension is wider,
+so a growth test would have to train from scratch and would be confounded against g3 and g4 by the
+warm start. The hole task has neither problem.
+
+**Baseline, `--density` off**, 1,200 updates, 5.7 min, 60 structures / 20 held out, crop 192, 1 hop:
+
+| mask | fused | centroid | gain | per-witness | top-1 |
+|---|---|---|---|---|---|
+| hole | **2.22 Å** | 2.44 Å | +0.22 | 7.07 Å | 31.6 % |
+| frontier | **2.67 Å** | 4.99 Å | +2.32 | 6.29 Å | 5.3 % |
+
+The matched `--density` run follows with an identical config and seed, so the flag is the only
+difference.
+
+**What this can and cannot establish.** A positive result says the burial signal helps placement
+*given a mostly-complete structure*, which is necessary for the growth case but not sufficient: the
+adjacent-pair probe measured 2.863 Å once two neighbours are missing against 0.92 Å for an isolated
+hole, so growth's regime is strictly harder. And 1,200 updates is a tenth of what `hole_v2` ran, so
+this is a screen for an effect worth spending GPU on rather than a measurement of its size.
