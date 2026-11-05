@@ -5463,3 +5463,40 @@ now weaker than stated: g3 shows the geometry track *does* move under the old we
 **Corrected baseline for g4 (31905384)**, which differs from g3 only in `BOND_WEIGHT` 0.122 and
 `COMPLETION_WEIGHT` 5.23: rmsd **12.78 Å**, bond **16.33**, type NLL **2.533**, recovery **18.7 %**,
 alive **97.7 %**, at 8,000 updates.
+
+### g4 at 5,625 of 8,000: the bond restraint works, coverage did not drop, geometry undecided
+
+**70 % of the run, and the claims below are scoped to that** -- g3 improved substantially between its
+2,500th and 8,000th update, so nothing here is a statement about where g4 ends.
+
+Matched against g3 at the same update counts (g4 differs only in `BOND_WEIGHT` 0.122 and
+`COMPLETION_WEIGHT` 5.23):
+
+| updates | bond g3 -> g4 | rmsd g3 -> g4 | recovery g3 -> g4 |
+|---|---|---|---|
+| 500 | 21.84 -> **7.58** | 13.60 -> 14.54 | 15.6 % -> 17.7 % |
+| 1000 | 33.05 -> **6.15** | 14.07 -> 13.46 | 15.2 % -> 16.0 % |
+| 1500 | 16.60 -> **6.29** | 14.24 -> 13.73 | 14.3 % -> 15.7 % |
+| 2000 | 19.76 -> **7.22** | 14.27 -> 14.62 | 15.2 % -> 16.4 % |
+| 2500 | 17.65 -> **8.17** | 13.90 -> 16.98 | 15.1 % -> 16.5 % |
+| 5500 | — | 16.30 | 19.0 % |
+
+**The restraint does what the weight says.** `bond` sits at 6.1-12.9 across eleven evals where g3 ran
+16.6-33.1: lower at every matched point, by a factor of 2 to 5. A 5.6x weight increase buying a
+2-4x reduction in the term is the restraint actually binding, and this is the clearest confirmation
+that the balance measurement was describing something real rather than an artefact of the probe.
+`reach` fell with it, 0.28-1.14 against g3's 0.94-1.96.
+
+**One prediction already falsified.** I predicted the alive fraction would drop below 97.7 % once
+growth stopped being over-rewarded. It has not: **97.7 % at all eleven evals**, identical to g3.
+Cutting `completion` by 5.2x changed coverage not at all, which means coverage was never
+completion-limited at 16 seeds -- the per-run seeding supplies enough fronts that the structure fills
+regardless of how much the term pays. So `COMPLETION_WEIGHT` is now known to be doing nothing visible
+at this seed count, and the 27.2 that looked load-bearing was not.
+
+**RMSD is worse so far and I am not calling it.** g4 runs 13.46-18.02 against g3's 13.60-14.27, and it
+rose through the middle of the run before falling back to 16.30. That is either the honest cost of a
+restraint that now holds bonds at the expense of global placement, or the same mid-run excursion g3
+had -- and I cannot tell which at 70 %. Recovery and type NLL are within noise of g3 throughout.
+
+One gradient skipped in 5,625 updates, so the guard is not shaping the run.
