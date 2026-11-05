@@ -6277,3 +6277,56 @@ favour of the head that decides *whether* to grow over the head that decides
 against 2.37e-03 on the activation head, a factor of 18 the other way. It is
 aimed at the head that was starved, and it says nothing about whether to grow,
 which is correct -- an orientation error is not a reason to stop.
+
+### Where the four arms stood when the OnDemand window closed
+
+All on `gpu_rocm`, 8,000 updates, `--split train --eval-every 500
+--identity-weight 93.7 --seeds 16 --steps 120`, crop 128, cold start, corrected
+weights. Read with `scripts/compare_growth_logs.py logs/aanca-gpu-*.out`.
+
+| tag | job | what it adds | state at the last reading |
+|---|---|---|---|
+| `g5_ctrl` | 32175722 | nothing (the control) | 11.59 A, 97.7 % alive, update 1125 |
+| `g5_both` | 32175724 | free birth + chain field | 11.71 A, 97.7 % alive, update 1125 |
+| `g5_twist` | 32178005 | `--orientation-weight 1.0` | 11.18 A, 95.7 % alive, **twist 76.6 -> 73.9 deg**, update 250 |
+| `g5_single` | 32176619 | 1 seed, crop 48, on the CPU partition | running; its own log says the alive fraction is topology-capped |
+
+Two arms were stopped, and why:
+
+* **`g5_window`** (cartesian + the placement window, to separate free
+  placement's two changes) was cancelled twenty minutes in. Ulban's `pmhcmd`
+  array queued behind it reading `QOSMaxJobsPerUserLimit`: the four-job GPU QOS
+  counts across partitions, so my fourth job was holding their first. I had
+  taken that slot on the explicit reasoning that their only pending job was
+  `DependencyNeverSatisfied` and could never start, and that stopped being true.
+  After the cancel their jobs read `Priority`, which is the scheduler's business
+  and not mine.
+* **`g5_free`** (free birth alone) was stopped at 37 minutes and `g5_twist`
+  submitted in its place. That is a judgement to flag rather than bury: it
+  spends a slot on a term I designed tonight instead of on the second half of
+  what Ulban asked for. The reasons are that `lever_arm_probe.py` had by then
+  shown free placement cannot change how an orientation error propagates (it is
+  identical to Cartesian to every digit), that the untrained comparison had
+  shown the objective does not train conformation at all, and that `g5_ctrl`
+  against `g5_both` still answers the question Ulban actually posed -- free
+  placement and the field, together, against neither.
+
+**`g5_ctrl` and `g5_both` do not log `twist`.** They started before the column
+existed, so comparing their rotation error means running
+`scripts/segment_placement_probe.py` on their checkpoints afterwards. The probe
+takes `--untrained` for the reference.
+
+**And nothing here is callable yet.** g5_ctrl and g5_both are 1,125 of 8,000
+updates in and differ by 0.12 A, which is noise; g5_twist is 250 updates in.
+g3 was called flat at 2,500 and then improved from 13.90 to 12.78 A, so the
+rule stands: **nothing is flat until the run ends.**
+
+### A gap this exposed
+
+`scripts/train_growth.py` writes checkpoints and **no `history.json`**, where
+`scripts/train.py` writes one. So a growth run's curve lives only in its SLURM
+`.out` and is lost with it, and comparing arms means parsing logs --
+`scripts/compare_growth_logs.py` now does that, reading each arm's tag and
+flags out of its own banner rather than trusting a filename. Writing a history
+file from the growth trainer would be better and is not done, because changing
+the trainer would not affect the four runs in flight.
