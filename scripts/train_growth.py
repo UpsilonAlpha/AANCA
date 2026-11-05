@@ -47,6 +47,7 @@ actually move.
 from __future__ import annotations
 
 import argparse
+import json
 import math
 import random
 import time
@@ -549,6 +550,20 @@ def main() -> int:
     #: a run that silently skipped a third of its updates is not the run its
     #: own log claims to be.
     skipped_updates = 0
+    history_path = out_dir / "history.json"
+    history: list[dict] = []
+    if args.resume and history_path.exists():
+        try:
+            history = json.loads(history_path.read_text(encoding="utf-8"))
+            # A resumed segment may start before the last recorded eval if the
+            # previous one died between the history write and the checkpoint,
+            # so drop anything at or past where this segment begins rather
+            # than leaving two rows for one update.
+            history = [row for row in history if row.get("update", 0) <= start_update]
+        except (OSError, ValueError) as problem:
+            print(f"  ignoring unreadable {history_path}: {problem}", flush=True)
+            history = []
+
     recent: dict[str, list[float]] = {
         key: []
         for key in ("total", "fape", "rmsd", "alive", "recovery", "twist")
@@ -646,6 +661,23 @@ def main() -> int:
             print(f"\nheld out after {update} updates "
                   f"({args.eval_activation} activation):")
             print(report(scores, bool(args.identity_weight)) + "\n", flush=True)
+            # **The held-out curve, written to disk as well as printed.**
+            # Without this a growth run's curve exists only in its SLURM
+            # ``.out`` and is lost with it, which is why comparing arms needs
+            # ``scripts/compare_growth_logs.py`` to parse logs at all.
+            # ``train.py`` has written one since v1; this is the same file in
+            # the same place, appended rather than rewritten so a resumed
+            # segment extends the curve instead of starting it again.
+            history.append({"update": update, **scores})
+            try:
+                history_path.write_text(
+                    json.dumps(history, indent=1), encoding="utf-8"
+                )
+            except OSError as problem:
+                # A failed write must not kill a run that is otherwise fine:
+                # the log still has the numbers, which is the situation every
+                # growth run before this one was in.
+                print(f"  could not write {history_path}: {problem}", flush=True)
             if scores["total"] < best:
                 best = scores["total"]
                 ckpt.save(out_dir / "best.pt", {"state_dict": rule.state_dict()})
