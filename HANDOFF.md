@@ -6110,3 +6110,76 @@ per-segment error is 2-3 A while global is 13 A, the deficit is in how segments
 are arranged relative to one another and not in growth at all -- and neither
 free placement nor a chain field addresses it, because both are about a
 residue's relation to its own neighbours.
+
+### Measured 2026-11-05: the error is already there at four residues, and one number explains every scale
+
+`scripts/segment_placement_probe.py` on `runs/g4/best.pt`, six held-out crops,
+16 seeds, 120 steps, crop 128, 97.3 % alive. Every window is superposed on its
+own native counterpart, within a covalent run so none spans a chain break.
+
+| measured over | rmsd | per residue | n |
+|---|---|---|---|
+| 4 residues | **2.28 A** | 0.570 | 566 |
+| 8 residues | 4.01 A | 0.501 | 431 |
+| 16 residues | 6.09 A | 0.381 | 227 |
+| 32 residues | 10.73 A | 0.335 | 72 |
+| whole segment (21 median) | 9.50 A | -- | 6 crops |
+| whole crop | 14.26 A | -- | 6 crops |
+
+**Four consecutive residues already score 2.28 A after optimal
+superposition.** A real tetrapeptide is nearly rigid -- its four CA positions
+are set by two torsion pairs, and a correct local conformation superposes to a
+few tenths of an Angstrom. So this is not a fold that drifts: **the local
+backbone conformation itself is wrong**, at the shortest scale it is possible
+to measure.
+
+That reframes everything above. The segment-arrangement hypothesis is only
+half right: per-segment error is 9.50 A against the crop's 14.26 A, a ratio of
+1.50x, so arrangement contributes -- but it cannot be the main term when four
+residues are already at 2.28 A.
+
+**And the scaling says there is no large compounding term.** 32 residues carry
+4.7x the error of 4 over 8x the length: steeper than a random walk's 2.8x,
+shallower than a systematic drift's 8x, so roughly `length ** 0.75`. Error
+accumulates a little more than independently and far less than linearly, which
+is the same conclusion `lever_arm_probe.py` reached from the other direction.
+
+**One number reproduces the whole table.** The sweep in
+`scripts/lever_arm_probe.py` gives 16.24 A over thirty residues for a per-birth
+orientation error of 0.40 rad, linear in the error. Scaling that by
+`length ** 0.75` predicts 2.3 A at four residues for **about 15 degrees per
+birth**, and 13 A at thirty for 17 degrees. So a single quantity -- a per-birth
+orientation error of fifteen to seventeen degrees -- accounts for the error at
+every length scale measured, with no compounding mechanism required.
+
+### What that implies, and it is not either of tonight's mechanisms
+
+Fifteen degrees per birth is a local inference failure, and this rule is not
+bad at local inference: sheet parity separates at 96.1 % from one scalar, and
+packing reaches 36.7 degrees of chi1, which is harder. So the question is not
+capacity but **what signal the birth is trained by**, and the answer is that it
+has almost none.
+
+* FAPE is the only thing that charges a birth's orientation, and it does so
+  *indirectly*, through where the child's atoms land, clamped at 10 A and
+  averaged over every residue that exists. One birth's share of that gradient
+  is tiny.
+* `peptide_bond_restraint` charges the **translational** part of a birth, the
+  CA-CA distance -- and that part is already exact by construction under
+  Cartesian birth.
+* **Nothing in the objective charges the relative orientation of two bonded
+  residues.** There is a term for the bond length and none for the bond's
+  rotation, which is precisely the quantity measured at fifteen degrees.
+
+That is a gap in the objective, not in the architecture, and it is the cheapest
+remaining intervention by a wide margin: for each covalently bonded pair of
+alive residues, compare the realised relative rotation `R_i^T R_j` to the
+native one and charge the geodesic angle between them. Local, invariant to
+global rotation, dense -- every bonded pair contributes on every step rather
+than one newborn contributing through a clamped mean -- and it applies to free
+placement and Cartesian birth alike, because it charges the frame that was
+realised rather than the head that produced it.
+
+Neither free placement nor the chain field addresses this. Both change *how* a
+residue's orientation is decided; neither tells the rule what the right answer
+was.
