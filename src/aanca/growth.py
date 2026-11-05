@@ -91,11 +91,32 @@ class GrowthConfig:
     #: Forbid N-ward growth. Only for the control above.
     cward_only: bool = False
     #: How a newborn is placed. ``"torsion"`` builds its backbone by NeRF from
-    #: three predicted torsions, which is correct by construction and carries
-    #: the lever arm. ``"cartesian"`` takes a frame the parent emitted, which
-    #: has no lever arm anywhere and is type-independent -- the same state
-    #: variable the SE(3) diffusion models use. Must match the rule's own
-    #: ``birth``, since the head's width differs.
+    #: three predicted torsions. ``"cartesian"`` takes a frame the parent
+    #: emitted and is type-independent -- the same state variable the SE(3)
+    #: diffusion models use. Must match the rule's own ``birth``, since the
+    #: head's width differs.
+    #:
+    #: **An earlier version of this comment claimed Cartesian birth "has no
+    #: lever arm anywhere". That is wrong.** ``_cartesian_triad`` composes
+    #: ``rot_child = rot_parent @ rot_reference @ rot_spin``, so frames compose
+    #: multiplicatively down a segment and an orientation error at one birth
+    #: rotates every residue grown through it -- a residue 20 A further along is
+    #: displaced by roughly 20*theta. A torsion is only a particular
+    #: parameterisation of a relative frame rotation, so the two births carry
+    #: the *same* rotational lever arm.
+    #:
+    #: What Cartesian birth actually removes is narrower and still worth having:
+    #: the CA-CA distance is exact by construction (3.804 A for every trans
+    #: peptide, so the birth picks a direction and not a distance), there is no
+    #: bond-length or bond-angle error to amplify, and nothing reads the child's
+    #: amino-acid type. The translational error does not compound; the
+    #: rotational error does.
+    #:
+    #: The escape from it is ``rigid_relax``, which gives every residue its own
+    #: bounded move each step and so breaks the frame chain after birth. Whether
+    #: 0.1 rad and 0.3 A per step over a rollout is enough to undo accumulated
+    #: rotation is empirical, and the coalescence probe's r = 0.970 between
+    #: junction gaps and accumulated drift says it currently is not.
     birth: str = "torsion"
     #: How a wake decision is drawn from the activation logit. ``"sample"``
     #: draws a Bernoulli and passes a straight-through gradient; ``"threshold"``

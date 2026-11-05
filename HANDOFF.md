@@ -5546,3 +5546,46 @@ neighbourhood cannot place a global fold and change the model -- and choosing be
 decision about the project rather than a tuning step.
 
 `COMPLETION_WEIGHT` is now confirmed inert at 16 seeds: 27.2 and 5.23 give the same 97.7 % coverage.
+
+### Correction: Cartesian birth does carry a lever arm, and the grid-NCA analogy breaks on coordinates
+
+Two claims in this file need fixing, both raised by the user.
+
+**1. "Cartesian birth has no lever arm anywhere" is false.** `_cartesian_triad` computes
+`rot_child = rot_parent @ rot_reference @ rot_spin`, so frames **compose multiplicatively** along a
+segment: an orientation error at one birth rotates every residue grown through it, and a residue 20 Å
+further along is displaced by about `20 * theta`. A torsion is only a particular parameterisation of a
+relative frame rotation, so torsion birth and Cartesian birth carry the **same** rotational lever arm.
+
+What Cartesian birth does remove is real but narrower: the CA-CA distance is exact by construction
+(3.804 Å for every trans peptide, so a birth picks a direction and not a distance), there is no
+bond-length or bond-angle error to amplify, and the child's amino-acid type never enters.
+**Translational error does not compound; rotational error does.** The escape is `rigid_relax`, which
+gives each residue its own bounded move per step and so breaks the frame chain *after* birth — and
+whether 0.1 rad / 0.3 Å per step is enough to undo accumulated rotation is empirical. The coalescence
+probe's **r = 0.970** between junction gaps and accumulated drift says it currently is not.
+
+**2. Why this is not a grid NCA growing a lizard.** The honest answer is that a lattice NCA is handed
+the thing this model has to learn:
+
+* **Position is an index, not a prediction.** A grid cell's location is exact and free, forever. The
+  NCA only decides *state*; it cannot make a placement error, and there is no quantity in it
+  corresponding to RMSD. Here, position *is* the output — continuous, in R^3, and the hard part.
+* **No excluded volume problem.** One cell, one slot, so self-avoidance is free. Residues in R^3 can
+  interpenetrate and preventing it is an all-pairs constraint.
+* **The target is locally determined.** A lizard texture is; a fold is not. Residue 10 contacting
+  residue 70 depends on the entire chain's path, which is exactly the non-local information the
+  measurements keep running into — placement capped at 0.92 Å for a single hole with both neighbours
+  present, 2.863 Å once two are missing, and depth not helping either.
+* **One target versus four hundred.** The growing-NCA work regrows a single specified image, so a
+  developmental program can be memorised. This must infer one across 400 structures.
+
+So "architecture-limited" is the wrong phrase for the g4 conclusion, and **"it has no coordinate
+system" is the right one.** The grid supplies a global frame for free; these cells have none and must
+agree on one from local messages alone.
+
+**That is also the argument for the morphogen direction, from the other end.** A real embryo has no
+lattice either, and solves the same problem with positional information carried in gradients — which
+is why the user's preference for a morphogen field over per-residue features is not just stylistically
+more NCA-ish but addresses the actual deficit. The missing ingredient may be a coordinate system the
+cells construct, not more parameters.
