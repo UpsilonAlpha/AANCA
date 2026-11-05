@@ -6037,3 +6037,76 @@ Alive fraction should stay near g3's 97.7 % -- if free placement costs coverage,
 that is the first place it shows. **And not to repeat the g3 mistake: nothing
 is flat until the run ends.** g3 was called flat at 2,500 of 8,000 updates and
 then improved from 13.90 to 12.78 A.
+
+### Measured 2026-11-05: the lever arm does not amplify, and free placement does not change propagation
+
+`scripts/lever_arm_probe.py`. Inject a rotation into one learned output and
+measure where every later residue lands. One seed, C-ward only, threshold
+activation, 1UBQ, six draws, untrained (every head's output layer is
+zero-initialised, so nothing corrects anything and this is pure propagation).
+
+**Two results, both negative for the argument I had been making.**
+
+| rule | injected | slope per residue | near rate | far rate | amplification |
+|---|---|---|---|---|---|
+| cartesian | birth spin | 0.0242 A | 0.0274 | 0.0238 | **0.87x** |
+| cartesian | frame | 0.0207 A | 0.0421 | 0.0199 | **0.47x** |
+| free | frame | 0.0207 A | 0.0421 | 0.0199 | **0.47x** |
+
+**The amplification is below one.** A straight lever of 28 residues would sweep
+0.19 A per residue for a 0.05 rad error; the measurement is 0.024, 13 % of it,
+and the per-residue rate *falls* with distance rather than rising. The reason
+is geometric and should have been obvious: a rotation about the growth axis
+displaces nothing, so only the perpendicular component tells, and a helix
+curls, so rotating a helical arc about a point near its start displaces the far
+end by the chord of the arc, which saturates instead of accumulating. **So
+"an error at one birth is multiplied by the length grown through it" is
+wrong as stated.** It propagates; it does not amplify.
+
+**Free and Cartesian are byte-identical for a frame error** -- 0.0207 A per
+residue, the same near and far rates, the same worst case. That is the stronger
+of the two results. Both modes place a newborn at `rot_parent @ rot_reference`
+and both relax with the same bounded move, so there is no mechanism by which
+removing the birth head could change how an orientation error travels. What is
+left for free placement to be about is **correction**: a birth rotation is
+applied once and never revisited, while a frame rotation is re-decided on every
+step the residue ticks from that residue's own neighbourhood. Whether the rule
+learns to use that is what `g5_free` measures; it cannot be read off the
+architecture, and this probe says so before the run reports.
+
+### And the calibration that matters more than either
+
+The same probe with `--sweep`: rotate the birth output by theta about a fresh
+random axis on **every** step, which is what a rule with an imperfect birth
+head actually does, and read the RMSD it produces alone with everything else
+exact. One seed grown C-ward to ~30 residues over 60 steps, four draws.
+
+| theta | degrees | rmsd | worst |
+|---|---|---|---|
+| 0.02 | 1.1 | 1.01 A | 1.61 A |
+| 0.05 | 2.9 | 2.50 A | 4.03 A |
+| 0.10 | 5.7 | 4.87 A | 8.08 A |
+| 0.20 | 11.5 | 9.22 A | 16.00 A |
+| 0.40 | 22.9 | 16.24 A | 29.24 A |
+
+**Linear in theta, with no amplification**, which is the same conclusion from
+the other direction. And the number to take from it: over a thirty-residue
+segment, the 12.8-14.3 A that g1-g4 never left corresponds to a per-birth
+orientation error of roughly **17 degrees**.
+
+Seventeen degrees is a lot. A rule that can assign secondary structure from a
+local environment at all should place a birth better than that -- sheet parity
+is separable at 96.1 % from one scalar, and the packing rule reaches 36.7
+degrees of chi1 which is a harder local inference. So the arithmetic does not
+support "the fold is wrong because each birth is slightly wrong". It points
+instead at **the relative placement of whole segments**: sixteen seeds per crop
+means sixteen independently nucleated pieces, each of which can be locally
+correct and globally misplaced, and nothing in local growth constrains where a
+segment sits as a whole.
+
+That is the next measurement, and it is cheap: global backbone RMSD against
+RMSD after superposing each grown segment on its own native counterpart. If
+per-segment error is 2-3 A while global is 13 A, the deficit is in how segments
+are arranged relative to one another and not in growth at all -- and neither
+free placement nor a chain field addresses it, because both are about a
+residue's relation to its own neighbours.
