@@ -5777,3 +5777,65 @@ structures than 20 would help too. Both are cheap and neither needs a GPU.
 
 **Not started**: the from-scratch growth run. On this evidence it would be a 4.5 GPU-hour bet on a
 t = 0.75, and the screen was built precisely to avoid that.
+
+## Rethink: perception is built from the model's own wrong structure, so its errors are self-concealing
+
+Density is dropped. Stepping back over everything growth has been measured against, the eliminations
+are now extensive enough to be informative in themselves:
+
+| candidate explanation for the fold not appearing | status |
+|---|---|
+| coverage / topology | **eliminated** -- per-run seeding took 44.6 % -> 97.7 % alive |
+| step budget | **eliminated** -- growth completes at 47 steps on 1UBQ, 120 is ample |
+| term weighting | **eliminated** -- bond corrected and binds 3x; RMSD did not improve |
+| local geometry representation | **eliminated** -- sheet parity separable at 96 % from one scalar |
+| message-passing depth | **eliminated** -- 3 hops buys 3 % over 1 |
+| burial / density as a node feature | **no effect at this power** -- 0.20 +/- 0.26 A over 3 seeds |
+| crop fragmentation | **eliminated** -- link density 0.92-1.00 |
+| the objective crashing | **fixed** -- 4 skipped gradients in 8,000 |
+
+Everything cheap has been ruled out, and RMSD has never left 12.8-14.3 A across four runs. So the
+remaining explanation has to be structural, and there is one sitting in plain sight.
+
+**`select_neighbours` builds the graph from `coords.detach()`** -- the model's *current* coordinates --
+within a 10 A cutoff, plus the forced immediate sequence neighbours. So **perception is conditioned on
+the structure the model has already produced.** If residue 10 and residue 70 ought to be in contact
+and are presently 40 A apart, there is **no edge between them**, no message, and no gradient path by
+which they could ever approach. The rule is structurally blind to precisely the errors it most needs
+to fix: a wrong fold hides its own wrongness by removing the edges that would reveal it.
+
+**That single fact explains every result above, which is why it is worth more than another feature.**
+
+* **Why RMSD plateaus while bond and chi improve.** Local geometry has edges -- bonded neighbours are
+  forced in, and clashing atoms are close so they are in the graph. Global arrangement has no edges.
+  The rule fixes everything it can see and cannot see the fold.
+* **Why depth does not help.** More hops over a graph missing the necessary edges do not add them.
+  Three hops propagate further through the *wrong* adjacency.
+* **Why burial did not help.** Knowing you are buried does not tell you *whom* to touch. It is a node
+  property, and the missing information is a pair.
+* **Why packing works and growth does not.** In packing the backbone is given, so the graph is
+  **correct**, and local refinement is sufficient and succeeds -- v7b reaches 36.7 deg chi1, 33.8 %
+  accuracy. Growth has to build the thing the graph is derived from.
+* **Why inverse folding works at 38 %.** Sequence recovery is largely a local inference from a *given*
+  backbone, so again the graph is correct.
+
+**This is also what every working structure predictor has that this does not.** AF2, RoseTTAFold and
+ESMFold all carry an explicit pair representation -- a distogram or pair stack, an O(N^2) object over
+*all* residue pairs. Its purpose is exactly to represent "these two should be close", independently of
+whether they currently are. A k-nearest graph on current coordinates cannot express that proposition
+at all.
+
+**Which reframes the morphogen direction and corrects what I said about it.** I argued for the
+sequence-axis field on the grounds of positional information and unbounded sequence separation. The
+stronger argument is this one: **a field propagating along the chain is a communication channel that
+does not depend on the spatial graph being right.** Two residues 40 A apart in a wrong structure have
+no spatial edge, but they are still connected through the chain, and a field travelling that path can
+carry information between them regardless of where the model currently thinks they are. That is the
+deficit, and it is why the sequence axis is the right first field -- not because it supplies a
+coordinate, but because it supplies a route.
+
+**The honest caveat.** A chain-propagated field is a 1-D channel for what is a 2-D problem: it can
+tell residue 10 something about residue 70's state, but "which pairs should touch" is O(N^2) and a
+field is O(N). So it is the cheapest structural fix available rather than an equivalent of a pair
+stack, and whether a 1-D channel is enough is the open question -- not something these measurements
+settle either way.
