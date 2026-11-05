@@ -320,10 +320,17 @@ class AANCARule(nn.Module):
             # ``rot_parent @ rot_reference @ rot_spin``, so a learned
             # orientation error composes multiplicatively down the ancestry and
             # a residue twenty Angstrom along is displaced by twenty times it.
-            # With the head removed, the only learned part of placement is a
-            # per-residue move read from that residue's own neighbours, so
-            # learned error is additive over residues rather than multiplicative
-            # along a path. It also moves placement onto the operation that
+            # **It does not remove the lever arm, and the first version of
+            # this comment claimed it did.** The reference pose is still
+            # ``rot_parent @ rot_reference``, so frames still compose, and the
+            # rotations ``rigid_relax`` applies compose as well -- under every
+            # mode. What is removed is ``rot_spin`` specifically: the one
+            # learned rotation applied *before the child has a neighbourhood to
+            # read*, predicted from the parent's state alone. That is the only
+            # placement decision here that cannot be checked against the
+            # evidence it is about. So ``cartesian`` is ``free`` plus a learned
+            # birth rotation, and the difference is who sets an orientation and
+            # on what evidence. It also moves placement onto the operation that
             # already works: "place a residue among its neighbours" reaches
             # 0.95 A on bonded positions in the hole task, while composing a
             # chain of births has never left 12.8 A.

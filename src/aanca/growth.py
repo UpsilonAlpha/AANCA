@@ -123,17 +123,24 @@ class GrowthConfig:
     #: ``placement_steps`` steps with the frame head, reading its own
     #: neighbourhood, under the loosened bounds below.
     #:
-    #: This is the one change that attacks the lever arm rather than mitigating
-    #: it. Under ``torsion`` and ``cartesian`` the learned part of placement is
-    #: ``rot_spin``, which sits inside the composition
-    #: ``rot_parent @ rot_reference @ rot_spin`` and therefore multiplies down
-    #: the ancestry. Under ``free`` the only learned part of placement is a
-    #: per-residue rigid move read from that residue's own neighbours, so
-    #: learned error is additive over residues instead of multiplicative along
-    #: a path. The unlearned reference pose still inherits the parent's
-    #: orientation -- something has to put a newborn somewhere -- but it is a
-    #: constant, not a trained quantity, so it cannot be *fitted* into a
-    #: compounding error.
+    #: **This does not remove the lever arm.** The reference pose is still
+    #: ``rot_parent @ rot_reference``, frames still compose, and the rotations
+    #: ``rigid_relax`` applies compose as well -- under every mode. What it
+    #: removes is ``rot_spin``: the one learned rotation applied before the
+    #: child has a neighbourhood to read, predicted from the parent's state
+    #: alone. That is the only placement decision here that cannot be checked
+    #: against the evidence it is about, and so the one most able to carry a
+    #: systematic bias into a composition.
+    #:
+    #: So ``cartesian`` is ``free`` plus a learned birth rotation, and what
+    #: differs between them is *who sets a residue's orientation and on what
+    #: evidence*: the parent predicting blind, or the residue correcting from
+    #: its own neighbours with the authority to do it.
+    #:
+    #: **It is also two changes rather than one**, and ``g5_window`` exists to
+    #: separate them: removing the birth head, and granting the placement
+    #: window below. A Cartesian run with the window and nothing else says how
+    #: much of any difference is the authority rather than the removal.
     birth: str = "torsion"
     #: How a wake decision is drawn from the activation logit. ``"sample"``
     #: draws a Bernoulli and passes a straight-through gradient; ``"threshold"``

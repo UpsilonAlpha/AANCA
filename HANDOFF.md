@@ -5900,16 +5900,29 @@ which is exactly where a torsion birth and a Cartesian birth both start -- and
 then places itself over the following `placement_steps` steps with the frame
 head, reading its own neighbourhood.
 
-The reason is the lever arm. Under both other modes a child's frame is
-`rot_parent @ rot_reference @ rot_spin`, and `rot_spin` is the learned part, so
-an orientation error sits *inside* a composition and multiplies down the
-ancestry -- about twenty times the angle at twenty Angstrom. With the head
-gone, the only learned part of placement is a per-residue rigid move read from
-that residue's own neighbours, so learned error is additive over residues
-instead of multiplicative along a path. The reference pose still inherits the
-parent's orientation, because something has to put a newborn somewhere, but it
-is a constant rather than a trained quantity and so cannot be *fitted* into a
-compounding error.
+**Corrected within the hour of writing it: this does not remove the lever
+arm, and the first version of this entry said it did.** The error is the same
+one Ulban caught in the `GrowthConfig.birth` docstring -- asserting an
+architectural property without following the composition through. The reference
+pose is still `rot_parent @ rot_reference`, so frames still compose and an
+orientation error at one residue still rotates everything grown through it; and
+`rigid_relax` applies under *every* mode, so its rotations compose too. Writing
+"additive rather than multiplicative" was wrong in exactly the way "no lever
+arm anywhere" was wrong.
+
+What free placement actually removes is one rotation: `rot_spin`, **the only
+learned rotation applied before the child has a neighbourhood to read**. A
+birth head predicts a child's orientation from the parent's state alone, which
+makes it the one placement decision in this architecture that cannot be checked
+against the evidence it is about -- and therefore the one most able to carry a
+systematic bias into a composition. So `cartesian` is `free` plus a learned
+birth rotation, and what differs is *who sets a residue's orientation and on
+what evidence*: the parent predicting blind, or the residue correcting from its
+own neighbours with the authority to do it.
+
+That is a weaker claim than the one I made and it may still be the right
+change, but it has to be measured rather than asserted. `g5_free` against
+`g5_ctrl` is the measurement.
 
 **The placement window is what makes this different from freezing the birth
 head.** `GrowthConfig.placement_steps` (8 by default under `free`, 0 under
@@ -5997,11 +6010,21 @@ All matched: `--split train --updates 8000 --eval-every 500 --identity-weight
 93.7 --seeds 16 --steps 120`, crop 128, corrected weights (bond 0.122,
 completion 5.23, reach 0.086).
 
-| tag | birth | field | isolates |
-|---|---|---|---|
-| `g5_ctrl` | cartesian | off | the cold-start control |
-| `g5_free` | free | off | free placement |
-| `g5_both` | free | on | the field, on top of free placement |
+| tag | birth | window | field | isolates |
+|---|---|---|---|---|
+| `g5_ctrl` | cartesian | 0 | off | the cold-start control |
+| `g5_window` | cartesian | 8 | off | the placement authority alone |
+| `g5_free` | free | 8 | off | removing the birth head |
+| `g5_both` | free | 8 | on | the field, on top of free placement |
+
+**`g5_window` exists because free placement is two changes, not one**: the
+birth head is removed *and* a newborn is granted a pi-radian, 4 A move for its
+first eight steps. Without this arm a difference between `g5_ctrl` and
+`g5_free` could be either, and the loosened bound is the more likely of the two
+to matter on its own -- it is new authority, where the removal only takes
+something away. It takes the fourth GPU slot. Ulban's own pending job is on
+`gpu_cuda` with `DependencyNeverSatisfied`, so it cannot start whatever I do,
+and a confounded ladder would waste the other three jobs.
 
 **A cold-start control is necessary rather than tidy.** g4 warm-started from
 `runs/g1/last.pt`, and neither new arm can: `free` has no birth head to load
