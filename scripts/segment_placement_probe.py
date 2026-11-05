@@ -90,6 +90,14 @@ def main() -> int:
     parser.add_argument("--seeds", type=int, default=16)
     parser.add_argument("--min-segment", type=int, default=4,
                         help="runs shorter than this cannot be superposed meaningfully")
+    parser.add_argument(
+        "--windows", default="4,8,16,32",
+        help=(
+            "also report RMSD over every contiguous covalent window of these "
+            "lengths, superposed on its own native counterpart: the error as "
+            "a function of the length it is measured over"
+        ),
+    )
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--device", default="cpu")
     args = parser.parse_args()
@@ -182,6 +190,8 @@ def main() -> int:
     print(f"\n{'entry':>6} {'alive':>6} {'global':>9} {'per-seg':>9} "
           f"{'segs':>5} {'median':>7} {'largest':>8}")
     rows = []
+    windows = [int(w) for w in args.windows.split(",") if w] if args.windows else []
+    by_window: dict[int, list[float]] = {}
     rng = random.Random(args.seed)
     with torch.no_grad():
         for index in indices:
@@ -219,6 +229,21 @@ def main() -> int:
             if not total_n:
                 continue
             per_segment = (total_sq / total_n) ** 0.5
+            # Every contiguous covalent window of each requested length,
+            # superposed on its own native counterpart. Within a run only, so
+            # a window never spans a chain break -- the same reason
+            # ``alive_runs`` tests ``links`` rather than index adjacency.
+            for length in windows:
+                for run in runs:
+                    for start in range(0, len(run) - length + 1):
+                        piece = run[start : start + length]
+                        mask = torch.zeros_like(alive)
+                        mask[torch.tensor(piece, device=alive.device)] = True
+                        value = float(
+                            backbone_rmsd(result.state.coords, native, topo, mask)
+                        )
+                        if value == value:
+                            by_window.setdefault(length, []).append(value)
             sizes.sort()
             rows.append((glob, per_segment, len(sizes), sizes[len(sizes) // 2],
                          sizes[-1], float(alive.float().mean())))
