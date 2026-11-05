@@ -6247,3 +6247,33 @@ rotation averages about 126 degrees, and a fixed helix against a real mixture
 of secondary structure gives the 84. So 90 is "worse than always guessing
 helix", not "uniformly random". The single crop at 33-39 degrees in both arms
 shows the quantity does discriminate -- that crop is presumably mostly helical.
+
+### The orientation weight, measured rather than guessed
+
+`scripts/growth_balance_live.py` now carries the term. 1UBQ, 6 seeds, 30 steps,
+truncate 12 (training's), at initialisation, every other weight at its training
+value, `--orientation-weight 1.0`:
+
+| term | weighted | activation | birth | frame | identity |
+|---|---|---|---|---|---|
+| fape | 0.6175 | 5.26e+00 | 2.99e-02 | 4.76e-01 | 0 |
+| bond | 0.3858 | 5.29e+00 | 7.50e-03 | 3.38e-01 | 0 |
+| completion | 11.1238 | 3.94e+00 | 0 | 0 | 0 |
+| identity | 298.7483 | 0 | 0 | 0 | 2.16e+01 |
+| reach | 0.0216 | 0 | 0 | 5.63e-03 | 0 |
+| **twist** | **1.0793** | 2.37e-03 | **4.21e-02** | **3.06e-01** | 0 |
+
+**1.0 was chosen by matching the term's value against FAPE's, which is exactly
+the mistake the completion weight was corrected for -- and it happens to be
+right anyway.** At that weight the term gives the birth head **1.4 times
+FAPE's** gradient and the frame head 0.64 times it, which is the balance a
+weight is supposed to produce. So the run can stand; the luck is recorded
+rather than claimed as judgement.
+
+**And the table shows why the term was needed.** FAPE's gradient on the birth
+head is 2.99e-02 against 5.26 on the activation head -- a factor of 176 in
+favour of the head that decides *whether* to grow over the head that decides
+*where*. The twist term inverts that exactly: 4.21e-02 on the birth head
+against 2.37e-03 on the activation head, a factor of 18 the other way. It is
+aimed at the head that was starved, and it says nothing about whether to grow,
+which is correct -- an orientation error is not a reason to stop.

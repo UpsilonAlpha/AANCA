@@ -50,6 +50,7 @@ from aanca.growth import (
     GrowthConfig,
     growth_links,
     peptide_bond_restraint,
+    relative_frame_restraint,
     pending_closures,
     reachability_restraint,
     seed_alive,
@@ -104,6 +105,16 @@ def main() -> int:
     parser.add_argument("--completion-weight", type=float, default=COMPLETION_WEIGHT)
     parser.add_argument("--identity-weight", type=float, default=93.7)
     parser.add_argument(
+        "--orientation-weight", type=float, default=1.0,
+        help=(
+            "weight on relative_frame_restraint. Set to the value a run uses; "
+            "1.0 was chosen by matching the term's *value* against FAPE's, "
+            "which is exactly the mistake the completion weight was corrected "
+            "for -- a term's value is not its influence. This probe is how to "
+            "replace it with a measured one"
+        ),
+    )
+    parser.add_argument(
         "--detect-anomaly",
         action="store_true",
         help="run the backward pass under torch.autograd.set_detect_anomaly, "
@@ -141,7 +152,7 @@ def main() -> int:
     from aanca.identity import library_index, type_loss
     from aanca.torch_geometry import measure_chis
 
-    names = ("fape", "bond", "completion", "identity", "reach")
+    names = ("fape", "bond", "completion", "identity", "reach", "twist")
     totals = {n: {h: 0.0 for h in HEADS} for n in names}
     values = {n: 0.0 for n in names}
     finite = {n: 0 for n in names}
@@ -187,6 +198,9 @@ def main() -> int:
         terms["reach"] = args.reach_weight * reachability_restraint(
             final.coords, topo, final.alive, links
         ).to(terms["fape"].dtype)
+        terms["twist"] = args.orientation_weight * relative_frame_restraint(
+            final.coords, native, topo, final.alive, links
+        )[0].to(terms["fape"].dtype)
 
         from aanca.growth import frontier as frontier_of
 
