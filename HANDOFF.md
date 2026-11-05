@@ -6463,33 +6463,15 @@ distance cannot supply a rotation nothing in the objective asks for.
 66.4 degrees at update 500 is the *lowest* reading of the entire run; the next
 7,500 updates drifted it slightly up, to 68.0. So the choice posed above --
 "too early" against "partial accuracy is worse than a constant" -- resolves
-against the first option. It was not too early. The term buys about 22 degrees
-against the 90.2 a run without it reaches, buys them almost immediately, and
-then has nothing further to give.
+against the first option. It was not too early -- and the arm it was being
+compared against turned out not to be a comparison at all. See the correction
+below: measured on identical crops, the control reaches the same 67 degrees
+*without* the term.
 
 **And RMSD stayed worse for all 8,000 updates: 15.79 against 14.25.** It never
 turned over. The measurement the last section asked for -- twist against RMSD
 across the run -- gives a flat twist and a flat, worse RMSD, so there is no
-turn to find. Reducing the bonded-frame error by a quarter made the global
-superposition about 1.5 A worse and kept it there.
-
-**Which is the second reading, and it is consistent with the probe's own
-caveat.** CA positions are nearly insensitive to rotation about the chain axis;
-the twist metric counts that rotation in full. So an arm can improve twist by
-22 degrees while CA RMSD worsens, because the two quantities are substantially
-measuring different components of the same error. The term is moving the
-component CA RMSD cannot see, and paying for it in the component it can.
-
-**A term that saturates at 68 degrees is not the missing term.** 68 degrees of
-mean geodesic error on a bonded pair is still enormous -- the reference points
-are 84 degrees for a constant helix and about 126 for uniformly random
-rotations, so 68 is "better than always guessing helix, by a quarter of the way
-to correct". A rule that could place rotations would not stop there within 500
-updates and sit for 7,500 more. The honest reading is that the objective was
-missing a charge on rotation, adding one moves the quantity it charges, and the
-rule still cannot express the answer. That points upstream of the objective,
-which is where Ulban's fallback -- all N nodes present from the start, each
-learning to place itself, rather than a parent spawning a child -- is aimed.
+turn to find.
 
 **One cross-check that the arms are well matched.** `total` falls 278 -> 233 in
 every arm, with the same 21-point step between updates 1,500 and 2,000 in all
@@ -6498,3 +6480,53 @@ coverage; it is the identity head, whose type NLL ends at 2.471/2.559/2.561
 against the ln 20 = 2.996 floor, at weight 93.7. The three arms' shared
 components train identically, which is what makes the geometry comparison
 above a comparison.
+
+### Correction, same morning: the orientation term improved nothing, and the 90 degrees it was measured against was a different crop sample
+
+`scripts/segment_placement_probe.py` on all three `best.pt`, same 12 held-out
+crops regenerated from seed 0, same 120 steps and 16 seeds, all at 97.5-97.7 %
+alive. CPU jobs 32205226/27/28.
+
+| arm | twist | off helix | global | w4 | w8 | w16 | w32 | seg ratio |
+|---|---|---|---|---|---|---|---|---|
+| `g5_both` (free + field) | **65.5** | 6.7 | 14.49 A | 1.97 | 3.29 | 5.16 | 9.97 | 1.53x |
+| `g5_ctrl` (control) | 67.1 | 11.3 | 14.25 A | 1.99 | 3.22 | 5.06 | 9.63 | 1.51x |
+| `g5_twist` (orientation w=1.0) | **68.5** | 16.5 | 15.72 A | 2.09 | 3.53 | 6.00 | 12.10 | 1.42x |
+| the crystal, for reference | 0 | 64.4 | 0 | | | | | |
+
+**The arm with the orientation term has the worst per-bond rotation error of
+the three.** 68.5 degrees against a control's 67.1, measured on identical
+crops, with no orientation term in the control at all. It is also worst on
+every window, worst on global RMSD, and worst on the bond term's held-out
+value. The term is a clean negative result: it charged the quantity, the
+quantity did not improve, and everything else got worse.
+
+**And the 90.2 degrees it looked like an improvement on was never a
+comparison.** That number came from g4, probed on a different sample of crops
+-- natives 95 degrees from the helical reference, where this morning's twelve
+average 64.4. A rule collapsed onto the helical reference scores approximately
+*the natives' own distance from that reference*, so the twist statistic is
+dominated by which crops were drawn and cannot be read across samples. 66.4
+against 90.2 was a crop effect with a term's name on it. **Only the three rows
+above are a controlled comparison, and in them the term loses.** I committed
+the wrong reading as a finding an hour before measuring it properly; the
+section above has been corrected in place.
+
+**What the three rows do establish, and it is worth more than the term was.**
+Order the arms by how far the rule has moved off its helical initialisation --
+6.7, 11.3, 16.5 degrees -- and the rotation error against native rises
+monotonically: 65.5, 67.1, 68.5. Global RMSD rises with it, 14.49, 14.25,
+15.72 (the first two inverted and within noise, the third not). **So every
+departure from the single conformation has so far been noise.** The probe's own
+either/or -- collapsed onto the initialisation, or rotations that are noise --
+resolves as both at once: the rule is collapsed, and the little it has learned
+to deviate makes it worse, not better.
+
+That is a sharper statement of the night's finding than the collapse alone.
+It is not that the rule has not yet moved; it is that moving, by the only
+route the current architecture offers, costs accuracy. A parent spawning a
+child and spinning it has given three runs of evidence that it cannot express
+a native rotation, under FAPE alone and under a direct geodesic charge. The
+next thing to try is the architecture Ulban named: every node present from the
+start, each learning to place itself, where a residue's pose is read from its
+neighbourhood rather than inherited through a chain of parents.
