@@ -5744,3 +5744,36 @@ difference.
 adjacent-pair probe measured 2.863 Å once two neighbours are missing against 0.92 Å for an isolated
 hole, so growth's regime is strictly harder. And 1,200 updates is a tenth of what `hole_v2` ran, so
 this is a screen for an effect worth spending GPU on rather than a measurement of its size.
+
+### The density effect does not survive three seeds, and my mechanism was a one-seed story
+
+Matched pairs, same config and seed, only the `--density` flag differing. Paired by seed, n = 3:
+
+| metric | off mean | on mean | delta | SE | t | per-seed signs |
+|---|---|---|---|---|---|---|
+| frontier fused | 2.28 Å | 2.08 Å | **−0.20 Å** | 0.26 | −0.75 | − − + |
+| hole fused | 2.53 Å | 2.52 Å | **−0.00 Å** | 0.19 | −0.02 | + − − |
+| frontier top-1 | 31.8 % | 43.8 % | **+12.0 pp** | 8.50 | +1.41 | + + − |
+
+**Nothing is significant.** The frontier improvement is −0.20 ± 0.26 Å, indistinguishable from zero,
+and it reverses on one of three seeds. The point estimates all favour density and not one of them
+survives its own error bar.
+
+**And the mechanism I offered was a rationalisation of a single seed.** From seed 0 I argued that
+density is uninformative when one residue is missing (uniform density, so 16 extra dims dilute) and
+informative when half the structure is (density varies, so it carries the frontier). It was a tidy
+story that predicted the seed-0 split exactly -- and across three seeds the hole degradation is
+**−0.00 Å**, i.e. the thing it explained does not exist. The mechanism was fitted to the noise.
+
+**The screen cannot resolve an effect this size, which is the useful finding.** Seed-to-seed spread in
+frontier fused is **0.91 Å** against a candidate effect of 0.20 Å, so the noise is four to five times
+the signal. At this sd, detecting 0.20 Å at any reasonable power needs on the order of forty seeds --
+not three. So "inconclusive" here is a statement about the experiment, not about the feature.
+
+**What would actually decide it**, cheapest first: the runs are 1,200 updates against `hole_v2`'s
+12,000, so a large part of that variance is likely undertraining rather than irreducible seed noise --
+two runs at 12,000 updates cost about an hour each locally and would shrink it. More held-out
+structures than 20 would help too. Both are cheap and neither needs a GPU.
+
+**Not started**: the from-scratch growth run. On this evidence it would be a 4.5 GPU-hour bet on a
+t = 0.75, and the screen was built precisely to avoid that.
