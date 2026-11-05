@@ -43,9 +43,11 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from aanca import checkpoint as ckpt  # noqa: E402
 from aanca.data import RepackingDataset, read_manifest  # noqa: E402
+from aanca.backbone import backbone_atoms, frame_from_triad, rotation_from_vector  # noqa: E402
 from aanca.fape import backbone_rmsd  # noqa: E402
 from aanca.growth import (  # noqa: E402
     GrowthConfig,
+    _reference,
     growth_links,
     growth_objective,
     relative_frame_restraint,
@@ -55,6 +57,47 @@ from aanca.rollout import RolloutConfig  # noqa: E402
 
 PDB = ROOT / "data" / "pdb"
 MANIFEST = ROOT / "data" / "manifest.json"
+
+
+def helix_collapse(
+    coords: torch.Tensor,
+    native: torch.Tensor,
+    topo,
+    alive: torch.Tensor,
+    links: torch.Tensor,
+) -> tuple[float, float]:
+    """``(degrees from the helical reference, degrees the native is from it)``.
+
+    A 90-degree error against the native says the rotations are wrong; it does
+    not say *how*. The two possibilities need different fixes. If the rule has
+    collapsed to emitting one conformation -- the helical reference its birth
+    head is initialised to -- then the model's rotations sit close to that
+    reference and far from the native, and the deficit is that nothing ever
+    pushed it off its initialisation. If the rotations are noise, they are far
+    from both.
+
+    The second number is the control: how far a *real* protein's bonded
+    rotations are from the same reference, which is what a rule that had
+    learned the right distribution would score.
+    """
+    both = torch.zeros_like(alive)
+    both[:-1] = alive[:-1] & links & alive[1:]
+    index = torch.nonzero(both, as_tuple=False).flatten()
+    if index.numel() == 0:
+        return float("nan"), float("nan")
+    axis_angle, _offset = _reference(1, coords.dtype, coords.device)
+    reference = rotation_from_vector(axis_angle.unsqueeze(0))[0]
+
+    def spread(source: torch.Tensor) -> float:
+        bb = backbone_atoms(source, topo)
+        rot = frame_from_triad(bb[:, 0], bb[:, 1], bb[:, 2])
+        relative = rot[index].transpose(-1, -2) @ rot[index + 1]
+        error = relative.transpose(-1, -2) @ reference
+        trace = error.diagonal(dim1=-2, dim2=-1).sum(-1)
+        cosine = ((trace - 1.0) / 2.0).clamp(-1.0, 1.0)
+        return float(torch.rad2deg(torch.arccos(cosine)).mean())
+
+    return spread(coords), spread(native)
 
 
 def alive_runs(alive: torch.Tensor, links: torch.Tensor) -> list[list[int]]:
@@ -209,6 +252,7 @@ def main() -> int:
           f"{'segs':>5} {'median':>7} {'largest':>8} {'twist':>7}")
     rows = []
     windows = [int(w) for w in args.windows.split(",") if w] if args.windows else []
+    helix: list[tuple[float, float]] = []
     by_window: dict[int, list[float]] = {}
     rng = random.Random(args.seed)
     with torch.no_grad():
@@ -238,6 +282,10 @@ def main() -> int:
             _loss, twist = relative_frame_restraint(
                 result.state.coords, native, topo, alive, links
             )
+            model_helix, native_helix = helix_collapse(
+                result.state.coords, native, topo, alive, links
+            )
+            helix.append((model_helix, native_helix))
             # Weighted by residue count, so one four-residue run cannot
             # dominate a hundred-residue one. Squared then rooted, because
             # RMSDs do not average linearly.
@@ -291,7 +339,18 @@ def main() -> int:
           f"largest {sum(r[4] for r in rows) / n:.1f}, "
           f"alive {100 * sum(r[5] for r in rows) / n:.1f}%")
     print(f"per-bond rotation error {sum(r[6] for r in rows) / n:.1f} degrees "
-          "(exactly 0 on a crystal structure, about 75 on an untrained rule)")
+          "(exactly 0 on a crystal structure, about 84 untrained)")
+    if helix:
+        mine = sum(h[0] for h in helix) / len(helix)
+        theirs = sum(h[1] for h in helix) / len(helix)
+        print(f"distance from the helical reference: model {mine:.1f} deg, "
+              f"native {theirs:.1f} deg")
+        print(
+            "  model much smaller than native: the rule has collapsed onto the"
+            " conformation its\n  birth head was initialised to, and nothing"
+            " ever pushed it off. Comparable:\n  the rotations are noise,"
+            " which is a different failure and needs a different fix."
+        )
 
     if by_window:
         # **The error as a function of the length it is measured over**, which
