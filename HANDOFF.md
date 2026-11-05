@@ -5500,3 +5500,49 @@ restraint that now holds bonds at the expense of global placement, or the same m
 had -- and I cannot tell which at 70 %. Recovery and type NLL are within noise of g3 throughout.
 
 One gradient skipped in 5,625 updates, so the guard is not shaping the run.
+
+### g4 finished: the reweighting did what it targeted, and the fold did not appear
+
+**Done, exit 0, 8,000 updates, 273.1 min, 4 skipped gradients (0.1 %).** Final held-out eval against
+g3's final, the two runs differing **only** in `BOND_WEIGHT` 0.022 -> 0.122 and `COMPLETION_WEIGHT`
+27.2 -> 5.23:
+
+| | g3 final | **g4 final** | |
+|---|---|---|---|
+| bond | 16.33 | **5.695** | 2.9x better |
+| reach | 0.936 | **0.422** | 2.2x better |
+| type NLL | 2.533 | **2.495** | better |
+| recovery | 18.7 % | **21.2 %** | +2.5 points |
+| rmsd | **12.78 Å** | 14.31 Å | 1.53 Å worse |
+| alive | 97.7 % | 97.7 % | identical |
+
+**Three of four improved and the reweighting hit exactly what it aimed at.** `bond` fell nearly
+threefold, which is the restraint binding; the balance measurement that predicted it was describing
+something real, and that measurement is now validated end to end -- from "the probe used the wrong
+truncate" through to a term that moves when its weight is corrected.
+
+**RMSD got worse, and the honest reading is a trade-off rather than a failure of the fix.** FAPE's
+weight did not change, but its *share* of the gradient did: before the correction FAPE's activation
+gradient was 4.02 against bond's 0.723, so FAPE had 85 % of the say; after, 3.90 against 3.87, so it
+has 50 %. Global placement was always what FAPE drives, and it now drives half as much of the update.
+So `bond` 2.9x better at the cost of 1.5 Å of RMSD is close to what halving FAPE's share should buy.
+
+**Which exposes a flaw in the procedure, not just in the numbers: equalising gradients is not the
+objective.** The weights were chosen to make each term contribute equally, and that is a symmetry
+argument, not a statement about what a protein needs. There is no reason the right trade is 1:1
+between a local bond restraint and global placement, and g3 against g4 is the first evidence the
+optimum is not there -- g3 had FAPE at 85 % and a better fold, g4 has it at 50 % and better chemistry.
+
+**The thing that matters more than either column: both runs produce blobs.** 12.78 Å and 14.31 Å are
+both far outside anything foldable -- a correct backbone is under ~3 Å -- so arguing over 1.5 Å
+between them is arguing about the shape of the failure. **A 5.6x reweighting that moved its target
+term threefold did not move RMSD toward usability at all**, and that is the first real evidence that
+the geometry track is limited by model or architecture rather than by weighting. Every previous
+flat-geometry result had the weights as a live explanation; this one does not.
+
+**Not started**: a successor run. The two obvious knobs point in opposite directions -- raise
+`fape_weight` above 1 to buy the fold back, or accept that 253,463 parameters reading a 10 Å
+neighbourhood cannot place a global fold and change the model -- and choosing between them is a
+decision about the project rather than a tuning step.
+
+`COMPLETION_WEIGHT` is now confirmed inert at 16 seeds: 27.2 and 5.23 give the same 97.7 % coverage.
