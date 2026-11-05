@@ -6144,7 +6144,11 @@ shallower than a systematic drift's 8x, so roughly `length ** 0.75`. Error
 accumulates a little more than independently and far less than linearly, which
 is the same conclusion `lever_arm_probe.py` reached from the other direction.
 
-**One number reproduces the whole table.** The sweep in
+**Corrected below by direct measurement: the per-bond rotation error is 90
+degrees, not 17.** The inference in this paragraph conflates CA RMSD with frame
+rotation, and CA positions cannot see a rotation about the chain axis at all.
+Left standing because the arithmetic it does is still right about the component
+CA positions *can* see. **One number reproduces the whole table.** The sweep in
 `scripts/lever_arm_probe.py` gives 16.24 A over thirty residues for a per-birth
 orientation error of 0.40 rad, linear in the error. Scaling that by
 `length ** 0.75` predicts 2.3 A at four residues for **about 15 degrees per
@@ -6183,3 +6187,63 @@ realised rather than the head that produced it.
 Neither free placement nor the chain field addresses this. Both change *how* a
 residue's orientation is decided; neither tells the rule what the right answer
 was.
+
+### Measured 2026-11-05: eight thousand updates bought coverage and nothing else
+
+The same probe with `--untrained`: the same architecture, the same crops, the
+same seeds and steps, with the weights **not** loaded. An untrained rule places
+every birth at the helical reference, so this is what a constant helix scores,
+and it is the number that makes a trained one mean something.
+
+| | untrained | trained g4 | change |
+|---|---|---|---|
+| alive | 63.4 % | 96.7 % | **+33 pp** |
+| global rmsd | 7.41 A | 14.60 A | worse, but see below |
+| per segment | 4.31 A | 9.06 A | worse, but see below |
+| median segment | 12.2 | 20.0 | longer |
+| **4-residue window** | **2.08 A** | **1.93 A** | **-7 %** |
+| **8-residue window** | **3.57 A** | **3.58 A** | **0 %** |
+| **per-bond rotation** | **83.9 deg** | **90.2 deg** | **+6 deg, worse** |
+
+**The global numbers are confounded and the window numbers are not.** The
+untrained rule grows to 63 % with a median segment of 12 residues, the trained
+one to 97 % with a median of 20, and a longer segment carries more error by
+construction -- so 7.41 A against 14.60 A is mostly "it grew more". The window
+measurements are length-matched by definition, which is what they are for.
+
+And length-matched, **training changed local backbone geometry by nothing**: a
+four-residue window improved 7 %, an eight-residue window not at all, and the
+relative rotation of bonded frames got six degrees *worse*. What training
+unambiguously did learn is to grow -- coverage went from 63 % to 97 %, which is
+the completion term working exactly as intended.
+
+**So the growth objective trains coverage and does not train conformation.**
+That is a single sentence that explains g1 through g4: the alive fraction
+climbed 44.6 -> 55.5 -> 97.7 % across runs while RMSD never left 12.8-14.3 A,
+and it never left because nothing was moving it. "Flat geometry" was never
+evidence that the geometry is unlearnable, and it is not evidence that the
+architecture is at fault either. It is a term that is missing.
+
+### Correcting the 15-17 degree inference two sections above
+
+That inference was wrong, and the direct measurement says so: **90 degrees, not
+17.** It came from pushing `lever_arm_probe.py`'s sweep through a
+`length ** 0.75` scaling, and the error is that CA RMSD and frame rotation are
+not the same quantity. **CA positions are nearly insensitive to rotation about
+the chain axis** -- spin a residue about the CA-CA direction and its CA does not
+move at all -- while the relative frame error counts that rotation in full. So
+a 90-degree frame error and a 2 A four-residue CA RMSD are consistent, and the
+sweep calibrated the component of the error that CA positions can see rather
+than the whole of it.
+
+Which makes the measurement the more alarming of the two readings, not the less:
+the part of the orientation error that CA RMSD *cannot* see is the larger part,
+and it is the part that decides whether a residue's side chain points into the
+core or out of it.
+
+**A caveat on the 90 degrees itself.** Mean geodesic error over bonded pairs
+has no reference point other than the untrained 84 degrees; a uniformly random
+rotation averages about 126 degrees, and a fixed helix against a real mixture
+of secondary structure gives the 84. So 90 is "worse than always guessing
+helix", not "uniformly random". The single crop at 33-39 degrees in both arms
+shows the quantity does discriminate -- that crop is presumably mostly helical.
