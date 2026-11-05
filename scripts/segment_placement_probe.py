@@ -105,6 +105,16 @@ def main() -> int:
     )
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--device", default="cpu")
+    parser.add_argument(
+        "--untrained", action="store_true",
+        help=(
+            "build the checkpoint's architecture but do NOT load its weights. "
+            "The comparison that makes a trained number mean something: an "
+            "untrained rule places every birth at the helical reference, so "
+            "its rotation error is whatever a constant helix scores against a "
+            "real mixture of secondary structure"
+        ),
+    )
     args = parser.parse_args()
 
     device = torch.device(args.device)
@@ -137,7 +147,8 @@ def main() -> int:
         identity=has_identity,
         identity_keep=float(stored.get("identity_keep", 2.0) or 2.0),
     ).to(device)
-    rule.load_state_dict(weights)
+    if not args.untrained:
+        rule.load_state_dict(weights)
     rule.eval()
     stored = dict(stored)
     stored["birth"] = birth
@@ -148,7 +159,9 @@ def main() -> int:
     if has_identity and not identity_weight:
         identity_weight = 93.7
     print(f"{args.checkpoint}: birth {birth}, field {has_field}, "
-          f"identity head {has_identity} (weight {identity_weight})")
+          f"identity head {has_identity} (weight {identity_weight})"
+          + (" -- WEIGHTS NOT LOADED, this is the architecture untrained"
+             if args.untrained else ""))
 
     # **The held-out structures, read from the checkpoint rather than chosen
     # here.** The trainer stores its own eval indices precisely so a later
