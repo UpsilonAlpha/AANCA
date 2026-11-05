@@ -238,6 +238,35 @@ def main() -> int:
           f"median length {sum(r[3] for r in rows) / n:.1f}, "
           f"largest {sum(r[4] for r in rows) / n:.1f}, "
           f"alive {100 * sum(r[5] for r in rows) / n:.1f}%")
+
+    if by_window:
+        # **The error as a function of the length it is measured over**, which
+        # is what separates "every residue is slightly misplaced" from "the
+        # chain drifts". A local error that does not accumulate gives a flat
+        # per-residue column; drift gives one rising with length, and how fast
+        # it rises is the drift rate.
+        print(f"\n{'window':>7} {'rmsd':>8} {'per residue':>12} {'n':>7}")
+
+        def rms(values):
+            return (sum(v * v for v in values) / len(values)) ** 0.5
+
+        for length in sorted(by_window):
+            value = rms(by_window[length])
+            print(f"{length:>7} {value:>6.2f} A {value / length:>10.3f} A "
+                  f"{len(by_window[length]):>7}")
+        shortest, longest = min(by_window), max(by_window)
+        growth_ratio = rms(by_window[longest]) / max(rms(by_window[shortest]), 1e-9)
+        length_ratio = longest / shortest
+        print(
+            f"\n{longest} residues carry {growth_ratio:.1f}x the error of "
+            f"{shortest} over {length_ratio:.0f}x the length: "
+            + (
+                "steeper than linear, so error accumulates along the chain"
+                if growth_ratio > length_ratio
+                else "shallower than linear, so most of the error is local"
+            )
+        )
+
     print(
         "\nA large ratio means the pieces are better than the whole, and the "
         "deficit is in\nhow segments are placed relative to one another -- "
