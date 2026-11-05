@@ -502,7 +502,8 @@ def main() -> int:
     print(
         f"weights: bond {args.bond_weight:g}, completion "
         f"{args.completion_weight:g}, reach {args.reach_weight:g}, identity "
-        f"{args.identity_weight:g}"
+        f"{args.identity_weight:g}, orientation "
+        f"{args.orientation_weight:g}"
     )
     # **Say whether the seed count can reach the whole crop.** A crop is a
     # spatial ball, so it contains several covalent runs, and growth cannot
@@ -533,10 +534,14 @@ def main() -> int:
                 "by topology and no step budget will lift it."
             )
     print(
-        "The alive fraction is the number to watch first. Completion at 27.2 "
-        "is\nthe weight that forbids the degenerate optimum of a seed alone "
-        "forever,\nand whether it is enough is the first thing this run "
-        "settles.\n"
+        "Read `twist` first and `alive` second. Twist is the mean geodesic "
+        "error of a\nbonded pair's relative rotation, in degrees: 0 on a "
+        "crystal structure, 84 for an\nuntrained rule, and 90.2 on trained g4 "
+        "-- so eight thousand updates made it six\ndegrees worse while the "
+        "alive fraction went from 63 % to 97 %. The growth\nobjective trained "
+        "coverage and did not train conformation, which is what\n"
+        "--orientation-weight exists to change. If twist does not fall, "
+        "nothing else in\nthis run matters.\n"
     )
 
     started = time.perf_counter()
