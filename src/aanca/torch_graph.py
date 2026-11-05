@@ -431,6 +431,58 @@ def select_neighbours_device(
 # -- features --------------------------------------------------------------
 
 
+#: Width of the density block from :func:`density_features`: one normalised
+#: scalar plus a radial-basis expansion of it.
+DENSITY_DIM = 16
+#: The expansion's range, in effective neighbours. Degree runs about 24-34
+#: across structures (``model.py``'s own note on ``aggregate_norm``), and the
+#: envelope-weighted sum is smaller than the raw count, so 0-40 covers it with
+#: headroom at both ends rather than saturating where the interesting variation
+#: is.
+DENSITY_MAX = 40.0
+
+
+def density_features(envelope: Tensor, edge_mask: Tensor) -> Tensor:
+    """``(n_res, DENSITY_DIM)``: how crowded each residue is.
+
+    **The quantity the network already computes and then discards.**
+    ``model.py`` aggregates messages as ``(messages * weight).sum(dim=1)`` with
+    ``weight = envelope * edge_mask``, so the neighbour count sits in the
+    aggregate's magnitude -- and the next line is a ``LayerNorm``, whose output
+    norm is ``sqrt(channels)`` by construction. Measured: a summed message
+    vector's norm runs 26.99, 50.87, 75.25, 99.13 at degrees 10, 20, 30, 40,
+    and after the norm it is 8.000 at every one. The degree is not attenuated,
+    it is removed exactly.
+
+    That matters because **burial is density**, and density is the one piece of
+    global-sounding information that is purely local: this project's own
+    convention (``metrics.classify_burial``, after AttnPacker) calls a residue
+    core at 20 or more CB neighbours within 10 A and surface at 15 or fewer. So
+    a cell that can count its neighbours knows whether it is buried, with no
+    centroid, no sphericity assumption and no global reduction -- which is why
+    this generalises to barrels, coiled coils and multi-domain folds where a
+    radial field from a centroid does not.
+
+    The **envelope sum** rather than a hard count, for two reasons: it is
+    exactly the weighted quantity the aggregation forms and the norm erases,
+    and it is differentiable, so gradient still reaches the geometry through it
+    the way it does through ``weight``.
+
+    Both a normalised scalar and an expansion of it are returned. The scalar
+    alone would make the network learn resolution it can be handed, and the
+    expansion alone would lose the ordering that makes "more crowded" monotone.
+    """
+    soft_degree = (envelope * edge_mask).sum(dim=-1)
+    scaled = (soft_degree / DENSITY_MAX).clamp(0.0, 1.5).unsqueeze(-1)
+    centres = torch.linspace(
+        0.0, DENSITY_MAX, DENSITY_DIM - 1,
+        dtype=envelope.dtype, device=envelope.device,
+    )
+    sigma = DENSITY_MAX / (DENSITY_DIM - 1)
+    bumps = torch.exp(-(((soft_degree.unsqueeze(-1) - centres) / sigma) ** 2))
+    return torch.cat([scaled, bumps], dim=-1)
+
+
 def rbf(distances: Tensor) -> Tensor:
     """Gaussian radial bases; appends a trailing axis of ``RBF_COUNT``."""
     centres = torch.linspace(
@@ -452,6 +504,7 @@ def node_features(
     aa_onehot: Tensor | None = None,
     blind: bool = False,
     closure: Tensor | None = None,
+    density: Tensor | None = None,
 ) -> Tensor:
     """``(n_res, 32)``: residue one-hot, chis as sin/cos pairs, and the chi mask.
 
@@ -492,6 +545,10 @@ def node_features(
         ]
     if closure is not None:
         blocks.append(closure.to(coords.dtype))
+    # Appended last so the closure block's offsets are unchanged and a growth
+    # rule without density keeps exactly the layout it was trained with.
+    if density is not None:
+        blocks.append(density.to(coords.dtype))
     return torch.cat(blocks, dim=-1)
 
 
@@ -625,6 +682,7 @@ def build_graph(
     aa_onehot: Tensor | None = None,
     blind: bool = False,
     closure: Tensor | None = None,
+    density: bool = False,
 ) -> TorchGraph:
     """Select neighbours and featurise. Differentiable except for the selection.
 
@@ -648,7 +706,10 @@ def build_graph(
         neighbours=neighbours,
         edge_mask=edge_mask,
         envelope=envelope,
-        node_features=node_features(coords, topo, aa_onehot, blind, closure),
+        node_features=node_features(
+            coords, topo, aa_onehot, blind, closure,
+            density_features(envelope, edge_mask) if density else None,
+        ),
         edge_features=features,
         feature_slices=slices,
     )

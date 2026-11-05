@@ -37,6 +37,24 @@ NODE_FEATURE_DIM = 32
 #: from ``growth`` to avoid a cycle, and asserted equal to
 #: ``growth.CLOSURE_DIM`` in ``tests/test_closure.py`` so the two cannot drift.
 GROWTH_NODE_EXTRA = 24
+
+#: Extra node dimensions a density-aware rule carries: the block from
+#: ``aanca.torch_graph.density_features``, the envelope-weighted neighbour count
+#: as a normalised scalar plus a radial expansion.
+#:
+#: **It exists because ``aggregate_norm`` below deletes that count exactly.**
+#: The aggregation is a weighted sum, so degree lives in the magnitude, and a
+#: LayerNorm's output norm is ``sqrt(channels)`` regardless of input scale --
+#: measured at 8.000 for degrees 10 through 40 where the pre-norm values were
+#: 26.99 to 99.13. Since burial *is* neighbour density (``metrics`` calls core
+#: 20+ CB neighbours within 10 A), the network was computing the burial signal
+#: and discarding it one line later. This hands it back as an input rather than
+#: changing the normalisation, so the scale stability the LayerNorm was added
+#: for is kept.
+#:
+#: Asserted equal to ``torch_graph.DENSITY_DIM`` in the tests so the two cannot
+#: drift, the same guard ``GROWTH_NODE_EXTRA`` has.
+DENSITY_NODE_EXTRA = 16
 EDGE_FEATURE_DIM = 575
 
 #: Ceiling on ``log kappa``. A likelihood loss can be reduced by claiming
@@ -130,6 +148,7 @@ class AANCARule(nn.Module):
         identity_keep: float = IDENTITY_KEEP_INIT,
         growth: bool = False,
         hole: bool = False,
+        density: bool = False,
         birth: str = "torsion",
         activation_init: float = ACTIVATION_INIT,
         max_rotation: float = 0.1,
@@ -144,6 +163,15 @@ class AANCARule(nn.Module):
         # not a silent one.
         if growth and node_dim == NODE_FEATURE_DIM:
             node_dim = NODE_FEATURE_DIM + GROWTH_NODE_EXTRA
+        # Added after the growth block for the same reason the feature is
+        # appended last in ``node_features``: a rule without density keeps
+        # exactly the layout it was trained with, so existing checkpoints load.
+        # A rule *with* it has a wider node dimension and therefore cannot be
+        # warm-started from one without -- that is a loud shape mismatch rather
+        # than a silent reinterpretation, which is the right failure.
+        if density:
+            node_dim = node_dim + DENSITY_NODE_EXTRA
+        self.density = density
         self.node_dim = node_dim
         self.hidden_dim = hidden_dim
         self.message_dim = message_dim

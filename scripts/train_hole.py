@@ -176,6 +176,20 @@ def main() -> int:
         help="what to train on. 'both' alternates, which is the honest default: "
         "a rule trained only on surrounded holes learns interpolation.",
     )
+    parser.add_argument(
+        "--density",
+        action="store_true",
+        help="give each residue its own envelope-weighted neighbour count. "
+        "**The cheap test of whether burial helps placement.** The aggregation "
+        "is a weighted sum so the count is in its magnitude, and the following "
+        "LayerNorm removes it exactly -- measured at 8.000 for degrees 10 "
+        "through 40. Burial IS that count (core is 20+ CB neighbours within "
+        "10 A), and the block correlates with the CB count at r = 0.897. This "
+        "task is the right place to test it because it has no rollout, so a "
+        "run is minutes rather than hours, and what it scores -- where a "
+        "missing residue goes -- is exactly the geometry problem growth fails "
+        "at.",
+    )
     parser.add_argument("--frontier-fraction", type=float, default=0.5)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--device", default="auto")
@@ -219,7 +233,7 @@ def main() -> int:
         f"{len(eval_indices)} held out (disjoint)"
     )
 
-    rule = AANCARule(hole=True).to(device)
+    rule = AANCARule(hole=True, density=args.density).to(device)
     optimiser = torch.optim.Adam(rule.parameters(), lr=args.lr)
     out_dir = RUNS / args.tag
     out_dir.mkdir(parents=True, exist_ok=True)

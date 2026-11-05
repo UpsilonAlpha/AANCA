@@ -170,7 +170,10 @@ def hole_predictions(
     """
     masked = alive_topology(topo, task.alive)
     graph = build_graph(
-        coords.to(torch.float32), masked, k=k, cutoff=cutoff, blind=False
+        coords.to(torch.float32), masked, k=k, cutoff=cutoff, blind=False,
+        # From the rule, as in ``rollout.step_once``: the node dimension is a
+        # property of the built rule, so these cannot be set independently.
+        density=bool(getattr(rule, "density", False)),
     )
     if hops < 1:
         raise ValueError(f"hops must be at least 1, got {hops}")

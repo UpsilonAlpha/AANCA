@@ -427,6 +427,11 @@ def step_once(
         aa_onehot=aa_onehot,
         blind=config.blind,
         closure=closure,
+        # Driven by the rule, not by the config: the node dimension is a
+        # property of the built rule, so asking the graph for a block the rule
+        # has no room for would be a shape mismatch, and the two cannot be set
+        # independently without risking exactly that.
+        density=bool(getattr(rule, "density", False)),
     )
     node = graph.node_features.to(torch.float32)
 
