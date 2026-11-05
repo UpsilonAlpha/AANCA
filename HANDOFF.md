@@ -5673,3 +5673,50 @@ natural second field is a radial or surface-emitted one, which would give burial
 concentration decaying inward does, and that one is **not** free: it needs a centroid or a surface,
 both global. So the sequence axis is first because it is both the most useful and the only one that
 costs no symmetry.
+
+### Burial needs no field: it is neighbour count, and LayerNorm deletes it exactly
+
+The centroid is the wrong primitive for the reason the user gave -- it has to generalise. A radial
+field from a centroid assumes approximate sphericity, and the centroid of a beta-barrel is in the
+hollow, of an elongated coiled coil is nowhere useful, and of a two-domain protein is between the
+domains. It is also a **global reduction**, so no cell can compute it from local messages, and during
+growth it moves as the structure fills. Three independent reasons, each fatal on its own.
+
+**But burial does not need a field at all, because burial is density and density is local.** This
+project's own convention is exactly that: `metrics.classify_burial` calls a residue core at 20 or more
+CB neighbours within 10 A and surface at 15 or fewer. A cell counting its own neighbours has the
+quantity. No centroid, no sphericity, no global reduction, and it generalises to every topology
+because it never assumes a shape.
+
+**And the model already computes it and then throws it away.** `model.py` aggregates with a weighted
+**sum** -- `(messages * weight).sum(dim=1)` -- so the degree is in the aggregate's magnitude. The next
+line is `self.aggregate_norm = nn.LayerNorm(message_dim)`, added on purpose: its comment says
+"normalising the aggregate keeps the scale stable as degree varies between 24 and 34 across
+structures." Measured directly: the summed vector's norm runs 26.99, 50.87, 75.25, 99.13 at degrees
+10, 20, 30, 40 -- and after the LayerNorm it is **8.000 at every one of them**, because a LayerNorm's
+output norm is `sqrt(channels)` by construction. **The degree is not attenuated, it is removed
+exactly.**
+
+So the burial signal the churn calibration wanted, and had to infer from chemistry instead, is
+computed by the network and deleted one line later by a normalisation added for an unrelated and
+perfectly good reason.
+
+**The fix is to stop deleting it, which is the most emergent option available** -- it adds no
+engineered feature, it removes an obstruction. Concretely: append the degree, or the envelope sum, to
+`node_features` as one scalar; or keep the LayerNorm and concatenate the pre-norm magnitude; or
+normalise by `sqrt(degree)` instead, which preserves relative scale.
+
+**This is not the charge-centroid mistake.** The user rejected that because it encoded the interaction
+geometry a cell should infer. A neighbour count is the opposite: it is the cell's own local
+observation, the thing a cell can actually sense, and the model is currently blind to it for
+implementation reasons rather than scientific ones. Honest caveat: burial is **partly** recoverable
+without it, since each edge carries RBF distances and a buried residue's edge pattern differs from a
+surface residue's -- so the claim is that the single cleanest signal is erased, not that burial is
+wholly unavailable.
+
+**It also unlocks the generalisable spatial field.** With degree visible, a cell can tell it is on the
+surface locally. A surface-emitted morphogen that diffuses inward then gives a depth field with no
+centroid and no shape assumption, working for barrels, elongated and multi-domain proteins alike --
+which is what a boundary signal does in a real tissue. The dependency is clean and each step is local:
+**degree -> surface detection -> inward-diffusing depth.** The degree fix comes first because the other
+two rest on it.
