@@ -97,21 +97,45 @@ def main() -> int:
     device = torch.device(args.device)
     state = ckpt.load(Path(args.checkpoint), map_location="cpu")
     stored = state.get("args") or {}
+    weights = ckpt.rule_weights(state)
+
+    # **Which heads the rule has is read from the weights, not from the stored
+    # arguments.** g4's checkpoint carries an identity head while its stored
+    # ``identity_weight`` reads 0, so trusting the arguments built a rule
+    # without one and ``load_state_dict`` refused. The weights cannot
+    # disagree with themselves.
+    has_identity = "identity_head.0.weight" in weights
+    has_field = "emit_head.0.weight" in weights
+    has_birth_head = "birth_head.0.weight" in weights
+    birth = str(stored.get("birth") or "cartesian")
+    if not has_birth_head:
+        birth = "free"
+    elif birth == "free":
+        # The stored argument says free and the weights say otherwise; the
+        # weights win, and cartesian is the only other mode a growth run here
+        # has used.
+        birth = "cartesian"
     identity_weight = float(stored.get("identity_weight", 0.0) or 0.0)
     rule = AANCARule(
         growth=True,
-        birth=str(stored.get("birth", "cartesian")),
-        morphogen=bool(stored.get("morphogen")),
-        activation_init=float(stored.get("activation_init", -2.0)),
-        identity=bool(identity_weight),
-        identity_keep=float(stored.get("identity_keep", 2.0)),
+        birth=birth,
+        morphogen=has_field,
+        activation_init=float(stored.get("activation_init", -2.0) or -2.0),
+        identity=has_identity,
+        identity_keep=float(stored.get("identity_keep", 2.0) or 2.0),
     ).to(device)
-    rule.load_state_dict(ckpt.rule_weights(state))
+    rule.load_state_dict(weights)
     rule.eval()
+    stored = dict(stored)
+    stored["birth"] = birth
 
-    print(f"{args.checkpoint}: birth {stored.get('birth', 'cartesian')}, "
-          f"morphogen {bool(stored.get('morphogen'))}, "
-          f"identity weight {identity_weight}")
+    # The identity *track* is on whenever the head exists: a blind rollout is
+    # what the head was trained under, and running it sighted would feed it an
+    # input distribution it never saw.
+    if has_identity and not identity_weight:
+        identity_weight = 93.7
+    print(f"{args.checkpoint}: birth {birth}, field {has_field}, "
+          f"identity head {has_identity} (weight {identity_weight})")
 
     # **The held-out structures, read from the checkpoint rather than chosen
     # here.** The trainer stores its own eval indices precisely so a later
