@@ -5883,3 +5883,134 @@ from its parent's frame.
 
 Untested. Nothing measured so far licenses it over the sequence field; it is what to do if a route
 through the chain turns out not to be enough.
+
+## Built 2026-11-05: free placement, and a field that travels along the chain
+
+Both of the directions the rethink above left open, implemented together at
+Ulban's instruction. Neither is measured yet -- what follows is the design and
+the reasoning, and the arms set up to test it.
+
+### Free placement (`--birth free`)
+
+**There is no birth head.** Not zeroed and not frozen: absent, so "the birth
+head is not being trained" is a claim about the architecture rather than about
+a run's configuration. A newborn is placed at the unlearned reference pose off
+its parent's frame -- `_cartesian_triad` with the head's output held at zero,
+which is exactly where a torsion birth and a Cartesian birth both start -- and
+then places itself over the following `placement_steps` steps with the frame
+head, reading its own neighbourhood.
+
+The reason is the lever arm. Under both other modes a child's frame is
+`rot_parent @ rot_reference @ rot_spin`, and `rot_spin` is the learned part, so
+an orientation error sits *inside* a composition and multiplies down the
+ancestry -- about twenty times the angle at twenty Angstrom. With the head
+gone, the only learned part of placement is a per-residue rigid move read from
+that residue's own neighbours, so learned error is additive over residues
+instead of multiplicative along a path. The reference pose still inherits the
+parent's orientation, because something has to put a newborn somewhere, but it
+is a constant rather than a trained quantity and so cannot be *fitted* into a
+compounding error.
+
+**The placement window is what makes this different from freezing the birth
+head.** `GrowthConfig.placement_steps` (8 by default under `free`, 0 under
+everything else) gives a residue in its first few steps a bound of pi radians
+and 4.0 A per move instead of 0.1 and 0.3. Without it a newborn would be
+allowed 0.1 rad per step to leave a pose it inherited, which over a rollout
+does not undo an inherited orientation -- the coalescence probe measured
+r = 0.970 between junction gaps and accumulated drift. 4.0 A because the CA-CA
+distance is 3.804, so a residue can reach either of its own bonded positions in
+one move and no further: placement stays a local decision about its own
+neighbourhood rather than a free jump across the crop.
+
+The bound is now per residue, which needed `growth_outputs` to take optional
+`(R, 1)` limit tensors; `_bounded` already broadcast. The age that selects it
+lives in `RolloutState.age` and **resets at birth** rather than being
+inherited, because a slot parked for eighty steps and just woken is new, not
+old -- and most births happen late in a rollout, which is exactly where
+inheriting the slot's age would deny the window.
+
+What it costs, stated plainly: this is still growth from a parent, so it is the
+intermediate recorded above rather than the full free-placement model. Growth
+sets *when* a residue exists and relaxation sets *where*. The full version --
+all N nodes present from the start, each placing itself -- gives up de novo
+length and has not been built.
+
+### The chain morphogen (`--morphogen`, `aanca.morphogen`)
+
+Ten channels per residue, transported one hop per step along the **covalent
+chain** and read back as node features (amplitude and log-amplitude, 20
+features, `FIELD_NODE_EXTRA`).
+
+* **Four scales sourced at each alive run's N-terminus** and transported
+  C-ward, decays 0.99 / 0.95 / 0.85 / 0.60, and four mirrored at the
+  C-terminus. Directed transport rather than symmetric diffusion, which is a
+  departure from what "morphogen" usually means and is deliberate: directed
+  transport advances exactly one residue per hop and converges to
+  `decay ** (i - start)`, so its logarithm is **linear in chain distance from
+  the terminus** -- a positional coordinate. Symmetric diffusion from one
+  source spreads as the square root of time and would still be propagating when
+  a 120-step rollout ended. Four scales because one cannot resolve both near a
+  terminus and far from it: 0.99 is still 0.28 at a hundred residues while 0.60
+  has fallen to 0.01 by residue nine.
+* **Two channels the rule secretes into**, symmetric, via `AANCARule.emit`.
+  This is the emergent half: the terminus sources are fixed physics, but a cell
+  choosing what to secrete is a cell inventing a coordinate nobody specified.
+  The update is `a + e - a*e` rather than `(a + e).clamp(max=1)`, because a
+  clamp has exactly zero gradient once it binds and a head secreting near its
+  maximum would train with no signal at all.
+
+**Nothing is handed a global coordinate.** A source is defined as the *absence
+of inflow*, which is the same test as "is this the terminus of its alive run"
+written so the two cannot disagree, so no residue is told its index or the
+protein's length. A normalised sequence index would give the same gradient and
+would be neither local nor length-free; that is what this deliberately is not.
+
+**Why it is a route and not a feature.** Every edge perception uses is selected
+from `coords.detach()` within 10 A, so two residues that ought to touch and
+currently do not have no edge and no gradient path. The chain connects them
+regardless of what the geometry says, and this transports a quantity along it.
+The claim is about connectivity, not about information content.
+
+### Two limits, recorded rather than buried
+
+* **The field conducts through alive residues only**, so it reaches exactly as
+  far as the chain has been grown. That is the right choice -- if dormant slots
+  conducted, the converged field would be `decay ** i`, a deterministic
+  function of the residue index, and the whole thing would be a positional
+  encoding handed over rather than a quantity the growing chain carries. But it
+  means the field connects two residues far apart *in sequence on one grown
+  run* and **does not connect two separately seeded segments until they fuse**.
+  Since multi-seed coalescence is the regime that matters, this is the half of
+  the deficit the field does not address.
+* **Every head's output layer is zero-initialised**, so `W.T @ g` is zero and
+  *no* gradient returns into the node features at initialisation. The emit
+  head, whose only route to a loss is through what other residues perceive,
+  therefore reads exactly 0.000 gradient on an untrained rule and starts
+  learning only once another head has moved. Demonstrated in
+  `tests/test_free_placement.py` with a 0.01 perturbation rather than papered
+  over.
+
+### The arms
+
+Three GPU jobs, leaving one of the four QOS slots free for Ulban's own array.
+All matched: `--split train --updates 8000 --eval-every 500 --identity-weight
+93.7 --seeds 16 --steps 120`, crop 128, corrected weights (bond 0.122,
+completion 5.23, reach 0.086).
+
+| tag | birth | field | isolates |
+|---|---|---|---|
+| `g5_ctrl` | cartesian | off | the cold-start control |
+| `g5_free` | free | off | free placement |
+| `g5_both` | free | on | the field, on top of free placement |
+
+**A cold-start control is necessary rather than tidy.** g4 warm-started from
+`runs/g1/last.pt`, and neither new arm can: `free` has no birth head to load
+and `--morphogen` widens the node dimension, so both are cold by construction.
+Comparing a cold arm to a warm baseline would confound the mechanism with the
+warm start.
+
+The number to watch is RMSD, which has never left **12.8-14.3 A** across g1-g4.
+Alive fraction should stay near g3's 97.7 % -- if free placement costs coverage,
+that is the first place it shows. **And not to repeat the g3 mistake: nothing
+is flat until the run ends.** g3 was called flat at 2,500 of 8,000 updates and
+then improved from 13.90 to 12.78 A.
