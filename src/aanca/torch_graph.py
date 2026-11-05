@@ -505,6 +505,7 @@ def node_features(
     blind: bool = False,
     closure: Tensor | None = None,
     density: Tensor | None = None,
+    morphogen: Tensor | None = None,
 ) -> Tensor:
     """``(n_res, 32)``: residue one-hot, chis as sin/cos pairs, and the chi mask.
 
@@ -549,6 +550,11 @@ def node_features(
     # rule without density keeps exactly the layout it was trained with.
     if density is not None:
         blocks.append(density.to(coords.dtype))
+    # Appended after density for the same reason density was appended after
+    # closure: every earlier block keeps the offset it was trained at, so a
+    # checkpoint from before this block still loads and means the same thing.
+    if morphogen is not None:
+        blocks.append(morphogen.to(coords.dtype))
     return torch.cat(blocks, dim=-1)
 
 
@@ -683,6 +689,7 @@ def build_graph(
     blind: bool = False,
     closure: Tensor | None = None,
     density: bool = False,
+    morphogen: Tensor | None = None,
 ) -> TorchGraph:
     """Select neighbours and featurise. Differentiable except for the selection.
 
@@ -709,6 +716,7 @@ def build_graph(
         node_features=node_features(
             coords, topo, aa_onehot, blind, closure,
             density_features(envelope, edge_mask) if density else None,
+            morphogen,
         ),
         edge_features=features,
         feature_slices=slices,

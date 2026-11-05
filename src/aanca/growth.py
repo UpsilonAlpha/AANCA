@@ -117,6 +117,23 @@ class GrowthConfig:
     #: 0.1 rad and 0.3 A per step over a rollout is enough to undo accumulated
     #: rotation is empirical, and the coalescence probe's r = 0.970 between
     #: junction gaps and accumulated drift says it currently is not.
+    #: ``"free"`` removes the birth head altogether. A newborn is placed at
+    #: the unlearned reference pose off its parent's frame -- the same place
+    #: every other mode *starts* -- and then places itself over the following
+    #: ``placement_steps`` steps with the frame head, reading its own
+    #: neighbourhood, under the loosened bounds below.
+    #:
+    #: This is the one change that attacks the lever arm rather than mitigating
+    #: it. Under ``torsion`` and ``cartesian`` the learned part of placement is
+    #: ``rot_spin``, which sits inside the composition
+    #: ``rot_parent @ rot_reference @ rot_spin`` and therefore multiplies down
+    #: the ancestry. Under ``free`` the only learned part of placement is a
+    #: per-residue rigid move read from that residue's own neighbours, so
+    #: learned error is additive over residues instead of multiplicative along
+    #: a path. The unlearned reference pose still inherits the parent's
+    #: orientation -- something has to put a newborn somewhere -- but it is a
+    #: constant, not a trained quantity, so it cannot be *fitted* into a
+    #: compounding error.
     birth: str = "torsion"
     #: How a wake decision is drawn from the activation logit. ``"sample"``
     #: draws a Bernoulli and passes a straight-through gradient; ``"threshold"``
@@ -133,6 +150,23 @@ class GrowthConfig:
     #: local, which is the same reasoning as ``MAX_BOND_DELTA``.
     max_rotation: float = 0.1
     max_translation: float = 0.3
+    #: How many steps a residue counts as newly placed for. Within them the
+    #: bounds below apply instead of the two above.
+    #:
+    #: Only meaningful under ``birth="free"``, where placement *is* relaxation:
+    #: a newborn starts at the reference pose and has to travel to wherever its
+    #: neighbourhood says it belongs, and 0.1 rad per step cannot turn it round
+    #: before the structure it is fitting into has moved on. Defaults to zero
+    #: so every other mode is byte-identical to before.
+    placement_steps: int = 0
+    #: One placement step's bounds: radians and Angstrom. ``pi`` because a
+    #: newborn may need to face any direction at all, and 4.0 A because the
+    #: CA-CA distance is 3.804 -- so a residue can reach either of its own
+    #: bonded positions in one move and no further, which keeps placement a
+    #: local decision about its own neighbourhood rather than a free jump
+    #: across the crop.
+    placement_rotation: float = 3.14159265
+    placement_translation: float = 4.0
 
 
 # -- term weights, measured rather than chosen ----------------------------
@@ -440,7 +474,7 @@ def give_birth(
     links: Tensor,
     born_n: Tensor,
     born_c: Tensor,
-    torsions: Tensor,
+    torsions: Tensor | None,
     geometry: BackboneGeometry | None = None,
     birth_mode: str = "torsion",
 ) -> tuple[Tensor, Tensor]:
@@ -504,10 +538,19 @@ def give_birth(
         if parents.numel() == 0:
             continue
         n, ca, c = bb[parents, 0], bb[parents, 1], bb[parents, 2]
-        if birth_mode == "cartesian":
-            triad = _cartesian_triad(
-                (n, ca, c), torsions[parents, direction], direction
+        if birth_mode in ("cartesian", "free"):
+            # ``free`` is the Cartesian birth with the head's output held at
+            # zero, which is exactly the reference pose -- so a free rollout
+            # starts a newborn where a torsion rollout and a Cartesian rollout
+            # both start it, and the three modes differ only in what is
+            # learnable about where it ends up.
+            emitted = (
+                torch.zeros(parents.numel(), 6, device=coords.device,
+                            dtype=coords.dtype)
+                if birth_mode == "free"
+                else torsions[parents, direction]
             )
+            triad = _cartesian_triad((n, ca, c), emitted, direction)
         elif birth_mode == "torsion":
             geo = index_geometry(geometry, children)
             angles = torsions[parents, direction]
@@ -517,8 +560,8 @@ def give_birth(
             )
         else:
             raise ValueError(
-                f"unknown birth mode {birth_mode!r}; expected 'torsion' or "
-                "'cartesian'"
+                f"unknown birth mode {birth_mode!r}; expected 'torsion', "
+                "'cartesian' or 'free'"
             )
         source = (bb[children, 0], bb[children, 1], bb[children, 2])
         placed = rigid_onto_triad(new_coords[children], source, triad)

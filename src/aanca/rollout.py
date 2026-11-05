@@ -45,6 +45,7 @@ from torch import Tensor
 
 from . import residue_constants as rc
 from .blind import blind_coords
+from .morphogen import diffuse, field_features, initial_field
 from .growth import (
     GrowthConfig,
     alive_topology,
@@ -204,6 +205,16 @@ class RolloutState:
     #: ``growth.growth_objective`` for why the final state is the right place
     #: to supervise them and not every step.
     activation_logits: Tensor | None = None
+    #: ``(R, morphogen.FIELD_CHANNELS)``: the chain-transported field, or
+    #: ``None`` when the rule has no field. Carried between steps because
+    #: transport is one hop per step -- the field *is* the memory of where a
+    #: terminus is, and recomputing it each step from scratch would need the
+    #: whole chain at once, which is the global operation this avoids.
+    morphogen: Tensor | None = None
+    #: ``(R,)`` int: steps since each residue became alive, zero for a residue
+    #: born this step and for a dormant slot. Read only to decide whether a
+    #: residue is still placing itself; see ``GrowthConfig.placement_steps``.
+    age: Tensor | None = None
 
     def detached(self) -> "RolloutState":
         return RolloutState(
@@ -222,6 +233,12 @@ class RolloutState:
                 if self.activation_logits is None
                 else self.activation_logits.detach()
             ),
+            # Detached, unlike ``alive``: the field carries gradient from the
+            # secretion head, so a truncation boundary has to cut it or
+            # backpropagation reaches past the window through the field instead
+            # of through the hidden state.
+            morphogen=None if self.morphogen is None else self.morphogen.detach(),
+            age=self.age,
         )
 
 
@@ -273,12 +290,20 @@ def initial_state(
     """
     if alive is not None:
         coords = park_coords(coords, alive)
+    morphogen = None
+    age = None
+    if alive is not None:
+        age = torch.zeros(coords.shape[0], dtype=torch.long, device=coords.device)
+    if alive is not None and getattr(rule, "morphogen", False):
+        morphogen = initial_field(coords.shape[0], coords.device, dtype)
     return RolloutState(
         coords=coords,
         hidden=rule.initial_hidden(coords.shape[0], coords.device, dtype),
         step=0,
         identity=identity,
         alive=alive,
+        morphogen=morphogen,
+        age=age,
     )
 
 
@@ -381,6 +406,7 @@ def step_once(
     under test.
     """
     alive = state.alive
+    age = state.age
     closure = None
     if alive is not None and config.growth is not None and not rule.growth:
         # Checked here rather than where the heads are used, because a growth
@@ -406,6 +432,9 @@ def step_once(
         closure = closure_features(
             closure_separation(alive, links), config.feature_dtype
         )
+    field_block = None
+    if state.morphogen is not None:
+        field_block = field_features(state.morphogen).to(config.feature_dtype)
 
     coords_seen = state.coords
     aa_onehot = None
@@ -432,6 +461,7 @@ def step_once(
         # has no room for would be a shape mismatch, and the two cannot be set
         # independently without risking exactly that.
         density=bool(getattr(rule, "density", False)),
+        morphogen=field_block,
     )
     node = graph.node_features.to(torch.float32)
 
@@ -472,8 +502,25 @@ def step_once(
     activation = None
     if alive is not None and config.growth is not None:
         growth = config.growth
+        # A residue that has just been woken is still placing itself and gets
+        # the loosened bounds; a settled one keeps the tight bound that makes
+        # relaxation local. Under every mode but ``free`` the window is zero
+        # and this is exactly the scalar bound as before.
+        rotation_limit = translation_limit = None
+        if growth.placement_steps > 0 and state.age is not None:
+            placing = (state.age < growth.placement_steps).unsqueeze(-1)
+            rotation_limit = torch.where(
+                placing,
+                torch.full_like(node[:, :1], growth.placement_rotation),
+                torch.full_like(node[:, :1], rule.max_rotation),
+            )
+            translation_limit = torch.where(
+                placing,
+                torch.full_like(node[:, :1], growth.placement_translation),
+                torch.full_like(node[:, :1], rule.max_translation),
+            )
         activation, torsions, axis_angle, translation = rule.growth_outputs(
-            node, hidden
+            node, hidden, rotation_limit, translation_limit
         )
         # Relax first, then give birth, so a newborn is placed off its
         # parent's *current* frame rather than off a stale one. The two are
@@ -481,6 +528,7 @@ def step_once(
         # a birth sees this step's correction or the last one's.
         coords = rigid_relax(coords, axis_angle, translation, topo, moving)
 
+        was_alive = alive
         nward, cward = frontier(alive, links, growth.cward_only)
         nward = limit_births(nward & moving, growth.max_births, generator)
         cward = limit_births(cward & moving, growth.max_births, generator)
@@ -502,6 +550,17 @@ def step_once(
             birth_mode=growth.birth,
         )
         coords = correct_oxygens(coords, topo, alive, links)
+        if state.age is not None:
+            # Age counts steps since waking, so a residue born this step is
+            # zero and starts its placement window on the *next* step -- which
+            # is when it first has a neighbourhood to read. Reset rather than
+            # incremented for a newborn, because a slot that was parked for
+            # eighty steps and has just been woken is new, not old.
+            born_now = alive & ~was_alive
+            new_age = torch.where(
+                born_now, torch.zeros_like(state.age), state.age + 1
+            )
+            age = torch.where(alive, new_age, torch.zeros_like(state.age))
         if config.blind:
             # **A blind growth rollout holds no side chains at all**, not even
             # ones it cannot see. A newborn's non-backbone atoms arrive by
@@ -516,6 +575,23 @@ def step_once(
             # Gated on growth, not on ``blind`` alone: a blind *packing*
             # rollout is placing side chains and must keep them.
             coords = blind_coords(coords, topo)
+
+    # One hop of transport, after the rule has run and with the secretion it
+    # just chose. Placed here rather than before perception so a residue reads
+    # the field its neighbourhood had when it decided, and the field it
+    # produces is what the *next* step reads -- the same one-step lag the
+    # hidden state has, for the same reason.
+    morphogen = state.morphogen
+    if morphogen is not None:
+        if alive is None:
+            raise ValueError(
+                "this rollout carries a morphogen field but no alive mask. "
+                "The field's sources are the termini of each alive covalent "
+                "run, so without the mask there are no sources and the field "
+                "would stay zero for the whole rollout "
+                "(aanca.rollout; see aanca.morphogen)."
+            )
+        morphogen = diffuse(morphogen, alive, links, rule.emit(node, hidden))
 
     identity, logits = state.identity, None
     if state.identity is not None:
@@ -574,6 +650,8 @@ def step_once(
             identity_logits=logits,
             alive=alive,
             activation_logits=activation,
+            morphogen=morphogen,
+            age=age,
         ),
         mu,
         log_kappa,

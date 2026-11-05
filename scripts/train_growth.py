@@ -79,6 +79,12 @@ RUNS = ROOT / "runs"
 #: ``steps`` is deliberately absent -- changing it is the whole point.
 WARM_START_MUST_MATCH = (
     "split", "structures", "eval_structures", "seed", "crop_size", "k",
+    # Architecture, not data. ``morphogen`` widens the node dimension and
+    # ``birth`` decides whether a birth head exists at all, so a mismatch is a
+    # shape error at the first forward pass -- and "mat1 and mat2 shapes cannot
+    # be multiplied" is the wrong thing to tell someone who warm-started from
+    # the wrong run.
+    "birth", "morphogen",
 )
 
 
@@ -123,6 +129,9 @@ def build_config(args, activation: str) -> RolloutConfig:
             max_births=args.max_births,
             max_rotation=args.max_rotation,
             max_translation=args.max_translation,
+            placement_steps=args.placement_steps,
+            placement_rotation=args.placement_rotation,
+            placement_translation=args.placement_translation,
         ),
     )
 
@@ -249,7 +258,25 @@ def main() -> int:
 
     parser.add_argument("--seeds", type=int, default=4)
     parser.add_argument("--cward-only", action="store_true")
-    parser.add_argument("--birth", choices=("torsion", "cartesian"), default="cartesian")
+    parser.add_argument(
+        "--birth", choices=("torsion", "cartesian", "free"), default="cartesian"
+    )
+    # Zero by default so every mode but ``free`` is unchanged; the free mode
+    # sets it below unless the caller asked for something else, because free
+    # placement with no placement window is the Cartesian birth with its head
+    # frozen and would measure nothing.
+    parser.add_argument("--placement-steps", type=int, default=0)
+    parser.add_argument("--placement-rotation", type=float, default=3.14159265)
+    parser.add_argument("--placement-translation", type=float, default=4.0)
+    parser.add_argument(
+        "--morphogen",
+        action="store_true",
+        help=(
+            "carry the chain-transported field from aanca.morphogen and feed "
+            "it to perception: a route between two residues that does not "
+            "depend on them being within the perception cutoff"
+        ),
+    )
     parser.add_argument("--max-births", type=int, default=8)
     parser.add_argument("--max-rotation", type=float, default=0.1)
     parser.add_argument("--max-translation", type=float, default=0.3)
@@ -327,6 +354,21 @@ def main() -> int:
     )
     args = parser.parse_args()
 
+    if args.birth == "free" and args.placement_steps == 0:
+        # Free placement with no placement window is the Cartesian birth with
+        # its head held at zero: the newborn would sit at the reference pose
+        # and be allowed 0.1 rad and 0.3 A per step to leave it, which over a
+        # rollout cannot undo an inherited orientation (the coalescence probe's
+        # r = 0.970 between junction gaps and accumulated drift). Defaulted
+        # rather than required, because a run with the window at zero would
+        # produce a plausible-looking null that measures nothing.
+        args.placement_steps = 8
+        print(
+            "note: --birth free with no --placement-steps; defaulting to 8. "
+            "Placement *is* relaxation under this mode, so a newborn needs a "
+            "window in which it may travel further than a settled residue."
+        )
+
     if args.identity_weight and args.birth == "torsion":
         # Not fatal, but worth saying: a torsion birth reads the parent's type
         # to pick its geometry, and under a blind rollout the newborn has no
@@ -371,6 +413,7 @@ def main() -> int:
     rule = AANCARule(
         growth=True,
         birth=args.birth,
+        morphogen=args.morphogen,
         activation_init=args.activation_init,
         max_rotation=args.max_rotation,
         max_translation=args.max_translation,

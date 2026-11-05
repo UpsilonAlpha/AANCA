@@ -27,6 +27,7 @@ from torch import Tensor, nn
 
 from . import residue_constants as rc
 from .identity import LIBRARY_SIZE
+from .morphogen import EMIT_CHANNELS
 
 #: Dimensions of the NumPy featuriser's output, from ``graph.build_graph``.
 NODE_FEATURE_DIM = 32
@@ -55,6 +56,21 @@ GROWTH_NODE_EXTRA = 24
 #: Asserted equal to ``torch_graph.DENSITY_DIM`` in the tests so the two cannot
 #: drift, the same guard ``GROWTH_NODE_EXTRA`` has.
 DENSITY_NODE_EXTRA = 16
+
+#: Extra node dimensions a field-aware rule carries: the block from
+#: ``aanca.morphogen.field_features``, each chain-transported channel's
+#: amplitude and its logarithm.
+#:
+#: **It exists because perception is selected from the model's own
+#: coordinates.** ``select_neighbours`` keeps pairs within 10 A of where the
+#: rule currently thinks they are, so two residues that ought to touch and do
+#: not have no edge and no gradient path. A quantity transported along the
+#: covalent chain reaches one from the other anyway, because the backbone
+#: connects them whatever the geometry says. See ``aanca.morphogen``.
+#:
+#: Asserted equal to ``morphogen.FIELD_FEATURE_DIM`` in the tests, the same
+#: guard the two blocks above have.
+FIELD_NODE_EXTRA = 20
 EDGE_FEATURE_DIM = 575
 
 #: Ceiling on ``log kappa``. A likelihood loss can be reduced by claiming
@@ -149,6 +165,7 @@ class AANCARule(nn.Module):
         growth: bool = False,
         hole: bool = False,
         density: bool = False,
+        morphogen: bool = False,
         birth: str = "torsion",
         activation_init: float = ACTIVATION_INIT,
         max_rotation: float = 0.1,
@@ -172,6 +189,12 @@ class AANCARule(nn.Module):
         if density:
             node_dim = node_dim + DENSITY_NODE_EXTRA
         self.density = density
+        # Appended after density, same reasoning again: earlier blocks keep
+        # their offsets, and a width mismatch against an older checkpoint is a
+        # loud failure rather than a silent reinterpretation of the features.
+        if morphogen:
+            node_dim = node_dim + FIELD_NODE_EXTRA
+        self.morphogen = morphogen
         self.node_dim = node_dim
         self.hidden_dim = hidden_dim
         self.message_dim = message_dim
@@ -259,9 +282,10 @@ class AANCARule(nn.Module):
         self.max_rotation = max_rotation
         self.max_translation = max_translation
         self.max_birth_direction = max_birth_direction
-        if birth not in ("torsion", "cartesian"):
+        if birth not in ("torsion", "cartesian", "free"):
             raise ValueError(
-                f"unknown birth {birth!r}; expected 'torsion' or 'cartesian'"
+                f"unknown birth {birth!r}; expected 'torsion', 'cartesian' or "
+                "'free'"
             )
         if growth:
             # Two logits: N-ward and C-ward. Separate rather than one, because
@@ -287,13 +311,39 @@ class AANCARule(nn.Module):
             # one, because axis-angle is not a vector space: measured, the
             # additive difference between helix and sheet is 4.6 rad while the
             # geodesic between them is 1.86.
-            width = 2 * 6 if birth == "cartesian" else 2 * 3 * 2
-            self.birth_head = nn.Sequential(
-                nn.Linear(state_dim, 64), nn.GELU(), nn.Linear(64, width)
-            )
+            #
+            # ``free``: **no birth head at all.** A newborn is placed at the
+            # unlearned reference pose off its parent's frame and then places
+            # itself, over the following steps, with the frame head reading its
+            # own neighbourhood. The reason is the rotational lever arm: under
+            # both heads above a child's frame is
+            # ``rot_parent @ rot_reference @ rot_spin``, so a learned
+            # orientation error composes multiplicatively down the ancestry and
+            # a residue twenty Angstrom along is displaced by twenty times it.
+            # With the head removed, the only learned part of placement is a
+            # per-residue move read from that residue's own neighbours, so
+            # learned error is additive over residues rather than multiplicative
+            # along a path. It also moves placement onto the operation that
+            # already works: "place a residue among its neighbours" reaches
+            # 0.95 A on bonded positions in the hole task, while composing a
+            # chain of births has never left 12.8 A.
+            if birth != "free":
+                width = 2 * 6 if birth == "cartesian" else 2 * 3 * 2
+                self.birth_head = nn.Sequential(
+                    nn.Linear(state_dim, 64), nn.GELU(), nn.Linear(64, width)
+                )
             # Axis-angle rotation and translation of the residue's own atoms.
             self.frame_head = nn.Sequential(
                 nn.Linear(state_dim, 64), nn.GELU(), nn.Linear(64, 6)
+            )
+        if morphogen and EMIT_CHANNELS:
+            # What this residue secretes into the diffusing channels, in
+            # ``[0, 1]`` by a sigmoid. Separate from every other head because
+            # it is the one output that does not act on geometry at all: it
+            # acts on what other residues can perceive, which is the only kind
+            # of output a cell in a developing tissue actually has.
+            self.emit_head = nn.Sequential(
+                nn.Linear(state_dim, 64), nn.GELU(), nn.Linear(64, EMIT_CHANNELS)
             )
         if hole:
             self.hole_head = nn.Sequential(
@@ -344,6 +394,7 @@ class AANCARule(nn.Module):
             with torch.no_grad():
                 final.bias.fill_(float(self.activation_init))
 
+        if self.growth and self.birth != "free":
             final = self.birth_head[-1]
             nn.init.zeros_(final.weight)
             if self.birth == "cartesian":
@@ -371,6 +422,7 @@ class AANCARule(nn.Module):
                     ).reshape(-1)
                     final.bias.copy_(bias)
 
+        if self.growth:
             # Zeroed, so an untrained rule relaxes by not moving -- the one
             # place growth does have an identity initialisation.
             nn.init.zeros_(self.frame_head[-1].weight)
@@ -503,9 +555,30 @@ class AANCARule(nn.Module):
         out = self.hole_head(state)
         return out[:, :3], out[:, 3]
 
+    def emit(self, node_features: Tensor, hidden: Tensor) -> Tensor | None:
+        """``(R, EMIT_CHANNELS)`` in ``[0, 1]``: what each residue secretes.
+
+        ``None`` when the rule has no field, so the caller can pass the result
+        straight to :func:`aanca.morphogen.diffuse`, which takes ``None`` to
+        mean no secretion.
+
+        It carries gradient. Every residue the field reaches reads the emitted
+        channels as node features, so a later loss anywhere downchain trains
+        the head that secreted -- which is the one route in this architecture
+        that does not pass through the spatial graph.
+        """
+        if not getattr(self, "morphogen", False):
+            return None
+        state = torch.cat([node_features, hidden], dim=-1)
+        return torch.sigmoid(self.emit_head(state))
+
     def growth_outputs(
-        self, node_features: Tensor, hidden: Tensor
-    ) -> tuple[Tensor, Tensor, Tensor, Tensor]:
+        self,
+        node_features: Tensor,
+        hidden: Tensor,
+        rotation_limit: Tensor | None = None,
+        translation_limit: Tensor | None = None,
+    ) -> tuple[Tensor, Tensor | None, Tensor, Tensor]:
         """``(activation, torsions, axis_angle, translation)``.
 
         - ``activation`` ``(R, 2)`` raw logits, N-ward then C-ward.
@@ -516,11 +589,25 @@ class AANCARule(nn.Module):
           axis-angle rotating the reference CA direction, bounded by
           ``max_birth_direction``, followed by an unbounded axis-angle
           composing onto the reference orientation.
+          Under ``birth="free"`` it is ``None``: there is no birth head, and a
+          newborn goes to the unlearned reference pose and then places itself
+          with the frame head below.
+
         - ``axis_angle`` ``(R, 3)`` and ``translation`` ``(R, 3)``, both
           hard-bounded here so one relaxation step stays local whatever the
           head asks for. Bounding by scaling the whole vector rather than each
           component keeps the rotation's *axis* untouched, which a per-component
           tanh would not.
+
+          ``rotation_limit`` and ``translation_limit`` override the rule's own
+          bounds **per residue**, as ``(R, 1)`` tensors. Free placement needs
+          this: a residue that has just been woken has to travel from the
+          reference pose to wherever its neighbourhood says it belongs, which
+          0.1 rad and 0.3 A per step cannot do in the handful of steps before
+          the structure around it moves on, while a settled residue should keep
+          the tight bound that makes relaxation local. So the limit is a
+          function of a residue's age and belongs to the caller, which is the
+          only thing that knows it.
 
         Raises if the rule was not built with ``growth=True``, rather than
         returning ``None`` like the other optional heads: there is no sensible
@@ -535,7 +622,9 @@ class AANCARule(nn.Module):
         state = torch.cat([node_features, hidden], dim=-1)
         activation = self.activation_head(state)
 
-        if self.birth == "cartesian":
+        if self.birth == "free":
+            birth = None
+        elif self.birth == "cartesian":
             raw = self.birth_head(state).view(-1, 2, 6)
             birth = torch.cat(
                 [_bounded(raw[..., :3], self.max_birth_direction), raw[..., 3:]],
@@ -546,15 +635,21 @@ class AANCARule(nn.Module):
             birth = torch.atan2(raw[..., 1], raw[..., 0])
 
         move = self.frame_head(state)
-        axis_angle = _bounded(move[:, :3], self.max_rotation)
-        translation = _bounded(move[:, 3:], self.max_translation)
+        rotation_cap = (
+            self.max_rotation if rotation_limit is None else rotation_limit
+        )
+        translation_cap = (
+            self.max_translation if translation_limit is None else translation_limit
+        )
+        axis_angle = _bounded(move[:, :3], rotation_cap)
+        translation = _bounded(move[:, 3:], translation_cap)
         return activation, birth, axis_angle, translation
 
     def parameter_count(self) -> int:
         return sum(p.numel() for p in self.parameters())
 
 
-def _bounded(vector: Tensor, limit: float) -> Tensor:
+def _bounded(vector: Tensor, limit: float | Tensor) -> Tensor:
     """Scale ``vector`` so its norm never exceeds ``limit``, keeping direction.
 
     ``tanh`` on the norm rather than a hard clamp, so the bound is smooth and
