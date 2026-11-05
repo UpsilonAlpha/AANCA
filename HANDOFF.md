@@ -6426,3 +6426,75 @@ updates: 13.99 A for the control, 14.22 A with free placement and the chain
 field. Within noise, and consistent with what `lever_arm_probe.py` predicted --
 free placement cannot change how an orientation error propagates, and a chain
 field cannot supply a rotation the objective never asked for.
+
+### Collected 2026-11-06: all three arms ran to 8,000 updates, and the questions above are answered
+
+Three runs, same seeds, same data order, same 8,000 updates, held-out evals
+every 500 at a matched alive fraction of 97.7 %. Logs
+`aanca-gpu-32175722/24/32178005.out`; all three exited 0, with 3-4 of 8,000
+updates skipped for a non-finite gradient.
+
+| update | `g5_ctrl` rmsd | `g5_both` rmsd | `g5_twist` rmsd | `g5_twist` twist |
+|---|---|---|---|---|
+| 500 | 13.97 | 14.14 | 15.12 | **66.4** |
+| 1500 | 13.99 | 14.22 | 15.53 | 66.5 |
+| 2500 | 14.27 | 14.18 | 16.49 | 66.9 |
+| 3500 | 13.19 | 12.68 | 14.90 | 68.0 |
+| 4500 | 13.53 | 14.23 | 14.63 | 68.2 |
+| 5500 | 14.05 | 14.21 | 14.83 | 68.0 |
+| 6500 | 13.94 | 14.26 | 16.06 | 69.4 |
+| 7500 | 14.03 | 14.49 | 15.72 | 68.5 |
+| 8000 | 14.25 | 14.47 | 15.79 | 68.0 |
+
+(The 3,500 row reads low in both unweighted arms because the alive fraction
+dipped -- 96.9 % and 93.8 % -- and FAPE is a mean over what exists. Every other
+row is at 97.7 %.)
+
+**Ulban's two mechanisms are flat against the control, over the whole run and
+not just at 1,500.** Sixteen paired held-out readings, differences between
+-0.51 and +0.30 A with no consistent sign, ending 14.25 against 14.47. Free
+placement and the chain morphogen, together, do nothing to this number. That is
+the answer `lever_arm_probe.py` predicted and it is now measured rather than
+predicted: free placement and cartesian birth propagate an orientation error
+identically, so removing `rot_spin` cannot help, and a field that carries chain
+distance cannot supply a rotation nothing in the objective asks for.
+
+**The orientation term converged in its first 500 updates and then stopped.**
+66.4 degrees at update 500 is the *lowest* reading of the entire run; the next
+7,500 updates drifted it slightly up, to 68.0. So the choice posed above --
+"too early" against "partial accuracy is worse than a constant" -- resolves
+against the first option. It was not too early. The term buys about 22 degrees
+against the 90.2 a run without it reaches, buys them almost immediately, and
+then has nothing further to give.
+
+**And RMSD stayed worse for all 8,000 updates: 15.79 against 14.25.** It never
+turned over. The measurement the last section asked for -- twist against RMSD
+across the run -- gives a flat twist and a flat, worse RMSD, so there is no
+turn to find. Reducing the bonded-frame error by a quarter made the global
+superposition about 1.5 A worse and kept it there.
+
+**Which is the second reading, and it is consistent with the probe's own
+caveat.** CA positions are nearly insensitive to rotation about the chain axis;
+the twist metric counts that rotation in full. So an arm can improve twist by
+22 degrees while CA RMSD worsens, because the two quantities are substantially
+measuring different components of the same error. The term is moving the
+component CA RMSD cannot see, and paying for it in the component it can.
+
+**A term that saturates at 68 degrees is not the missing term.** 68 degrees of
+mean geodesic error on a bonded pair is still enormous -- the reference points
+are 84 degrees for a constant helix and about 126 for uniformly random
+rotations, so 68 is "better than always guessing helix, by a quarter of the way
+to correct". A rule that could place rotations would not stop there within 500
+updates and sit for 7,500 more. The honest reading is that the objective was
+missing a charge on rotation, adding one moves the quantity it charges, and the
+rule still cannot express the answer. That points upstream of the objective,
+which is where Ulban's fallback -- all N nodes present from the start, each
+learning to place itself, rather than a parent spawning a child -- is aimed.
+
+**One cross-check that the arms are well matched.** `total` falls 278 -> 233 in
+every arm, with the same 21-point step between updates 1,500 and 2,000 in all
+three. Alive is pinned at 97.7 % from update 500, so none of that descent is
+coverage; it is the identity head, whose type NLL ends at 2.471/2.559/2.561
+against the ln 20 = 2.996 floor, at weight 93.7. The three arms' shared
+components train identically, which is what makes the geometry comparison
+above a comparison.
