@@ -6383,3 +6383,46 @@ slight downward drift, inside the noise, and confounded with the alive fraction
 climbing from 81.7 % to 96.6 % over the same span, since a newly born residue
 is the worst-oriented one and growing more adds more of them. The quantity has
 to be read at a matched alive fraction, which the held-out evals do.
+
+### First controlled reading of the orientation term, and it cuts both ways
+
+Held-out evals, where the alive fraction is 97.7 % for every arm, so the
+coverage confound in the interval lines is gone.
+
+| arm | update | held-out rmsd | twist | bond |
+|---|---|---|---|---|
+| `g5_ctrl` | 1500 | **13.99 A** | not logged | 3.429 |
+| `g5_both` | 1500 | 14.22 A | not logged | 3.561 |
+| `g5_twist` | 500 | **15.12 A** | **66.4 deg** | 3.109 |
+| g4 (finished) | 8000 | 12.78 A | 90.2 deg (probe) | -- |
+| untrained | -- | -- | 83.9 deg (probe) | -- |
+
+**The term does what it was built to do.** 66.4 degrees against an untrained
+84 and a trained-without-it 90, measured at a matched alive fraction. So a
+direct charge on the bond's rotation moves the quantity that eight thousand
+updates of FAPE moved the wrong way. It also lowers the bond term, 3.109 against
+3.429 and 3.561, which is consistent rather than incidental: a better-oriented
+bond is a less strained one.
+
+**And RMSD is worse, 15.12 against 13.99.** That is 500 updates against 1,500
+and far too early to read -- but it is the number to watch, and the honest
+reading is that it may stay worse. Two reasons it might, and they need
+different responses:
+
+* **Too early, or the weight is too strong.** The weight was measured to give
+  the birth head 1.4 times FAPE's gradient, which was chosen to be comparable
+  and not to be dominant. If RMSD recovers as twist falls further, nothing is
+  wrong.
+* **Partial accuracy may be worse than a constant.** A rule emitting one
+  conformation everywhere produces a wrong but *coherent* structure. A rule
+  emitting rotations that are right 30 % of the way produces an incoherent one,
+  and an incoherent chain can superpose worse than a coherent wrong one. If so,
+  the term is necessary and not sufficient, and the measurement to make next is
+  twist against RMSD *across* the run rather than at one point -- whether RMSD
+  turns over once twist is low enough.
+
+Both arms that carry Ulban's two mechanisms are flat against each other at 1,500
+updates: 13.99 A for the control, 14.22 A with free placement and the chain
+field. Within noise, and consistent with what `lever_arm_probe.py` predicted --
+free placement cannot change how an orientation error propagates, and a chain
+field cannot supply a rotation the objective never asked for.
