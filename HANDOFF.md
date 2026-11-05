@@ -5624,3 +5624,52 @@ morphogen direction addresses -- a field varying smoothly over the structure is 
 "where am I" without a lattice, and it is the mechanism an embryo actually uses. **The redirect is
 therefore from "give the cells more geometry" to "give the cells a position", and the measurement
 above is what rules out the first.**
+
+### The agreed direction: morphogen fields, the first one along the sequence axis N->C
+
+The user's call, and the reasoning is worth recording because the choice of axis is not arbitrary.
+
+**The sequence axis is the one positional field that can be handed over for free.** Every feature in
+`edge_features` is invariant to a global rigid motion by construction, and that invariance is what
+lets the model generalise over structures at all -- it is the same property FAPE has. Handing a cell
+its raw xyz would break it: the rule would have to learn to ignore the global frame, and nothing in
+the loss asks it to. **A position along the chain is a scalar, so it is invariant by construction.**
+There is no equivariance cost, which is not true of any spatial coordinate.
+
+**The concrete win is removing a clip.** `edge_features`'s `sequence_offset` is
+`offsets.clamp(-16, 16)` as a 33-way one-hot, so **a contact between residues 10 and 200 is currently
+indistinguishable from one between 10 and 60** -- both saturate the clip. Every long-range contact,
+which is to say every contact that defines a fold rather than a local motif, looks the same. A
+monotone N->C field fixes that without a clip at all: two residues in spatial contact compare field
+values and recover both which one is N-ward and how far apart they are in sequence, unbounded. And
+`node_features` currently carries no absolute position of any kind -- it is residue type, chis as
+sin/cos, the chi mask, and optionally the closure block -- so a cell genuinely does not know where
+along the chain it sits.
+
+The biology is the direct analogue rather than a loose metaphor: a Hox gradient along the
+anterior-posterior axis is how a cell in an embryo knows how far along it is, and the chain's N->C
+direction is a real, chemically defined axis with the same role.
+
+**The design fork, and a recommendation.** Two versions:
+
+* **Handed**: each cell is given its normalised index along the chain. Trivial, and testable
+  immediately. Not NCA-shaped, and it assumes the final length is known -- true here, since slots are
+  pre-allocated, but false for genuinely open-ended growth.
+* **Diffusing**: the N-terminus emits, the field spreads through the message graph and decays, and
+  each cell reads its local concentration. This is the real morphogen, it is what an embryo does, and
+  it does not need the length in advance. It is also another dynamical system to converge, on top of
+  one that currently produces blobs.
+
+**Recommendation: hand it first, to test whether the information helps, and make it emergent only
+once it does.** That is the order this project's successes have come in -- establish the quantity
+matters before building the mechanism that produces it -- and it separates "a cell needs to know where
+it is" from "the cells can compute where they are", which are different claims with different
+failure modes.
+
+**What it will not fix.** A sequence-axis field gives position *along the chain*, not position in
+space. Knowing residue 10 is near residue 70 spatially is still unrepresented beyond 10 A, and burial
+is still unavailable -- the churn calibration wanted it and had to infer it from chemistry. The
+natural second field is a radial or surface-emitted one, which would give burial the way a
+concentration decaying inward does, and that one is **not** free: it needs a centroid or a surface,
+both global. So the sequence axis is first because it is both the most useful and the only one that
+costs no symmetry.
