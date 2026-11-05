@@ -5834,8 +5834,52 @@ carry information between them regardless of where the model currently thinks th
 deficit, and it is why the sequence axis is the right first field -- not because it supplies a
 coordinate, but because it supplies a route.
 
-**The honest caveat.** A chain-propagated field is a 1-D channel for what is a 2-D problem: it can
-tell residue 10 something about residue 70's state, but "which pairs should touch" is O(N^2) and a
-field is O(N). So it is the cheapest structural fix available rather than an equivalent of a pair
-stack, and whether a 1-D channel is enough is the open question -- not something these measurements
-settle either way.
+**Correction: the O(N^2) caveat I attached to this was misapplied.** Ulban's objection, and it is
+right: pair count is not the dimensionality of the information any residue needs, and in a growth
+model contacts are *created* rather than predicted. A child is born adjacent to its parent, so that
+contact exists by construction and nothing has to represent it. The N^2 object exists in AF2 because
+AF2 must infer all pairwise distances simultaneously from nothing; growth never faces that problem.
+
+What survives is weaker and more specific: **the contacts growth creates by construction are exactly
+the ones that do not determine the fold.** Parent-child adjacency is the local chain. The fold is
+fixed by the non-adjacent contacts -- strand against strand, helix against helix, a loop returning to
+the core -- and no birth creates any of those. They are supposed to arise *incidentally*, when two
+independently grown fronts come near enough for the 10 A cutoff to hand them an edge.
+
+**Which collapses the two diagnoses into one.** The spatial graph would be sufficient if placement
+were locally accurate, because accurate local placement compounds into accurate global structure. It
+is insufficient because the rotational lever arm means error compounds before the fronts meet, so
+they never arrive within 10 A of one another and never acquire the edge that would correct them.
+Self-concealing perception is not a second defect standing beside the lever arm; it is the lever
+arm's consequence. The open question is therefore not channel capacity but whether any route that
+does not depend on the spatial graph -- the sequence field being the cheapest -- lets two fronts
+agree on where to meet before they have drifted apart.
+
+## The alternative: free placement instead of parent-anchored birth
+
+Ulban's fallback, recorded because it is the strongest structural candidate currently on the table:
+add baseline nodes to the graph and train them to place themselves, rather than requiring a parent to
+spawn them.
+
+Why it is the right fallback rather than merely a different one:
+
+* **It removes the multiplicative lever arm by construction.** A spawned child's frame is
+  ``rot_parent @ rot_reference @ rot_spin``, so orientation error composes along the ancestry. A free
+  node's position is its own state, so error is additive over nodes instead of multiplicative along a
+  path.
+* **It moves the problem onto the operation that already works.** "Place this residue correctly given
+  its neighbours" is the hole-filling task: 0.95 A on bonded positions, 2.2-2.7 A fused on held-out
+  holes. "Compose a chain of births without drift" is the task that has never left 12.8 A.
+* **It keeps the AANCA claim intact.** The rule stays local, shared, and a cell acting on its own
+  neighbourhood. What changes is that a cell decides where *it* is rather than where its child will
+  be.
+
+What it costs is de novo length: the node set has to come from somewhere, so N is given rather than
+grown. The intermediate worth testing before paying that is growth that sets *when* a residue exists
+and relaxation that sets *where* -- append a node at the frontier with a crude initial guess, then
+let every node including the new one relax. That keeps growth of length while still breaking the
+ancestral composition, because a node's final position is reached by relaxation rather than inherited
+from its parent's frame.
+
+Untested. Nothing measured so far licenses it over the sequence field; it is what to do if a route
+through the chain turns out not to be enough.
