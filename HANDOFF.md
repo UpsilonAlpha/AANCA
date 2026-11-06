@@ -6639,3 +6639,101 @@ anchor keeps its crystal pose and nothing else does; a chain break is walked as
 its own run; and the activation head takes **exactly zero** gradient, which is
 asserted rather than assumed -- a non-zero value there would mean some birth
 path is still live.
+
+### Running 2026-11-06: `g6_self` holds perfectly still, which is the failure mode named in advance
+
+Job 32215014, `--birth none --initial helix`, otherwise g5_ctrl's command exactly
+(8,000 updates, identity 93.7, 120 steps, crop 128). Held-out evals, all at
+100.0 % alive because every slot is alive by construction:
+
+| update | held-out rmsd | bond | twist | type NLL | recovery |
+|---|---|---|---|---|---|
+| the baseline itself | **17.45 A** | 0.0021 | 64.4 | -- | -- |
+| 500 | **17.45 A** | 0.006 | 64.4 | 2.983 | 5.7 % |
+| 1000 | **17.45 A** | 0.004 | 64.4 | 2.944 | 7.5 % |
+| 1500 | 17.46 A | 0.318 | 65.2 | 2.766 | 11.2 % |
+| 2000 | **17.45 A** | 0.022 | 64.5 | 2.686 | 12.4 % |
+
+**The held-out RMSD is the baseline's own value to four significant figures,
+four evals apart.** The structure is not being moved at all. Meanwhile identity
+is training perfectly well on the same rollouts -- NLL 2.983 -> 2.686 against the
+ln 20 = 2.996 floor, recovery 5.7 % -> 12.4 % -- and `total` falls 280 -> 252,
+essentially all of which is that. So the rollout is alive, the loss is
+descending, and the geometry is untouched.
+
+This is 2,000 of 8,000 and g3's lesson stands: nothing is flat until the run
+ends. But it is worth saying now because it is the failure mode written down
+*before* the run, in the section above: "the rule may simply learn to hold still
+-- a frame head that outputs zero keeps the bond term at its floor and FAPE at
+the baseline's value", and "the bond term is the first column to read". The bond
+term reads 0.004 to 0.022 against a baseline 0.0021. It is holding still.
+
+**One thing the baseline confirms independently, and it is the morning's finding
+with no model in it.** A pure helix baseline scores **64.4 degrees** of per-bond
+rotation error on these crops -- and 64.4 is exactly the figure
+`segment_placement_probe.py` reported this morning as *the natives' own distance
+from the helical reference*. The two measurements are made differently and agree
+to a tenth of a degree. So "a rule collapsed onto the helical reference scores
+approximately the natives' distance from it" is no longer an inference from a
+trained checkpoint; it is arithmetic, checkable with `baseline_probe.py` and no
+weights at all.
+
+### And a measurement that reframes all of g5: the geometry head gets 0.5 % of the gradient
+
+`growth_balance_live.py --birth none`, at initialisation, every weight at its
+training value, one rollout, per-term gradients by `retain_graph`:
+
+| term | weighted value | frame head | identity head |
+|---|---|---|---|
+| fape | 0.916 | **6.9e-02** | 0 |
+| bond (w 0.122) | 0.0008 | 1.6e-02 | 0 |
+| twist (w 1.0) | 1.066 | 1.3e-01 | 0 |
+| identity (w 93.7) | **291.3** | 0 | **1.4e+01** |
+
+**FAPE puts 6.9e-02 on the head that decides geometry while identity puts
+1.4e+01 on the head that decides sequence: a factor of 200.** And this is the
+*same shape* as the number measured last night one architecture earlier -- FAPE
+gave the birth head 2.99e-02 against the activation head's 5.26, a factor of
+176. Two different architectures, two different geometry heads, and in both the
+head that places atoms receives about half a percent of the gradient the head
+doing something else receives.
+
+Also worth noting: `twist` at weight 1.0 gives the frame head 1.3e-01, nearly
+*twice* FAPE's 6.9e-02. So the orientation term is the strongest geometry signal
+available here -- which makes last night's result sharper rather than softer.
+Doubling the best geometry gradient still leaves it at one percent of identity's,
+and the arm that did it got worse.
+
+**The honest qualification, and it matters.** The trainer uses Adam, which
+divides each parameter's step by that parameter's own gradient RMS -- so a head
+whose gradient is uniformly two hundred times smaller still takes full-size
+steps, and a raw norm ratio between two *separate* heads says much less than it
+appears to. What Adam cannot undo is a **shared** parameter receiving the sum of
+several objectives' signals: there the ratio is real, because the sum is what
+gets normalised and the larger contribution sets the direction. So the question
+is not "is the frame head starved" but "is the trunk -- the message passing, the
+gating, the edge embedding, the representation every head reads -- being shaped
+by geometry or by sequence".
+
+That column is now in the probe (`TRUNK`), and **it cannot be measured at
+initialisation**: every output layer in this project is zero-initialised, so
+`W.T @ g` is zero and no term reaches the trunk at all, which is exactly what the
+table shows. It has to be read on trained weights. Two CPU jobs are queued for
+that, on `g5_ctrl/best.pt` and on `g6_self/best.pt`, which between them say
+whether the trunk's problem is shared by both architectures.
+
+**If the trunk is being trained for sequence, the experiment is one flag**:
+`--identity-weight 0` on a self-placing arm, so geometry is the whole objective.
+That is cheap and it is the test that settles the diagnosis. It has not been
+submitted: Ulban's `pmhcmd` array shares the four-job GPU QOS and taking a
+second slot is how `g5_window` came to be cancelled last night.
+
+**And a bug found on the way, which had been quietly hiding free-mode
+measurements.** `head_gradients` returned `nan` for a head the rule does not
+have, and the caller's "every gradient is finite" check then discarded *every row
+of the table* -- so a `free` or `none` rule printed a complete grid of zeros with
+`draws 0`, and nothing in the output said the architecture was the reason. An
+absent head is now `None` and the table prints a dash. The 1.4x figure quoted for
+the orientation weight last night was measured on a Cartesian rule, which has a
+birth head, so that number stands; any free-mode balance measurement would have
+silently read zero.
