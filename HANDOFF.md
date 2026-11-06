@@ -8168,3 +8168,63 @@ prompt, not the proof, and I had been describing it as though it were both.
 isolate the two halves: three arms one variable apart give a *spread* to check,
 and a spread is the one thing neither of the broken bearings could have
 produced. Theirs is the better reason and it is now the one recorded.
+
+### Panel C: the instrument now has a ceiling, so "flat" and "inside the band" are separable
+
+The pMHC session's last point: a null over crops x random heads answers "could
+an untrained rule produce this", not "can the instrument see aiming at all".
+Without a ceiling those two diagnoses are indistinguishable. Built one -- feed
+`_bearing`'s arithmetic a move that is the ideal direction by construction,
+capped at the same 0.3 A, blended with noise:
+
+    crop   needed   oracle   half-aimed   pure noise
+     180    17.03    1.000      0.655       -0.006
+     348     1.94    1.000      0.674       -0.054
+     225     0.95    1.000      0.671       -0.022
+     167    17.28    1.000      0.655       -0.029
+                     ...
+    oracle      mean +1.000   range +1.000 to +1.000
+    half-aimed  mean +0.670   range +0.644 to +0.697
+    pure noise  mean +0.003   range -0.054 to +0.068
+
+**The oracle reads exactly 1.000 on every crop** while `needed` spans 0.95 to
+17.28 A, so the correlation between `align` and distance is undefined for want
+of variance -- which is the property a bearing measure must have, and was
+predicted in the script before it ran rather than explained afterwards.
+
+So the full scale, which is the thing to carry forward:
+
+    pure per-step noise          0.00
+    a fixed random vector       -0.4 to +0.25   <- what an untrained HEAD does
+    half-aimed                   0.67
+    perfectly aimed              1.00
+
+**Two different nulls, and the distinction matters.** Per-step random
+directions average to zero; a random *head* emits a near-constant vector that
+overshoots over 24-120 steps and lands between -0.4 and +0.25. The second is
+the right comparison for a trained head, and it is where g8_ceiling's -0.259
+sits.
+
+**The practical threshold: an arm needs `align` above about 0.5 to claim
+aiming**, since half-aimed reads 0.67 and the random-head band tops out at
++0.25. That also settles the pending judgement in advance -- **+0.206 would be
+inside the random-head band and far below half-aimed, so it is not evidence of
+aiming** -- and it answers the press, because the instrument demonstrably can
+see aiming when aiming is present.
+
+What panel C does *not* give is the trained head's per-crop responsiveness,
+which needs the checkpoint on Bunya. Keep per-crop values rather than ranges
+when reading 32423296 and the `--lab-rotation` arm: a trained head sitting at
+one value on every crop regardless of that crop's motion is flat, and flat is a
+different finding from inside-the-band.
+
+### One correction owed: I asserted a bug in another project's tool without reading it
+
+I told the pMHC session their `rmsd_on` had the same basis-convention hole as my
+`_bearing`. It does not -- they checked, and it is Kabsch plus a scalar Ca RMSD,
+Cartesian throughout, with no local frame and therefore no convention to get
+wrong. The general claim held -- a planted-signal test verifies sensitivity and
+never convention -- and they found a real instance of it in correspondence
+rather than basis, where a pure one-residue numbering slip reads 2.8-4.2 A. But
+the specific instantiation I named was invented from my own bug, and I should
+have read their code before naming it.
