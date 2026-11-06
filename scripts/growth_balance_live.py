@@ -211,9 +211,42 @@ def main() -> int:
     stored: dict = {}
     trained = None
     if args.checkpoint:
-        state = ckpt.load(Path(args.checkpoint), map_location="cpu")
+        path = Path(args.checkpoint)
+        state = ckpt.load(path, map_location="cpu")
         stored = state.get("args") or {}
         trained = ckpt.rule_weights(state)
+        if not stored:
+            # **`best.pt` carries only the weights.** The trainer writes the
+            # run's arguments into `last.pt` and, until today, nowhere else --
+            # so a probe pointed at `best.pt` read an empty dict and fell back
+            # to its own defaults *silently*: 6 seeds, 30 steps, birth "free",
+            # and no eval_indices, so it reshuffled its own held-out split.
+            # That is the real cause of the two useless tables of 6 Nov, and
+            # the fourth time a probe configured differently from training has
+            # produced a number that looked like a finding. The sibling is the
+            # same run, so read it; and if there is none, refuse, because a
+            # default is indistinguishable from a measurement once it is
+            # printed in a table.
+            sibling = path.with_name("last.pt")
+            if sibling.exists():
+                beside = ckpt.load(sibling, map_location="cpu")
+                stored = beside.get("args") or {}
+                if not state.get("eval_indices"):
+                    # The held-out split too, so the crop is the one this run
+                    # never trained on rather than one a reshuffle picked.
+                    state["eval_indices"] = beside.get("eval_indices") or []
+                print(f"run arguments read from {sibling} ({path.name} has none)")
+        if not stored:
+            print(
+                f"{path} stores no run arguments and "
+                f"{path.with_name('last.pt')} is missing, so every rollout "
+                "setting would be this probe's default rather than the run's "
+                "-- which is how the last three wrong numbers in this project "
+                "were produced. Point --checkpoint at the run's last.pt, or "
+                "pass --birth/--steps/--seeds/--k explicitly if you mean to "
+                "probe off-configuration."
+            )
+            return 1
 
     # **Which heads the rule has is read from the weights, not from the stored
     # arguments**, the same lesson segment_placement_probe.py records: g6_self

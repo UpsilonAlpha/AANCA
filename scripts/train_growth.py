@@ -749,7 +749,20 @@ def main() -> int:
                 print(f"  could not write {history_path}: {problem}", flush=True)
             if scores["total"] < best:
                 best = scores["total"]
-                ckpt.save(out_dir / "best.pt", {"state_dict": rule.state_dict()})
+                # The arguments travel with the weights. Without them a probe
+                # pointed at best.pt reads an empty dict and quietly
+                # substitutes its own defaults for the run's seeds, steps and
+                # birth mode -- twice on 6 Nov, producing one diverged table
+                # and one that measured a grown rollout for a self-placing run.
+                ckpt.save(
+                    out_dir / "best.pt",
+                    {
+                        "state_dict": rule.state_dict(),
+                        "args": vars(args),
+                        "eval_indices": eval_indices,
+                        "update": update,
+                    },
+                )
                 print("  new best, checkpointed\n", flush=True)
             ckpt.save(
                 last_path,
