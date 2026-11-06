@@ -89,6 +89,11 @@ WARM_START_MUST_MATCH = (
     # where the rollout starts, so resuming a ``helix`` run as ``extended``
     # would silently splice two different experiments into one curve.
     "birth", "morphogen", "initial",
+    # ``move_weight`` decides whether the run is the ceiling diagnostic or a
+    # real arm, which is the largest difference of all: resuming one as the
+    # other would put a teacher-forced curve and a learned one on the same
+    # axis.
+    "move_weight",
     # ``damage`` decides which *task* the run trains on, which is a larger
     # difference than any weight: resuming a reconstruction run as a
     # regeneration one would splice two experiments into one curve, and the
@@ -331,6 +336,43 @@ def main() -> int:
         default="cartesian",
     )
     parser.add_argument(
+        "--clash-weight", type=float, default=0.0,
+        help=(
+            "weight on backbone van der Waals overlap, which this objective "
+            "has never had -- nothing currently stops a regenerated loop "
+            "passing straight through the protein. Physical and native-free, "
+            "so it is the kind of loose restraint that keeps an output "
+            "protein-like without telling the rule where anything goes"
+        ),
+    )
+    parser.add_argument(
+        "--clash-tolerance", type=float, default=0.5,
+        help=(
+            "Angstroms of overlap forgiven before the clash term charges. **Not "
+            "a tuning knob**: at 0 a crystal structure reads 0.0258 A/atom and "
+            "every bit of it is backbone hydrogen bonds, which are sub-van der "
+            "Waals by construction, so training against it teaches the rule to "
+            "break them. 0.5 zeroes that floor (1.5e-05) while still seeing a "
+            "damaged window at 150x it. AF2's 1.5 is too permissive here -- the "
+            "window reads exactly zero"
+        ),
+    )
+    parser.add_argument(
+        "--move-weight", type=float, default=0.0,
+        help=(
+            "**the ceiling check, and not an objective.** Supervise each "
+            "emitted move against the exactly computable ideal one, which "
+            "hands the rule a bearing for every residue at every step. That "
+            "is teacher forcing and it would make a success uninteresting, so "
+            "it exists to answer the one question seven failed arms left open: "
+            "can this architecture place residues correctly under ANY amount "
+            "of supervision? If it can, a loose-restraint result means "
+            "something; if it cannot, the constraint was never the objective "
+            "but the 0.3 A step cap, the 12-step truncation window or one-hop "
+            "perception. Run it short, read rmsd_dmg, and do not ship it"
+        ),
+    )
+    parser.add_argument(
         "--fape-weight", type=float, default=1.0,
         help=(
             "how hard FAPE pulls the structure onto the native. 1.0 is every "
@@ -546,7 +588,16 @@ def main() -> int:
                 )
                 + "."
             )
-        if args.damage > 0:
+    if args.move_weight:
+        print(
+            f"CEILING CHECK: --move-weight {args.move_weight:g} supervises "
+            "every emitted move against the ideal one. This is teacher "
+            "forcing and a diagnostic -- it answers whether the architecture "
+            "CAN place residues, not whether it can learn to. Do not read a "
+            "good rmsd_dmg here as a result, and do not compare it with an "
+            "arm that did not use it."
+        )
+    if args.damage > 0:
             # **Say which task this is, in the banner, because the held-out
             # numbers are not comparable with a reconstruction run's.** fape
             # and twist are means over residue pairs and bonded pairs, and
@@ -683,6 +734,12 @@ def main() -> int:
         f"{args.completion_weight:g}, reach {args.reach_weight:g}, identity "
         f"{args.identity_weight:g}, orientation "
         f"{args.orientation_weight:g}, fape {args.fape_weight:g}"
+        + (f", move {args.move_weight:g}" if args.move_weight else "")
+        + (
+            f", clash {args.clash_weight:g} (tol {args.clash_tolerance:g} A)"
+            if args.clash_weight
+            else ""
+        )
     )
     if args.fape_clamp != 10.0 or args.fape_clamp_prob != 1.0:
         # Only when it is not AF2's, so every earlier run's banner is unchanged
@@ -772,6 +829,9 @@ def main() -> int:
             identity_start=args.identity_start,
             reach_weight=args.reach_weight,
             fape_weight=args.fape_weight,
+            move_weight=args.move_weight,
+            clash_weight=args.clash_weight,
+            clash_tolerance=args.clash_tolerance,
             # **Training only.** The held-out evaluation above keeps the clamp
             # unconditionally, because a reported `fape` has to mean the same
             # thing across arms -- an unclamped held-out score is a different

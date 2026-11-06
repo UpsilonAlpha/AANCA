@@ -264,6 +264,13 @@ class RolloutResult:
     #: It must decay to zero. A plateau at a nonzero value is a limit cycle, not
     #: slow convergence.
     label_churn: list[float] = field(default_factory=list)
+    #: ``(axis_angle, translation, coords_before, moving)`` for every step of
+    #: the **last live truncation segment** -- the steps whose graph has not
+    #: been detached, which is the window FAPE's gradient also reaches.
+    #:
+    #: For :func:`aanca.growth.placement_loss` and nothing else. See the note
+    #: in :func:`step_once` on why that is a diagnostic and not an objective.
+    moves: list = field(default_factory=list)
     #: ``(mu, log_kappa, coords_seen)`` at the supervised step, if one was asked
     #: for. ``coords_seen`` is the rule's *input* at that step, which is what the
     #: target delta has to be measured from -- scoring against the final
@@ -386,6 +393,7 @@ def step_once(
     mask: Tensor,
     frozen: Tensor | None = None,
     generator: torch.Generator | None = None,
+    moves: list | None = None,
 ) -> tuple[RolloutState, Tensor, Tensor]:
     """One application of the rule. Returns ``(new_state, mu, log_kappa)``.
 
@@ -526,6 +534,20 @@ def step_once(
         # parent's *current* frame rather than off a stale one. The two are
         # one step of the same rule either way; the order only decides whether
         # a birth sees this step's correction or the last one's.
+        if moves is not None:
+            # **The emitted move, and the pose it was emitted from.** Recorded
+            # rather than returned so no existing caller's signature changes,
+            # and ``coords`` here is the pre-move state, already a node in the
+            # graph, so holding a reference costs nothing.
+            #
+            # This exists for ONE diagnostic -- `aanca.growth.placement_loss`,
+            # the ceiling check -- and must not become a training objective.
+            # Supervising the emitted move against the ideal one is teacher
+            # forcing: it hands the rule the answer per residue per step, and a
+            # rule that needs it is a regression fitter arranged as a cellular
+            # automaton. It is here to answer "can this architecture place
+            # residues at all", which no run has ever established.
+            moves.append((axis_angle, translation, coords, moving))
         coords = rigid_relax(coords, axis_angle, translation, topo, moving)
 
         was_alive = alive
@@ -688,6 +710,9 @@ def rollout(
     unfrozen rollout from the same seed differ only in which atoms moved.
     """
     result = RolloutResult(state=state)
+    # Cleared at every truncation boundary, so it only ever holds the live
+    # segment and the memory cost is bounded by ``config.truncate``.
+    live_moves: list = []
     chi_mask = topo.torsion.chi_mask
 
     for step in range(config.steps):
@@ -717,7 +742,7 @@ def rollout(
             None if state.identity is None else state.identity.argmax(dim=-1)
         )
         state, mu, log_kappa = step_once(
-            rule, state, topo, config, mask, frozen, generator
+            rule, state, topo, config, mask, frozen, generator, live_moves
         )
 
         if record:
@@ -747,8 +772,15 @@ def rollout(
         past_supervision = supervise_step is None or step < supervise_step
         if boundary and past_supervision and step + 1 < config.steps:
             state = state.detached()
+            # **Only the live segment's moves are kept.** Accumulating all 120
+            # steps into one loss would hold 120 steps of graph, which is what
+            # ``truncate`` exists to prevent -- so the placement loss sees the
+            # same window FAPE's gradient reaches and the two are measured over
+            # the same steps.
+            live_moves.clear()
 
     result.state = state
+    result.moves = live_moves
     return result
 
 

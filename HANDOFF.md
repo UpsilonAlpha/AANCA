@@ -7523,3 +7523,97 @@ direction that does not help, and degrades the local conformation on the way
 (twist 9.6 to 14.7). A rule that moves decisively and wrongly is what a loss
 with no physical constraint on *where* produces, which is the gap
 `backbone_clash_loss` and a loose FAPE are meant to close.
+
+### The information ladder, and rung zero
+
+The project has only ever occupied one rung. What varied across g1-g7 was the
+*architecture's* information, downward -- `torsion` inherits a parent's pose
+times a reference times a spin, `cartesian` inherits position, `free` inherits
+a reference pose, `none` inherits nothing -- while the supervision held at
+FAPE 1.0 the whole way and the loss only gained terms. That is the opposite of
+adding information until it works.
+
+    rung  information given                      status
+    0     exact per-step move (teacher forced)   built 7 Nov, the ceiling check
+    1     FAPE 1.0, native target                g1-g7, all failed
+    2     FAPE loose + clash + bond + reach      built, not yet run
+    3     physical restraints only, no native    not built
+    4     de novo, no native at all              the goal
+
+**And no run has ever established the top of it.** Seven arms failed at rung 1
+and nothing shows the architecture can place residues under *any* amount of
+supervision, which makes a rung 2 result uninterpretable either way: a failure
+would not distinguish the objective from the 0.3 A step cap, the 12-step
+truncation window or one-hop perception.
+
+For the record, since the premise came up: **no growth arm has ever trained
+without FAPE.** `--fape-weight` did not exist until 7 Nov; `fape_weight` was a
+function parameter the trainer never passed. The FAPE-free runs are the other
+track -- `rollout.py`'s repacking objective contains zero references to it, so
+v1-v9 optimised von Mises chis, harmonic bond/angle restraints, clash and
+identity, with no backbone to place. The only other `fape_weight: 0.0` in the
+tree is in `growth_balance_probe.py`, which measures gradients and does not
+train. And nothing has run de novo: `growth_objective`'s own docstring says
+"De novo growth is the goal and this is not it".
+
+#### `placement_loss`, and the discipline around it
+
+Supervise each emitted move against the ideal one. The target is exactly
+computable at every step because **the lab frame *is* the native frame** on this
+task: the anchors, or under `--damage` the whole intact context, sit at their
+crystal poses, so no superposition has to be chosen. That is precisely what
+FAPE exists to avoid needing -- and FAPE pays for the invariance with the clamp,
+while here the invariance is free.
+
+Two halves, both read off the post-move pose rather than regressed onto a
+capped target: rotation as `(3 - trace(R_new^T R_native)) / 2`, and position as
+`|ca_new - ca_native| / 10`, **linear and unclamped** so its gradient has the
+same magnitude however far out the residue is. A squared or clamped position
+term would reintroduce the exact complaint against FAPE while fixing the other
+half. The cap on the emitted move does the limiting, so the target needs no
+clipping.
+
+It is `--move-weight`, defaults to 0, and the banner shouts CEILING CHECK when
+it is on. `tests/test_placement_ceiling.py` pins the composition order --
+`rigid_relax` gives `rot @ frame`, and the other order trains towards a
+different pose while looking perfectly plausible -- plus that the loss is
+minimised along the bearing and that doubling the displacement doubles it.
+
+#### The clash term, which growth never had
+
+`backbone_clash_loss` over N, CA, C, O, CB. `steric.py`'s all-atom `clash_loss`
+is the repacking objective's; growth referenced it in three comments and called
+it nowhere, so nothing stopped a regenerated loop passing through the protein.
+Exemptions are at residue level: no residue against itself (every pair among
+those five atoms is at most three bonds apart, inside
+`CLASH_MIN_SEPARATION = 4`), and the whole 5x5 block across a peptide bond.
+Removing that second exemption gives 1.118 -- 43x the real floor -- which is the
+constant-valued failure this kind of term dies of.
+
+**The tolerance is a correctness choice, not a knob, and the measurement that
+settled it is one worth keeping.** At tolerance 0 a crystal structure reads
+0.0258 A/atom, and every bit of it is backbone hydrogen bonds: 64 N/O pairs at
+2.56-2.9 A against a Bondi sum of 3.07. A flat-bottom van der Waals penalty at
+zero tolerance necessarily charges a hydrogen bond, because an H-bond *is*
+sub-vdW by construction -- so training against it teaches the rule to break
+them. On 1UBQ, crystal against the damaged window against a window shoved into
+the core:
+
+    tol    crystal    window    shoved    window/crystal
+    0.00   0.02576   0.03431   0.20850       1.3
+    0.25   0.00196   0.00918   0.13410       4.7
+    0.50   0.00002   0.00311   0.09200     150.0
+    1.50   0.00000   0.00000   0.01232        --
+
+**0.5 A**, which is neither AF2's published 1.5 nor the 0.25 first proposed.
+At 1.5 the damaged window reads *exactly zero*, so the term would be blind to
+the structure being trained on. At 0.25 the window is discriminated worse than
+at 0.5, because the floor left behind is the same depth as the shallow contacts
+a near-miss loop makes. 0.5 zeroes the H-bond floor and still sees the window
+at 150x it.
+
+#### `g7_regen` stays running
+
+It is at FAPE 1.0 with no clash term, which makes it the control separating the
+*task* change from the *objective* change. Killing it would cost that
+comparison for nothing.

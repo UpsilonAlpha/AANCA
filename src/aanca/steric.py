@@ -29,12 +29,17 @@ dropped, and that the term is normalised per atom.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import lru_cache
+from typing import TYPE_CHECKING
 
 import torch
 from torch import Tensor
 
 from . import residue_constants as rc
 from .torch_geometry import MAX_ATOMS, TorsionTopology
+
+if TYPE_CHECKING:  # torch_graph imports this module's siblings; keep it lazy.
+    from .torch_graph import FeatureTopology
 
 #: Angstroms of overlap allowed before anything is charged. AlphaFold2's
 #: ``clash_overlap_tolerance``. It is slack on purpose -- at 1.5 A two carbons
@@ -325,5 +330,147 @@ def clash_loss(
 
     n_atoms = (real & supervised.unsqueeze(-1)).sum()
     if n_atoms == 0:
+        return total * 0.0
+    return total / n_atoms
+
+
+# -- growth resolution -----------------------------------------------------
+
+#: The atoms a growth rollout actually has. ``clash_loss`` above scores every
+#: heavy atom, which growth does not carry: the representation is backbone plus
+#: CB, so a side-chain radius in the sum would be charging a position nothing
+#: in the objective can move.
+GROWTH_CLASH_ATOMS = rc.BACKBONE_ATOMS | {"CB"}
+
+#: CA-CA cutoff for the backbone-clash neighbour list, in angstroms.
+#:
+#: Derived exactly as :data:`DEFAULT_CUTOFF` is, and much tighter because there
+#: are no side chains to reach: the furthest a backbone-or-CB atom sits from its
+#: own CA is the carbonyl O, about 2.4 A, and two atoms can only be charged
+#: within ``r_i + r_j - tol``, at most 3.4 A for two carbons at tolerance zero.
+#: So ``2.4 + 3.4 + 2.4 = 8.2`` A bounds any contributing pair. 9.0 is that
+#: bound with a little room, not a tuned value.
+GROWTH_CUTOFF = 9.0
+
+
+@lru_cache(maxsize=32)
+def _growth_atom_tables(
+    atom_names: tuple[tuple[str, ...], ...],
+) -> tuple[Tensor, Tensor]:
+    """``(is_growth_atom, radii)``, both ``(n_res, MAX_ATOMS)``, on the CPU.
+
+    Cached on ``atom_names`` -- which is a tuple of tuples and so hashable --
+    because this is the one Python loop in the term and the topology it reads is
+    sequence-derived and constant across a rollout's hundreds of steps.
+    """
+    n_res = len(atom_names)
+    is_growth = torch.zeros(n_res, MAX_ATOMS, dtype=torch.bool)
+    radii = torch.zeros(n_res, MAX_ATOMS, dtype=torch.float64)
+    for r, names in enumerate(atom_names):
+        for i, name in enumerate(names):
+            if name in GROWTH_CLASH_ATOMS:
+                is_growth[r, i] = True
+                # The same Bondi radii the all-atom term uses, so the two
+                # numbers are on one scale and comparable with the literature's.
+                radii[r, i] = rc.vdw_radius(name)
+    return is_growth, radii
+
+
+def backbone_clash_loss(
+    coords: Tensor,
+    topo: FeatureTopology,
+    alive: Tensor,
+    links: Tensor,
+    tolerance: float = 0.0,
+) -> Tensor:
+    """Mean angstroms of van der Waals overlap per scored backbone-or-CB atom.
+
+    Reads **0.0258 A on crystal ubiquitin** (1UBQ, every residue alive,
+    tolerance zero) -- 9.64 A of total overlap over 64 pairs and 374 atoms, and
+    every one of those pairs is a backbone N/O hydrogen bond or an i/i+2 C-N
+    contact, not a clash. That is why it is tolerance-shaped: 0.0020 A at
+    tolerance 0.25 and 1.5e-05 at 0.5, where a structure with a real clash in it
+    would barely move. **Wire it with a small nonzero tolerance if the floor
+    matters**; the default is zero because that is the strictest reading and
+    0.0258 is already small beside what the term is for. Residues 3-10 of
+    ubiquitin translated bodily into the core score 0.472 A, eighteen times
+    over, and one residue dropped onto another 17.7 A away scores 0.141 A. All
+    measured in ``tests/test_backbone_clash.py``.
+
+    Why this and not :func:`clash_loss`. That term wants a ``TorsionTopology``
+    and a ``StericTopology`` and scores every heavy atom; growth carries a
+    ``FeatureTopology`` and N, CA, C, O, CB only. Nothing in
+    ``growth_objective`` has ever said two residues may not occupy the same
+    space, so a regenerated window can pass straight through the chain and no
+    term notices.
+
+    Normalised per atom rather than per scored pair, following AlphaFold2 and
+    :func:`clash_loss` for the same reason: per pair divides a handful of real
+    overlaps by the hundreds of comfortable contacts around them and reports a
+    number that is always near zero and moves for the wrong reasons.
+
+    Exemptions are the whole difficulty. Two kinds of pair are dropped:
+
+    * **within one residue** -- every pair among N, CA, C, O, CB is at most
+      three bonds apart (N to O is three, O to CB three), so all of them fall
+      under :data:`residue_constants.CLASH_MIN_SEPARATION` and none is a steric
+      observation. The neighbour list's ``triu(diagonal=1)`` drops them
+      wholesale rather than naming them.
+    * **across a peptide bond** -- the i/i+1 block in full, wherever ``links``
+      says the two residues are bonded. C(i)-N(i+1) is one bond, and the pairs
+      that reach four bonds across it (CA(i)-C(i+1), O(i)-C(i+1), N(i)-CA(i+1))
+      still have distances that psi and omega fix, not ones a clash term should
+      have an opinion about -- ``peptide_bond_restraint`` already holds them.
+      Left in, they are a near-constant offset that no gradient relieves and
+      that would have to be subtracted by hand to read the term at all.
+
+    Unweighted, like the bond term, because it is a physical quantity whose
+    value on a crystal structure is known.
+    """
+    n_res = topo.n_residues
+    if coords.shape[:2] != (n_res, MAX_ATOMS):
+        raise ValueError(
+            f"coords must be ({n_res}, {MAX_ATOMS}, 3), "
+            f"got {tuple(coords.shape)}"
+        )
+    device = coords.device
+    is_growth, radii = _growth_atom_tables(topo.torsion.atom_names)
+    is_growth = is_growth.to(device)
+    radii = radii.to(device=device, dtype=coords.dtype)
+    # An atom is scored only if it exists, is one of the five, and its residue
+    # is alive. A dead slot's coordinates are a parking position, not a claim
+    # about where anything is.
+    scored_atom = is_growth & topo.atom_mask & alive.view(-1, 1)
+
+    # The pair list is residue-level and detached: which residues are
+    # candidates is bookkeeping, not part of the function being differentiated.
+    # ``cdist`` here is over residues, not atoms -- n_res^2 booleans, 5.8k for
+    # ubiquitin and 16k for a 128-residue crop, against the 409k atom pairs a
+    # flat all-atom cdist would have built.
+    with torch.no_grad():
+        rows = torch.arange(n_res, device=device)
+        ca = coords.detach()[rows, topo.frame_idx[:, 1]]
+        near = torch.cdist(ca, ca) <= GROWTH_CUTOFF
+        # Upper triangle without the diagonal: each pair once, and no residue
+        # against itself, which is the within-residue exemption.
+        near &= torch.triu(torch.ones_like(near), diagonal=1)
+        present = scored_atom.any(dim=-1)
+        near &= present.unsqueeze(-1) & present.unsqueeze(-2)
+        # ``links[i]`` says residue i is bonded to i + 1, the same convention
+        # ``peptide_bond_restraint`` uses.
+        bonded = torch.nonzero(links[: n_res - 1], as_tuple=False).flatten()
+        near[bonded, bonded + 1] = False
+        pairs = near.nonzero(as_tuple=False)
+
+    total = coords.new_zeros(())
+    if pairs.numel():
+        i, j = pairs[:, 0], pairs[:, 1]
+        scored = scored_atom[i].unsqueeze(-1) & scored_atom[j].unsqueeze(-2)
+        bound = radii[i].unsqueeze(-1) + radii[j].unsqueeze(-2) - tolerance
+        total = total + _overlap(coords[i], coords[j], bound, scored)
+
+    n_atoms = scored_atom.sum()
+    if n_atoms == 0:
+        # Not an error: early in a rollout almost nothing is alive.
         return total * 0.0
     return total / n_atoms

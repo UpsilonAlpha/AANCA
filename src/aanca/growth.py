@@ -666,6 +666,110 @@ def baseline_coords(
         return torch.where(anchors[:, None, None], coords, placed).detach()
 
 
+def placement_loss(
+    moves: list,
+    native_coords: Tensor,
+    topo: FeatureTopology,
+    scale: float = 10.0,
+) -> Tensor:
+    """**A ceiling check, not an objective.** Score the emitted move against the ideal one.
+
+    Every residue has an exactly computable target pose at every step, because
+    the lab frame *is* the native frame throughout a growth rollout: the anchors
+    (or, under ``--damage``, the whole intact context) sit at their crystal
+    poses, so no superposition has to be chosen. That is the thing FAPE exists
+    to avoid needing -- and the reason it is worth noting here is that FAPE pays
+    for that invariance with the clamp, and on this task the invariance is free.
+
+    So this term can hand the rule, per step, a bearing for every residue:
+    ``128 residues x 12 live steps x 6`` degrees of freedom against FAPE's one
+    clamped scalar.
+
+    **Which is exactly why it must not be trained on as the objective.** It is
+    teacher forcing. A rule that places residues only because it was told each
+    one's target is a regression fitter arranged as a cellular automaton, and
+    the project's claim is about what a local rule can discover. Reverted once
+    on 7 Nov for that reason, and restored only as rung zero of the information
+    ladder:
+
+        rung  information given                      status
+        0     exact per-step move (this term)        the ceiling check
+        1     FAPE 1.0, native target                g1-g7, all failed
+        2     FAPE loose + clash + bond + reach      the candidate objective
+        3     physical restraints only, no native    not built
+        4     de novo, no native at all              the goal
+
+    Seven arms have failed at rung 1 and **no run has ever established that
+    this architecture can place residues correctly under any amount of
+    supervision** -- so a rung 2 result, good or bad, is currently
+    uninterpretable. If this term moves ``rmsd_dmg`` hard, the capacity exists
+    and every rung above it measures how little supervision suffices. If it
+    does not, the constraint was never the objective: it is the 0.3 A per-step
+    cap, the 12-step truncation window or one-hop perception, and three days of
+    loss design were aimed at the wrong thing.
+
+    Two halves, both read off the *post-move* pose rather than regressed onto a
+    capped target:
+
+    * rotation, ``(3 - trace(R_new^T R_native)) / 2`` -- the same form as
+      :func:`relative_frame_restraint`, zero when the frame is right;
+    * position, ``|ca_new - ca_native| / scale`` -- **linear and unclamped**, so
+      its gradient has the same magnitude however far out the residue is. That
+      is the whole point: the complaint against FAPE is that it supplies a
+      distance and not a bearing, and a squared or clamped position term would
+      reintroduce the first problem while fixing the second.
+
+    The cap on the emitted move does the limiting, so there is no need to clip
+    the target: the loss simply asks for as much of the right direction as the
+    step allows.
+
+    ``moves`` is ``result.moves`` from a rollout -- the live truncation segment
+    only. Returns a 0-dim tensor, zero-valued when nothing moved.
+    """
+    from .backbone import frame_from_triad
+
+    if not moves:
+        return torch.zeros(
+            (), device=native_coords.device, dtype=native_coords.dtype
+        )
+    native_bb = backbone_atoms(native_coords, topo)
+    rot_native = frame_from_triad(
+        native_bb[:, 0], native_bb[:, 1], native_bb[:, 2]
+    )
+    ca_native = native_bb[:, 1]
+
+    terms = []
+    for axis_angle, translation, coords, moving in moves:
+        if not bool(moving.any()):
+            continue
+        bb = backbone_atoms(coords, topo)
+        rot_now = frame_from_triad(bb[:, 0], bb[:, 1], bb[:, 2])
+        ca_now = bb[:, 1]
+        # ``rigid_relax`` applies ``(x - ca) @ rot.T + ca + t`` to every atom,
+        # which for row vectors is ``rot @ (x - ca)``. The frame's columns are
+        # differences of atom positions, so they transform the same way and the
+        # new frame is ``rot @ rot_now``. Pinned by a test, because getting this
+        # transpose wrong gives a term that trains to a mirror image.
+        rot = rotation_from_vector(axis_angle).to(coords.dtype)
+        rot_new = rot @ rot_now
+        ca_new = ca_now + translation.to(coords.dtype)
+
+        trace = (
+            (rot_new.transpose(-1, -2) @ rot_native)
+            .diagonal(dim1=-2, dim2=-1)
+            .sum(-1)
+        )
+        rotation_error = ((3.0 - trace) / 2.0)[moving].mean()
+        position_error = (ca_new - ca_native).norm(dim=-1)[moving].mean() / scale
+        terms.append(rotation_error + position_error)
+
+    if not terms:
+        return torch.zeros(
+            (), device=native_coords.device, dtype=native_coords.dtype
+        )
+    return torch.stack(terms).mean()
+
+
 def alive_topology(topo: FeatureTopology, alive: Tensor) -> FeatureTopology:
     """``topo`` with dormant residues holding no atoms and no supervision.
 
@@ -1314,6 +1418,15 @@ class GrowthTerms:
     #: How many residues were damaged, because the RMSD above is a mean over
     #: them and a window of 4 is a different claim from a window of 24.
     damaged: int = 0
+    #: The ceiling check's value, before ``move_weight``. Zero on every run
+    #: that did not ask for it, which is every run that is not rung zero.
+    move: Tensor | None = None
+    #: Mean Angstroms of backbone van der Waals overlap per scored atom, before
+    #: ``clash_weight``. **Physical, so it is comparable against a crystal
+    #: structure's own value**, which is 0.00002 at the 0.5 A tolerance this
+    #: uses -- effectively zero, and deliberately so: at tolerance 0 a crystal
+    #: reads 0.0258 and all of it is hydrogen bonds.
+    clash: Tensor | None = None
 
 
 def growth_objective(
@@ -1332,6 +1445,9 @@ def growth_objective(
     fape_clamp_prob: float = 1.0,
     orientation_weight: float = 0.0,
     damage: int = 0,
+    move_weight: float = 0.0,
+    clash_weight: float = 0.0,
+    clash_tolerance: float = 0.5,
 ) -> tuple[GrowthTerms, object]:
     """Supervised regrowth: from a seed, rebuild the native backbone.
 
@@ -1531,6 +1647,48 @@ def growth_objective(
     # shape anywhere. So the rotation comes from every alive residue and the
     # error is read off the damaged ones -- which is also why this cannot be
     # recovered afterwards from the reported ``rmsd``.
+    # **Steric overlap, which this objective has never had.** `steric.py`'s
+    # all-atom `clash_loss` is used by the repacking objective; growth
+    # referenced it in three comments and called it nowhere, so until now
+    # nothing stopped a regenerated loop passing straight through the protein.
+    # `backbone_clash_loss` is the backbone-and-CB version, which is the
+    # resolution growth runs at.
+    #
+    # **The tolerance is a correctness choice, not a tuning knob.** A
+    # flat-bottom van der Waals penalty at tolerance 0 charges a hydrogen bond,
+    # because an H-bond is sub-vdW by construction: a crystal structure reads
+    # 0.0258 A/atom, and every bit of it is backbone N/O pairs at 2.56-2.9 A
+    # against a Bondi sum of 3.07. Training against that would teach the rule
+    # to break hydrogen bonds. Measured on 1UBQ, crystal against the damaged
+    # window against a window shoved into the core:
+    #
+    #     tol    crystal    window    shoved    window/crystal
+    #     0.00   0.02576   0.03431   0.20850       1.3
+    #     0.25   0.00196   0.00918   0.13410       4.7
+    #     0.50   0.00002   0.00311   0.09200     150.0
+    #     1.50   0.00000   0.00000   0.01232        --
+    #
+    # So 0.5: the H-bond floor is gone and the window is still seen. AF2's 1.5
+    # is too permissive here -- the damaged window reads *exactly zero*, so the
+    # term would be blind to the structure being trained on -- and 0.25
+    # discriminates the window worse than 0.5, because the floor it leaves is
+    # the same depth as the shallow contacts a near-miss loop makes.
+    clash_term = torch.zeros((), device=fape.device, dtype=fape.dtype)
+    if clash_weight:
+        from .steric import backbone_clash_loss
+
+        clash_term = backbone_clash_loss(
+            final.coords, topo, alive, links, tolerance=clash_tolerance
+        ).to(fape.dtype)
+
+    # The ceiling check. Zero unless asked for, and `placement_loss` carries
+    # the paragraph on why it is a diagnostic rather than an objective.
+    move_term = torch.zeros((), device=fape.device, dtype=fape.dtype)
+    if move_weight:
+        move_term = placement_loss(
+            getattr(result, "moves", []), native_coords, topo
+        ).to(fape.dtype)
+
     rmsd_damaged = None
     if bool(damaged.any()):
         rmsd_damaged = float(
@@ -1639,6 +1797,8 @@ def growth_objective(
         + identity_weight * identity_term.to(fape.dtype)
         + reach_weight * reach_term.to(fape.dtype)
         + orientation_weight * orientation.to(fape.dtype)
+        + move_weight * move_term
+        + clash_weight * clash_term
     )
     return (
         GrowthTerms(
@@ -1662,6 +1822,8 @@ def growth_objective(
             orientation_degrees=orientation_degrees,
             rmsd_damaged=rmsd_damaged,
             damaged=int(damaged.sum()),
+            move=move_term.detach(),
+            clash=clash_term.detach(),
         ),
         result,
     )
