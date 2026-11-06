@@ -8228,3 +8228,42 @@ never convention -- and they found a real instance of it in correspondence
 rather than basis, where a pure one-residue numbering slip reads 2.8-4.2 A. But
 the specific instantiation I named was invented from my own bug, and I should
 have read their code before naming it.
+
+### Two questions for any instrument, and the one of ours that fails the second
+
+The pMHC session took the oracle panel built here, asked its own arms the same
+question, and found a ceiling-free arm it had been reading as two-sided for
+days -- including an objective whose twenty designs all score *above* its only
+external anchor, a TCR known from a crystal to bind. Recorded as a strength for
+days; as a scale it is the exact shape optimistic bias takes.
+
+The generalisation, which is theirs and is now a map node:
+
+  * **Convention** -- is the instrument reading the right thing? Only two
+    independently derived quantities that must agree can say. A planted signal
+    never can, because a wrong-basis cosine of a planted displacement still
+    moves in the right direction.
+  * **Scale** -- is it anchored on *both* sides? Only a positive that genuinely
+    does the thing can say. No quantity of negatives substitutes.
+
+Audited here, and most instruments survive: `rmsd_dmg` (10.77 A floor, 0.00
+ceiling), `clash` (0.00002 crystal, 0.092 shoved), `bond`, `twist`, `net/path`
+bounded by construction, and `align` two-sided as of panel C.
+
+**The exception is the success criterion, which is the one the thesis turns
+on.** `rmsd_dmg` is anchored at "do nothing" and at "reproduce the crystal" and
+has **no anchor for a good non-native answer** -- which is the project's actual
+goal. That was already recorded as a measurement gap; the useful reframing is
+that it is a **missing positive control**, and missing positives are what
+produce optimistic bias.
+
+**Our bias runs the other way purely by luck.** Every arm scored worse than the
+10.77 A floor, so the pool sits entirely on the wrong side of its only anchor
+and no optimistic reading was available. An arm landing at 9 A would have left
+"nine Angstrom better than what, and worse than what?" unanswerable.
+
+The route to the anchor, borrowed from their cross-deposition null: measure what
+the same window reads between two depositions of one protein. That is the scale
+at which "different but real" lives. Not built -- it needs deposition pairs in
+the 412-structure pool, which requires sequence comparison to find and may come
+up empty -- and recorded as the concrete next step rather than as a shrug.
