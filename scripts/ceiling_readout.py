@@ -87,51 +87,85 @@ def held_out(stored: dict, state: dict):
 
 
 def _bearing(result, native, topo, damage, stored, seed, index):
-    """``(align, step)`` over the damaged residues of the live segment.
+    """``(align, step, net_over_path, series)`` over the damaged window.
 
     ``align`` is the cosine between the emitted translation and the direction
-    the residue would have to travel to reach its native CA, which is the
-    quantity a loss value cannot give: a rule can have the right magnitude and
-    the wrong bearing, and the reach probes showed exactly that on the
-    reconstruction arms (7.67 A travelled against 8.64 A needed, gaining
-    nothing).
+    the residue must travel to reach its native CA -- the quantity a loss value
+    cannot give, since a rule can have the right magnitude and the wrong
+    bearing.
 
-    Averaged over the damaged window only. Including the intact residues would
-    drown it -- they are already in place, so their ideal direction is noise.
+    **``net_over_path`` and ``series`` exist because a correct bearing is not
+    sufficient.** The pMHC binder session put it as the two-frames question
+    pointed at time rather than space: if the bearing is right but *re-aimed*
+    every step from a frame that is itself drifting, the walk can be correct at
+    every step and still arrive nowhere. ``net_over_path`` is the window's net
+    displacement over its total path length, so 1.0 is a straight line and
+    values near 0 are a walk that spends its budget turning. ``series`` is the
+    per-step cosine, because a mean hides the difference between "wrong
+    throughout" and "right at first, then lost".
+
+    That matters most for ``--equivariant-move``, which this measurement can
+    embarrass: reading the output in the residue's own frame is what makes the
+    same neighbourhood give the same *local* move, but if the residue's frame
+    drifts across steps then a constant local output traces a curve in the lab.
+    The fix removes one failure and can introduce the other, and only the path
+    ratio distinguishes them.
     """
     from aanca.growth import backbone_atoms, damage_window, growth_links
 
     moves = getattr(result, "moves", [])
+    nan = float("nan")
     if not moves:
-        return float("nan"), float("nan")
+        return nan, nan, nan, []
     links = growth_links(topo)
     damaged = damage_window(
         topo.n_residues, links, damage,
         torch.Generator().manual_seed(seed + index), native.device,
     )
     if not bool(damaged.any()):
-        return float("nan"), float("nan")
+        return nan, nan, nan, []
     ca_native = backbone_atoms(native, topo)[:, 1]
 
-    cosines, lengths = [], []
+    cosines, lengths, series = [], [], []
+    path = None
+    first = None
+    previous = None
     for _axis_angle, translation, coords, moving in moves:
         scored = moving & damaged
+        ca_now = backbone_atoms(coords, topo)[:, 1]
+        if first is None:
+            first = ca_now
+            path = torch.zeros_like(ca_now[:, 0])
+        if previous is not None:
+            path = path + (ca_now - previous).norm(dim=-1)
+        previous = ca_now
         if not bool(scored.any()):
             continue
-        ca_now = backbone_atoms(coords, topo)[:, 1]
         ideal = (ca_native - ca_now)[scored]
         emitted = translation.to(coords.dtype)[scored]
-        ideal_norm = ideal.norm(dim=-1, keepdim=True).clamp_min(1e-8)
-        emitted_norm = emitted.norm(dim=-1, keepdim=True).clamp_min(1e-8)
-        cosines.append(
-            ((ideal / ideal_norm) * (emitted / emitted_norm)).sum(-1).mean()
-        )
+        ideal_unit = ideal / ideal.norm(dim=-1, keepdim=True).clamp_min(1e-8)
+        emitted_norm = emitted.norm(dim=-1, keepdim=True)
+        # **Skip a step that emitted nothing instead of scoring it zero.** A
+        # cosine against a zero vector divides by the clamp and comes back 0.0,
+        # which reads as "uncorrelated" when the truth is "no move was made".
+        # That artefact was reported as evidence once already.
+        if float(emitted_norm.mean()) < 1e-6:
+            lengths.append(torch.zeros_like(emitted_norm.mean()))
+            continue
+        cosine = (ideal_unit * (emitted / emitted_norm.clamp_min(1e-8))).sum(-1)
+        cosines.append(cosine.mean())
+        series.append(round(float(cosine.mean()), 3))
         lengths.append(emitted.norm(dim=-1).mean())
+
     if not cosines:
-        return float("nan"), float("nan")
+        return nan, nan, nan, []
+    net = (previous - first).norm(dim=-1)[damaged].mean()
+    walked = path[damaged].mean()
     return (
         float(torch.stack(cosines).mean()),
         float(torch.stack(lengths).mean()),
+        float(net / walked.clamp_min(1e-9)),
+        series,
     )
 
 
@@ -231,7 +265,9 @@ def main() -> int:
             )
         if terms.rmsd_damaged is None:
             continue
-        align, step = _bearing(result, native, topo, damage, stored, seed, index)
+        align, step, ratio, series = _bearing(
+            result, native, topo, damage, stored, seed, index
+        )
         rows.append((
             index,
             float(terms.move),
@@ -239,6 +275,8 @@ def main() -> int:
             float(terms.rmsd_damaged),
             align,
             step,
+            ratio,
+            series,
         ))
 
     if not rows:
@@ -255,14 +293,20 @@ def main() -> int:
     print(f"{label}, {len(rows)} held-out crops of {pool_size}, "
           f"{damage}-residue window, {config.steps} steps\n")
     print(f"{'crop':>6} {'move':>8} {'clash':>9} {'rmsd_dmg':>9} "
-          f"{'align':>7} {'step':>7}")
-    for index, move, clash, dmg, align, step in rows:
+          f"{'align':>7} {'step':>7} {'net/path':>9}")
+    for index, move, clash, dmg, align, step, ratio, _s in rows:
         print(f"{index:>6} {move:>8.4f} {clash:>9.5f} {dmg:>9.2f} "
-              f"{align:>7.3f} {step:>7.4f}")
+              f"{align:>7.3f} {step:>7.4f} {ratio:>9.3f}")
     n = len(rows)
     print(f"\n{'mean':>6} {sum(r[1] for r in rows)/n:>8.4f} "
           f"{sum(r[2] for r in rows)/n:>9.5f} {sum(r[3] for r in rows)/n:>9.2f} "
-          f"{sum(r[4] for r in rows)/n:>7.3f} {sum(r[5] for r in rows)/n:>7.4f}")
+          f"{sum(r[4] for r in rows)/n:>7.3f} {sum(r[5] for r in rows)/n:>7.4f} "
+          f"{sum(r[6] for r in rows)/n:>9.3f}")
+    cap = 0.3
+    print(f"\n  step against the {cap:g} A cap: "
+          f"{100 * sum(r[5] for r in rows) / n / cap:.1f}% used")
+    print("\n  per-step bearing, first crop (a mean hides 'right then lost'):")
+    print("   ", rows[0][7][:14] or "(nothing emitted)")
     print(
         "\n  Read `align` first -- it is the one that picks the branch.\n"
         "    near 1.0  the rule knows the bearing, so a flat rmsd_dmg means\n"
