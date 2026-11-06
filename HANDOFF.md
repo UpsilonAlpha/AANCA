@@ -7847,3 +7847,64 @@ confidently it acts.
 `g10_equiv_ceil` (32420154) is at update 124, first eval at 250, and runs about
 20 % slower per update (2.6 s against 2.1) -- the cost of the per-residue frame
 transform, which is worth recording so it is not mistaken for a regression.
+
+### The capacity question is answered: no, and the null was never zero
+
+A randomly perturbed, untrained frame head scores `align` **-0.355** (se 0.119)
+on the same twelve held-out crops that the trained rule scores **-0.259**
+(se 0.134). Paired by crop: difference **+0.096**, se 0.150, t +0.64 on 11 df,
+95 % CI **[-0.235, +0.427]**.
+
+**After 2,000 updates of being handed the exact ideal move at every step, the
+emitted bearing is statistically indistinguishable from a randomly initialised
+head.**
+
+And the reason the control was indispensable is better than the reason it was
+asked for. **-0.36 is what "no information" looks like here, not zero.** A
+near-constant vector over 120 steps overshoots; once a residue is past its
+target, "toward the target" reverses and the late-step cosines go negative. So
+both of my earlier readings of -0.259 -- "anti-correlated", then "uncorrelated
+because the CI contains zero" -- used a null that the mechanism does not
+produce. Nothing about the mechanism would have told me. Only the control
+could, and the pMHC session insisted on it for a weaker reason than the one it
+turned out to serve.
+
+#### The per-step series: aimed once, not re-aimed
+
+They also asked the sharper question -- is a correct bearing being *re-aimed*
+each step from a drifting frame, so the walk is right everywhere and arrives
+nowhere, the two-frames problem pointed at time instead of space? Measured, no:
+
+    per-step cosine   0.498, 0.351, 0.435, 0.093, 0.088, -0.113, ... -0.375
+    net / path        0.995
+
+A walk re-aimed from a rotating frame would show a ratio far below 1. This is a
+straight line whose bearing decays through zero, which is what a constant
+vector does when it overshoots. Three steps of genuine aim, then nine of
+overshoot -- and the mean hid that shape completely, which is exactly what they
+said a mean would do.
+
+The per-step cap is not implicated either: the trained rule used a tenth of it
+and the random head two fifths, so nothing is throttling a correct bearing.
+
+**`net/path` is also the measurement that can embarrass `--equivariant-move`.**
+Reading the output in the residue's own frame is what makes a neighbourhood
+give the same *local* move -- but if that frame drifts across steps, a constant
+local output traces a curve in the lab. The fix removes one failure and could
+introduce the other, and only the path ratio tells them apart. So the arm's
+readout has to include it.
+
+#### Two instrument failures in one measurement, both mine
+
+The first control was **vacuous and I reported it as evidence**: a fresh frame
+head is zero-initialised, so it emits the zero vector and my cosine divides by
+a `clamp_min(1e-8)` norm. `align` exactly 0.000 on every crop is the arithmetic
+of dividing by nothing. It establishes only that the 0.031 A step is learned.
+`--perturb` gives an untrained rule non-zero moves so the bearing is defined,
+and a step that emits nothing is now skipped rather than scored zero.
+
+And the retractions index earned itself again within a minute: promoting this
+node to `supported` made check 4 flag it for citing 32405172, which is void for
+its `move` column. The body already stated that scope -- the job's `rmsd_dmg`
+stands and is what the node cites it for -- so the acknowledgement is honest
+rather than an exemption.

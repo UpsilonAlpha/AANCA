@@ -41,7 +41,24 @@ every emitted move against the exactly computable ideal, 2,000 updates, read as
 `rmsd_dmg` against the model-free 10.77 A
 ([[the-regeneration-baseline-is-10-77-angstrom-and-90-percent-live]]).
 
-Both answers are useful and only one is comfortable. If it drops hard, the
+**Answered on 7 Nov: no.** After 2,000 updates of being handed the exact ideal
+move at every step, the emitted bearing is statistically indistinguishable from
+a randomly initialised head -- trained -0.259, random head -0.355, paired
+difference +0.096 with 95 % CI [-0.235, +0.427] over twelve crops
+([[the-teacher-forced-rule-emits-moves-pointing-away-from-the-target]]). And
+the reason is architectural rather than a training failure: the perception is
+invariant and the move was applied in the lab frame, so the direction was never
+representable
+([[the-emitted-move-was-applied-in-the-lab-frame-and-perception-is-invariant]]).
+
+So the ladder's top was never reachable with the architecture as it stood, and
+every rung-1 result is a measurement of that rather than of an objective.
+`--equivariant-move` is the repair and `g10_equiv_ceil` is its first arm; at
+250 updates it reads `rmsd_dmg` 12.18 against `g8_ceiling`'s 12.23, so the fix
+alone has not yet moved the outcome and the question is now whether it is
+necessary-but-not-sufficient.
+
+Both answers were useful and only one was comfortable. If it drops hard, the
 capacity exists and every rung above measures how little supervision suffices.
 If it barely moves, **the constraint was never the objective** and three days of
 loss design were aimed at the wrong layer -- which would be the most valuable

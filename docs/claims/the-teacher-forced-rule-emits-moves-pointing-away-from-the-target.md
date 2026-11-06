@@ -1,11 +1,12 @@
 ---
 type: observation
-status: open
+status: supported
 evidence: ours
-sources: [32405172, 32418879]
+sources: [32405172, 32418879, 32420910]
+checked: [32405172]
 ---
 
-# Handed the exact ideal move at every step, the rule's emitted bearing is indistinguishable from random
+# After 2,000 updates of exact supervision, the bearing is indistinguishable from a randomly initialised head
 
 `g8_ceiling` ran 2,000 updates with `--move-weight 1.0`, teacher-forcing every
 emitted move against the exactly computable ideal pose, and its `rmsd_dmg` went
@@ -20,29 +21,57 @@ checkpoint, on **k = 12 held-out crops**:
 `align` is the cosine between each emitted translation and the one that would
 reach the native CA, over the damaged window and the live segment.
 
-**Corrected within the hour: "anti-correlated" overstated it.** At k = 12 the
-spread is wide enough that zero is inside the interval -- sd 0.465, se 0.134,
-t = -1.93 on 11 df, 95 % CI **[-0.555, +0.037]**. So the honest reading is that
-the emitted bearing is **uncorrelated** with the one the residue needs, not
-opposed to it. I wrote "anti-correlated" in this node and in a commit message
-before doing the arithmetic, hours after taking the pMHC session's point that
-the reportable quantity is the unit count. The discipline is easy to state and
-easy to skip on one's own headline number.
+**Corrected twice, and the second correction is the one that matters.**
 
-**The correction strengthens the diagnosis rather than weakening it.**
-Uncorrelated is exactly what
-[[the-emitted-move-was-applied-in-the-lab-frame-and-perception-is-invariant]]
-predicts: a near-constant lab-frame vector, scored against target directions
-that vary by crop, gives cosines scattered about zero. Anti-correlation would
-have needed its own explanation. What is *not* ambiguous is the step length --
-0.0309 A against a 0.30 A cap, spread 0.0302 to 0.0315, which is a constant to
-three digits across twelve different structures.
+First: "anti-correlated" overstated it. At k = 12 the spread puts zero inside
+the interval -- se 0.134, t = -1.93 on 11 df, 95 % CI [-0.555, +0.037].
 
-The untrained control (32419198) completes the picture: `align` exactly 0.000
-and `step` exactly 0.0000 on every crop, because the frame head is
-zero-initialised and emits nothing at all. So training did change the rule --
-it learned to emit a fixed 0.031 A step -- and that step carries no information
-about where the residue belongs.
+Then the control landed and showed **zero was never the right reference
+point.** A randomly perturbed, untrained head scores `align` **-0.355**
+(se 0.119) on the same twelve crops, because a near-constant vector over 120
+steps overshoots: once a residue is past its target, "toward the target"
+reverses and the late-step cosines go negative. **-0.36 is what no information
+looks like here**, and the trained rule sits on it:
+
+    trained     -0.259   se 0.134    2000 updates, ideal move handed over
+                                     at every step
+    random head -0.355   se 0.119    no training at all
+    paired diff +0.096   se 0.150    t +0.64, 95 % CI [-0.235, +0.427]
+
+**Training left the bearing statistically indistinguishable from a randomly
+initialised head.** That is the answer to
+[[question-can-the-architecture-place-residues-under-any-supervision]], and it
+is `supported` rather than `open` because the null is now measured instead of
+assumed.
+
+Both of my earlier readings used a null of zero and both were wrong about it.
+The pMHC binder session insisted the control was load-bearing and gave a
+reason; the real reason is better than either of us stated -- **the statistic's
+null is not zero, and only the control could say what it was.** Nothing about
+the mechanism would have told me.
+
+**The per-step series says how, and it is not what was guessed.** The pMHC
+session asked whether a correct bearing was being *re-aimed* each step from a
+drifting frame -- right everywhere, arriving nowhere, the two-frames question
+pointed at time rather than space. Measured, it is not: the per-step cosine
+runs 0.498, 0.351, 0.435, 0.093, 0.088, -0.113, ... -0.375 while net
+displacement over path length is **0.995**. A walk re-aimed from a rotating
+frame would show a ratio far below 1. This is a straight line whose bearing
+decays through zero -- aimed once, never corrected, which is what a constant
+vector does when it overshoots. The mean hid that shape entirely.
+
+What is *not* ambiguous is the step length: 0.0309 A against a 0.30 A cap,
+spread 0.0302 to 0.0315, a constant to three digits across twelve different
+structures. The cap is therefore not throttling a correct bearing -- the
+trained rule uses a tenth of it, and the random head used two fifths.
+
+The first control (32419198) was **vacuous and I reported it as evidence.** A
+fresh frame head is zero-initialised, so it emits the zero vector and the
+cosine divides by a `clamp_min(1e-8)` norm: `align` exactly 0.000 is the
+arithmetic of dividing by nothing, not a measurement that the bearing is
+random. It establishes only that the 0.031 A step is learned. `--perturb`
+replaced it, and a step emitting nothing is now skipped rather than scored
+zero.
 
 **A loss value could not have shown this.** `move` tracks `rmsd_dmg` at a near
 constant ratio, about 50x, because its position half is the same per-residue
