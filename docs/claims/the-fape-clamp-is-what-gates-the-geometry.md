@@ -44,6 +44,7 @@ flag stays, and the arm that needed it never needed it.
 ## Superseded by
 - [[the-reach-probes-split-the-three-frozen-arms]]
 
+
 ## Refuted by
 - [[g6-open-did-not-move-with-the-clamp-open-a-tenth-of-the-time]]
 - [[the-rule-can-move-a-residue-far-enough-to-reach-the-native]]

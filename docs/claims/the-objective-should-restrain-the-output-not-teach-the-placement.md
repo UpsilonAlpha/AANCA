@@ -23,6 +23,15 @@ signal against FAPE's one clamped scalar. It would probably have moved
 uninteresting in precisely the way this claim warns about. The plumbing was
 reverted unused.
 
+**It came back an hour later in a different role, and the distinction is the
+whole point.** As the objective it kills the novelty. As **rung zero** -- a
+positive control answering whether the architecture can place residues at all
+-- it is what the information ladder requires before any looser result can be
+read ([[question-can-the-architecture-place-residues-under-any-supervision]]).
+It is labelled a diagnostic in its own docstring, in `step_once`, in the
+`--move-weight` help text and in a banner line the run prints, because the one
+way it does damage is by quietly becoming the objective.
+
 ## The audit, since "no redundant restraints" needs the list
 
     term          what it constrains              native?   verdict
@@ -50,15 +59,20 @@ than steric; if conformations come out physically legal but implausible, that
 is the gap to revisit, and it is a reason to add Ramachandran *then* rather
 than now.
 
-**`clash` is genuinely missing**, which is the audit's real finding.
+**`clash` landed on 7 Nov**, and finding it missing was the audit's real
+result.
 `steric.py` has an all-atom `clash_loss` used by the repacking objective, and
 `growth_objective` references it in three comments and calls it nowhere. So
 nothing currently stops a regenerated loop passing straight through the
 protein. Growth runs at backbone-and-CB resolution, so the all-atom machinery
 is the wrong tool -- it needs a TorsionTopology where growth carries a
 FeatureTopology, and keeping two topologies in sync is a documented
-silent-failure spot in this codebase (`alive_topology`). A focused
-`backbone_clash_loss` over N, CA, C, O, CB is being written instead.
+silent-failure spot in this codebase (`alive_topology`). So `backbone_clash_loss` over N, CA, C, O, CB was written instead, at
+tolerance 0.5 A for a reason that turned out to be physics rather than tuning
+([[a-crystal-structures-clash-floor-is-its-hydrogen-bonds]]). Exemptions are at
+residue level -- no residue against itself, and the whole 5x5 block across a
+peptide bond -- and removing the second gives a constant 43x the real floor,
+which is how this kind of term usually dies.
 
 ## Why loose FAPE rather than no FAPE
 

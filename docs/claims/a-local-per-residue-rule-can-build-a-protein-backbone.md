@@ -34,6 +34,7 @@ Its premises are listed below, and both of the hard ones are failing.
 - [[the-rule-keeps-whatever-conformation-it-is-given]]
 
 ## Requires
+- [[question-can-the-architecture-place-residues-under-any-supervision]]
 - [[the-rule-can-move-a-residue-far-enough-to-reach-the-native]]
 - [[fape-can-teach-the-frame-head-which-way-to-move]]
 - [[a-residue-can-be-placed-without-a-parent-placing-it]]
