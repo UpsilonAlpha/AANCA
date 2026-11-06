@@ -142,6 +142,21 @@ def main() -> int:
         "--untrained", action="store_true",
         help="score a fresh rule instead, for the value these terms start at",
     )
+    parser.add_argument(
+        "--perturb", type=float, default=0.0,
+        help=(
+            "with --untrained, add noise of this scale to the frame head's "
+            "last layer. **This is the control `--untrained` alone cannot "
+            "be.** A fresh rule's frame head is zero-initialised, so it emits "
+            "the zero vector and `align` comes back exactly 0.000 -- which is "
+            "an artefact of taking a cosine against a zero norm, not a "
+            "measurement that the bearing is random. Perturbing the head gives "
+            "non-zero moves with no training, so the bearing is defined and "
+            "the question 'does the lab-frame defect give an uncorrelated "
+            "bearing independently of training?' can actually be asked. 0.05 "
+            "reproduces the scale used in tests/test_move_equivariance.py"
+        ),
+    )
     args = parser.parse_args()
 
     path = Path(args.checkpoint)
@@ -192,6 +207,16 @@ def main() -> int:
         )
         if not args.untrained:
             rule.load_state_dict(weights)
+        elif args.perturb:
+            # Seeded per crop so the perturbation is a property of the run and
+            # not of the order the crops happen to load in.
+            generator = torch.Generator().manual_seed(seed + index)
+            for parameter in rule.frame_head[-1].parameters():
+                parameter.data.add_(
+                    torch.randn(
+                        parameter.shape, generator=generator
+                    ) * args.perturb
+                )
         rule.eval()
         with torch.no_grad():
             terms, result = growth_objective(
@@ -219,7 +244,14 @@ def main() -> int:
     if not rows:
         print("no crops produced a damaged window")
         return 1
-    label = "UNTRAINED" if args.untrained else str(path)
+    label = str(path)
+    if args.untrained:
+        label = (
+            f"UNTRAINED, frame head perturbed by {args.perturb:g}"
+            if args.perturb
+            else "UNTRAINED (zero-initialised head: `align` is vacuous, see "
+            "--perturb)"
+        )
     print(f"{label}, {len(rows)} held-out crops of {pool_size}, "
           f"{damage}-residue window, {config.steps} steps\n")
     print(f"{'crop':>6} {'move':>8} {'clash':>9} {'rmsd_dmg':>9} "

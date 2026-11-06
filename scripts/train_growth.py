@@ -639,6 +639,21 @@ def main() -> int:
                 )
                 + "."
             )
+    if args.equivariant_move:
+        # **Name what this is comparable with, in the artefact.** The project's
+        # own rule, and it applies to an architecture flag as much as to a task
+        # change: an arm with this on differs from one without it in what the
+        # frame head's weights *mean*, so a warm start across it is invalid
+        # (hence `equivariant_move` in WARM_START_MUST_MATCH) and the seconds
+        # per update are ~20 % higher, which is the frame transform and not a
+        # regression. Every other column is directly comparable, which is the
+        # point of running it as a single-variable arm.
+        print(
+            "EQUIVARIANT MOVE: the emitted move is read in each residue's own "
+            "N-CA-C frame. Comparable column-for-column with an otherwise "
+            "identical --equivariant-move-off arm; NOT warm-startable across "
+            "the flag, and ~20% slower per update by construction."
+        )
     if args.move_weight:
         print(
             f"CEILING CHECK: --move-weight {args.move_weight:g} supervises "
