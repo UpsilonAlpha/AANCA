@@ -1233,6 +1233,8 @@ def growth_objective(
     identity_start: str = "masked",
     reach_weight: float = REACH_WEIGHT,
     fape_weight: float = 1.0,
+    fape_clamp: float = 10.0,
+    fape_clamp_prob: float = 1.0,
     orientation_weight: float = 0.0,
 ) -> tuple[GrowthTerms, object]:
     """Supervised regrowth: from a seed, rebuild the native backbone.
@@ -1375,7 +1377,29 @@ def growth_objective(
     geometric = final.alive
     scored = final.alive & topo.supervised_mask
 
-    fape = fape_loss(final.coords, native_coords, topo, geometric)
+    # **The clamp decides whether a far-wrong residue has a gradient at all.**
+    # ``clamp_max`` is exactly flat above the clamp, so a residue 40 A out of
+    # place contributes a constant and no direction. What survives is the
+    # near-diagonal -- and a self-placing run's baseline already satisfies the
+    # near-diagonal, because it is built by walking exact peptide geometry
+    # (`baseline_probe.py` measures its bond term at 0.0021 before a single
+    # update). So the surviving gradient sits precisely where there is nothing
+    # to fix, and g6_noid froze at its initialisation to the last digit over
+    # seven evaluations with geometry as the entire objective.
+    #
+    # ``fape_clamp_prob`` is AF2's own answer to this (Jumper et al. 2021,
+    # supplementary 1.9.5): clamp on 90 % of batches and leave 10 % unclamped,
+    # so most updates keep the clamp's stability while some carry the long
+    # range a fold needs. 1.0 is every update clamped, which is what every run
+    # before this flag did. The draw is on the CPU from the run's own
+    # generator, like every other random choice here, so a resumed run makes
+    # the same sequence of choices.
+    clamp = fape_clamp
+    if fape_clamp_prob < 1.0:
+        draw = float(torch.rand((), generator=generator))
+        if draw >= fape_clamp_prob:
+            clamp = float("inf")
+    fape = fape_loss(final.coords, native_coords, topo, geometric, clamp=clamp)
     bond = peptide_bond_restraint(final.coords, topo, final.alive, links)
     # Measured on every run whether or not it is weighted, because it is the
     # quantity the probes identified as the dominant error and a run that does

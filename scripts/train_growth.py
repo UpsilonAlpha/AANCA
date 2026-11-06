@@ -293,6 +293,27 @@ def main() -> int:
         default="cartesian",
     )
     parser.add_argument(
+        "--fape-clamp", type=float, default=10.0,
+        help=(
+            "FAPE's clamp in Angstrom (AF2's value, and the default). Above it "
+            "the error is exactly flat, so a residue 40 A out of place "
+            "contributes a constant and no gradient"
+        ),
+    )
+    parser.add_argument(
+        "--fape-clamp-prob", type=float, default=1.0,
+        help=(
+            "probability that an update's FAPE is clamped; the rest are "
+            "unclamped. 1.0 is every update, which is what every run before "
+            "this flag did. AF2 uses 0.9. This exists because g6_noid froze "
+            "at its initialisation with geometry as the entire objective, and "
+            "the clamp keeps signal only on the near-diagonal pairs a "
+            "self-placing baseline already satisfies exactly. The held-out "
+            "evaluation is always clamped, so the reported fape stays "
+            "comparable across arms"
+        ),
+    )
+    parser.add_argument(
         "--identity-track", choices=("auto", "on", "off"), default="auto",
         help=(
             "whether to build the identity head and blind the perception. "
@@ -575,6 +596,13 @@ def main() -> int:
         f"{args.identity_weight:g}, orientation "
         f"{args.orientation_weight:g}"
     )
+    if args.fape_clamp != 10.0 or args.fape_clamp_prob != 1.0:
+        # Only when it is not AF2's, so every earlier run's banner is unchanged
+        # and the line's presence is itself the flag that this arm differs.
+        print(
+            f"FAPE clamp {args.fape_clamp:g} A on {args.fape_clamp_prob:.0%} of "
+            "updates; held-out evaluation always clamped at 10 A"
+        )
     # **Say whether the seed count can reach the whole crop.** A crop is a
     # spatial ball, so it contains several covalent runs, and growth cannot
     # cross a chain break -- g2 stalled at 55.5 % alive with an empty frontier
@@ -655,6 +683,13 @@ def main() -> int:
             identity_weight=args.identity_weight,
             identity_start=args.identity_start,
             reach_weight=args.reach_weight,
+            # **Training only.** The held-out evaluation above keeps the clamp
+            # unconditionally, because a reported `fape` has to mean the same
+            # thing across arms -- an unclamped held-out score is a different
+            # quantity from every other run's and the two would be silently
+            # plotted against each other.
+            fape_clamp=args.fape_clamp,
+            fape_clamp_prob=args.fape_clamp_prob,
             orientation_weight=args.orientation_weight,
         )
         if not torch.isfinite(terms.total):
