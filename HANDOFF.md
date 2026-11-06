@@ -7791,3 +7791,59 @@ and the strongest claim in the map -- was **k = 1**, and had been load-bearing
 for a day. The probe now loops every held-out crop, prints the per-crop rows
 and the spread, and states k beside the mean. Re-runs on the three finished
 arms are queued (32419283, 32419284).
+
+### "Anti-correlated" was wrong: at k=12 zero is inside the interval
+
+The twelve per-crop `align` values from g8_ceiling give mean -0.259, sd 0.465,
+se 0.134, t = -1.93 on 11 df, **95 % CI [-0.555, +0.037]**. Zero is inside it.
+So the emitted bearing is **uncorrelated** with the direction the residue
+needs, not opposed to it, and I wrote "anti-correlated" in a node, a commit
+message and a message to the pMHC session before doing the arithmetic -- hours
+after adopting their point that the reportable quantity is the unit count. The
+discipline is easy to state and easy to skip on one's own headline.
+
+**The correction strengthens the diagnosis.** Uncorrelated is exactly what a
+near-constant lab-frame vector gives when scored against target directions that
+vary by crop; anti-correlation would have needed its own explanation. And the
+unambiguous number is the step length: 0.0309 A against a 0.30 A cap, spread
+0.0302 to 0.0315 -- a constant to three digits across twelve different
+structures, which is what "the rule has learned the best fixed vector it can
+express" looks like.
+
+The untrained control (32419198) closes it: `align` exactly 0.000 and `step`
+exactly 0.0000 on every crop, because the frame head is zero-initialised and
+emits nothing. So training did change the rule -- it learned a fixed 0.031 A
+step -- and that step carries no information about where the residue belongs.
+
+### The reach re-runs ran stale code, for a reason worth not repeating
+
+They printed the old single-crop format (`distance to native 8.64 A mean`), so
+they used the pre-`bec83c0` probe and are k=1 again -- the thing they were
+submitted to fix. Cause: in that round I pulled on Bunya *first* and committed
+the multi-crop change *after*, so the cluster's working tree predated the fix by
+minutes. **Pull after the push, not before.** Bunya is now at `1c15ac4` with
+the multi-crop code present, verified by grep rather than assumed, and the
+three probes are resubmitted.
+
+That is the same genus as the pMHC session's stale selection table: the file
+was readable, plausible and not the one I thought I was running.
+
+### `g7_regen` is now actively degrading
+
+At 6,000 of 8,000 the FAPE-1.0 control is getting worse, not plateauing:
+
+    updates   rmsd_dmg   twist   bond
+       500      12.23      9.0    6.02
+      3500      12.30     16.0    6.50
+      5000      12.38     22.8    9.56
+      5500      12.61     44.6   11.39
+      6000      12.55     42.9   10.64
+
+Twist from 9 to 43 degrees and bond from 6.0 to 10.6 while `rmsd_dmg` creeps
+up. Consistent with the lab-frame defect: the rule is getting better at
+emitting a move it cannot aim, so the structure degrades faster the more
+confidently it acts.
+
+`g10_equiv_ceil` (32420154) is at update 124, first eval at 250, and runs about
+20 % slower per update (2.6 s against 2.1) -- the cost of the per-residue frame
+transform, which is worth recording so it is not mistaken for a regression.

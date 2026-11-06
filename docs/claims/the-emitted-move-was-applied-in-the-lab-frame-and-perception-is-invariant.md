@@ -37,9 +37,12 @@ correct first (`cos(descent step, ideal) = +1.0000`), so this is not that.
 It accounts for the whole record, which is the reason to believe it rather than
 the argument for it:
 
-  * teacher-forced, the emitted translation is anti-correlated with the ideal
-    one -- cosine -0.259 over 12 crops, spread straddling zero
-    ([[the-teacher-forced-rule-emits-moves-pointing-away-from-the-target]]);
+  * teacher-forced, the emitted bearing carries no information about where the
+    residue belongs -- cosine -0.259 over 12 crops, 95 % CI [-0.555, +0.037],
+    so uncorrelated rather than opposed
+    ([[the-teacher-forced-rule-emits-moves-pointing-away-from-the-target]]),
+    which is what a near-constant lab-frame vector gives against targets that
+    vary by crop;
   * two arms with no placement term in common park at the same 12.23 A,
     because a near-constant vector applied 120 times arrives somewhere fixed
     ([[both-arms-park-at-12-23-angstrom-by-update-250]]);

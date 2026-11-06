@@ -5,7 +5,7 @@ evidence: ours
 sources: [32405172, 32418879]
 ---
 
-# Handed the exact ideal move at every step, the rule emits moves anti-correlated with it
+# Handed the exact ideal move at every step, the rule's emitted bearing is indistinguishable from random
 
 `g8_ceiling` ran 2,000 updates with `--move-weight 1.0`, teacher-forcing every
 emitted move against the exactly computable ideal pose, and its `rmsd_dmg` went
@@ -18,10 +18,31 @@ checkpoint, on **k = 12 held-out crops**:
     rmsd_dmg mean 12.25
 
 `align` is the cosine between each emitted translation and the one that would
-reach the native CA, over the damaged window and the live segment. So the rule
-points **away** from where it needs to go, on average, while asking for about a
-tenth of the step available to it -- and for almost exactly that tenth on every
-crop, which is its own oddity.
+reach the native CA, over the damaged window and the live segment.
+
+**Corrected within the hour: "anti-correlated" overstated it.** At k = 12 the
+spread is wide enough that zero is inside the interval -- sd 0.465, se 0.134,
+t = -1.93 on 11 df, 95 % CI **[-0.555, +0.037]**. So the honest reading is that
+the emitted bearing is **uncorrelated** with the one the residue needs, not
+opposed to it. I wrote "anti-correlated" in this node and in a commit message
+before doing the arithmetic, hours after taking the pMHC session's point that
+the reportable quantity is the unit count. The discipline is easy to state and
+easy to skip on one's own headline number.
+
+**The correction strengthens the diagnosis rather than weakening it.**
+Uncorrelated is exactly what
+[[the-emitted-move-was-applied-in-the-lab-frame-and-perception-is-invariant]]
+predicts: a near-constant lab-frame vector, scored against target directions
+that vary by crop, gives cosines scattered about zero. Anti-correlation would
+have needed its own explanation. What is *not* ambiguous is the step length --
+0.0309 A against a 0.30 A cap, spread 0.0302 to 0.0315, which is a constant to
+three digits across twelve different structures.
+
+The untrained control (32419198) completes the picture: `align` exactly 0.000
+and `step` exactly 0.0000 on every crop, because the frame head is
+zero-initialised and emits nothing at all. So training did change the rule --
+it learned to emit a fixed 0.031 A step -- and that step carries no information
+about where the residue belongs.
 
 **A loss value could not have shown this.** `move` tracks `rmsd_dmg` at a near
 constant ratio, about 50x, because its position half is the same per-residue
