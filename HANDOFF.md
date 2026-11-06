@@ -6777,6 +6777,14 @@ initialisation, which is not a measurement either -- every output layer is
 zero-initialised, so `W.T @ g` is zero and no term reaches the trunk at all.
 It has to be read on trained weights, with `--crop`.
 
+> **Corrected an hour later: `--crop` was not the fix, because the crop was
+> not the fault.** Both re-runs came back wrong again -- one still diverging to
+> 5e+10, the other reporting `birth free` for a `--birth none` run. The cause
+> was neither the structure nor the weights but `best.pt`, which carried only
+> the weights; see "every probe read its own defaults" below. The diagnosis in
+> this section was right that the probe was the problem and wrong about which
+> part of it, which is why it is left standing rather than edited away.
+
 ### `--identity-track`, because the ablation had a confound built into it
 
 The test of the diagnosis is a self-placing arm with the identity term removed,
@@ -6818,3 +6826,106 @@ at the baseline, the gradient ratio was a red herring -- Adam had already
 cancelled it, as the caveat above says it largely should -- and the problem is
 not the objective's balance but that the frame head has nothing it can learn
 from a 26 % live FAPE.
+
+### Every probe read its own defaults, because `best.pt` carried only the weights
+
+The two crop-matched balance jobs came back wrong a second time, and the cause
+was in neither the crop nor the weights. The trainer wrote `vars(args)` into
+`last.pt` and **nowhere else**, so `state.get("args")` on a `best.pt` returned
+an empty dict and every setting fell through to the probe's own default,
+silently: 6 seeds where the run trained on 16, 30 steps where it trained on
+120, no `eval_indices` so the held-out split was reshuffled, and -- worst --
+birth `free` where the run is `none`.
+
+So job 32241769 reported a tidy, finite, entirely plausible table for a
+**grown** rollout on a self-placing run, and job 32241768 still diverged to
+5e+10 because six seeds and thirty steps was never the configuration g5_ctrl
+was trained for. One table announced itself as broken; the other did not, which
+is the more expensive kind.
+
+Two fixes, because the failure has two halves. `best.pt` now carries `args`,
+`eval_indices` and `update` alongside the weights, so the configuration travels
+with the thing being measured. And a probe handed a checkpoint with no
+arguments reads the sibling `last.pt` -- the same run, and the only place the
+arguments exist for every run before today -- or else **refuses and exits 1**,
+because a default is indistinguishable from a measurement once it is printed
+under a column heading. `tests/test_probe_configuration.py` pins all three
+paths. The refusal test runs the probe's own `main`, so it is the behaviour
+that is pinned rather than the intention.
+
+That is the fourth number in this project produced by a probe configured
+differently from the run it was reading. The first three were diagnosed as
+one-off mistakes; this one says the class is structural, and the structural fix
+is that a checkpoint should not be able to be read without its configuration.
+
+### The identity gradient was not starving the geometry
+
+`g6_noid` -- self-placing, helix baseline, identity head and blind perception
+kept, identity weight zero -- has reached 3,500 updates. Every held-out
+evaluation, to the last digit printed:
+
+    updates    total    fape     rmsd   alive    bond   twist
+       500     0.837   0.837   17.45 A  100.0%   0.003    64.4
+      1000     0.837   0.836   17.45 A  100.0%   0.002    64.4
+      1500     0.837   0.837   17.45 A  100.0%   0.003    64.4
+      2000     0.837   0.837   17.45 A  100.0%   0.003    64.4
+      2500     0.838   0.837   17.45 A  100.0%   0.003    64.4
+      3000     0.837   0.837   17.45 A  100.0%   0.002    64.4
+      3500     0.837   0.836   17.45 A  100.0%   0.002    64.4
+
+17.45 A and 64.4 degrees are the helix baseline's own values, measured by
+`baseline_probe.py` with no model at all. **The arm has not moved at all.**
+
+**The prediction failed, and it failed in the informative direction.** The
+recorded prediction was: if the identity gradient is starving the geometry,
+`g6_noid` leaves 17.45 and `g6_self` does not. What happened is the reverse.
+`g6_noid` is *perfectly* frozen -- geometry is the entire objective and the
+entire objective is motionless -- while `g6_self`, carrying the identity term
+that was supposed to be crowding geometry out, is the one that moves:
+
+    g6_self   500   17.45   bond 0.006   twist 64.4
+             3000   17.47   bond 0.341   twist 67.0
+             5000   17.50   bond 1.580   twist 66.0
+             6500   17.46   bond 0.173   twist 64.8
+
+Small motion, and not obviously improvement -- but motion, against a control
+that has none. The reading: Adam had already cancelled the gradient-scale
+difference, exactly as the caveat said it largely should, and the identity term
+is not geometry's competitor but the only thing driving the shared trunk at
+all. The frame head gets what it gets by riding a representation that identity
+is paying for. Remove identity and the trunk stops moving, and the frame head
+with it.
+
+**So the diagnosis was wrong and the alternative written beside it is what the
+data says:** the problem is not the objective's balance but that the frame head
+has nothing it can learn from a 26 % live FAPE.
+
+#### And there is a sharper version of that, which this result makes checkable
+
+FAPE's `clamp_max(10.0)` has exactly zero gradient above the clamp, so only the
+26 % of pairs already within 10 A of correct carry any signal, and those are
+the near-diagonal sequence neighbours. But **the baseline already satisfies the
+near-diagonal by construction** -- every baseline is built by walking exact
+peptide geometry, which is why `baseline_probe.py` measures its bond term at
+0.0021 before a single update. So the surviving gradient is concentrated on
+precisely the pairs the rule has nothing to fix, and the pairs that are wrong
+by 40 A -- the ones that would actually fold it -- contribute a constant.
+
+That is a mechanism rather than a balance problem, and it predicts something a
+single flag can test: **raise or remove the clamp and the geometry should
+move**, where no reweighting of the existing terms will. It also predicts that
+`g6_ext` freezes too, since `extended` has exact peptide geometry as well (and
+a *lower* live fraction, 13.5 %).
+
+### `g6_ext`
+
+Job 32314557, `--birth none --initial extended`, otherwise `g6_self`'s command
+exactly; banner verified, 242,891 parameters and `extended baseline`. Three of
+the four GPU QOS slots now, leaving one.
+
+It is the control that says whether 17.45 A is "the baseline" or "a fixed
+point": `extended` starts somewhere no fold resembles, so an arm that lands in
+the same place from both baselines has not merely kept its initialisation.
+Under the clamp mechanism above it should freeze at `extended`'s own baseline
+values rather than at the helix ones -- which, if it holds, is a second
+independent reading of the same claim, since the two baselines differ by 19 A.
