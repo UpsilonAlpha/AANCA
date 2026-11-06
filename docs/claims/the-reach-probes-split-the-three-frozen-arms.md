@@ -5,7 +5,7 @@ evidence: ours
 sources: [32420519, 32420520, 32420521]
 ---
 
-# g6_self moved the right distance coherently and gained nothing; g6_noid moved 0.12 Angstrom
+# g6_self walked half the distance in a straight line and gained nothing; g6_noid barely moved
 
 `scripts/reach_ceiling_probe.py` on each arm's `last.pt`, **k = 12 held-out
 crops**, 120 steps against the 36.0 A ceiling:
@@ -43,16 +43,15 @@ separate.
 **Three different failures, and only one of them is the one that was
 suspected.**
 
-`g6_noid` asks for nothing. 0.3 % of its movement budget over 120 steps, which
-is the probe's own third branch -- "the rule has learned to ask for nothing at
-all, and neither the ceiling nor the window is what is stopping it". With the
-identity term removed the frame head emits approximately zero, which is exactly
-what [[identity-supplies-the-trunk-that-geometry-reads]] predicts: no identity
-gradient, no trunk, nothing for the frame head to read.
+`g6_noid` asks for nothing: a net 0.07 A over 120 steps, 0.2 % of the 36 A
+budget, and the only arm whose little movement is incoherent (net/path 0.530
+against 0.98 for the others). That is the probe's own third branch -- "the rule
+has learned to ask for nothing at all, and neither the ceiling nor the window
+is what is stopping it". With the identity term removed the frame head emits
+approximately zero.
 
-`g6_ext` is genuinely short. It moves 5.74 A coherently and its residues are
-19.48 A from native on average, 69.50 A at worst, so the ceiling binds for it
-as the arithmetic said.
+`g6_ext` is genuinely short: 5.75 A coherently against a 28.77 A requirement,
+so a fifth of the way, and the ceiling binds for it as the arithmetic said.
 
 **`g6_self` is the one that matters.** It moves 7.54 A in an almost perfectly
 straight line (0.982) against a mean need of 13.94 A. So it is not out of
