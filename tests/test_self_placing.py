@@ -316,3 +316,57 @@ def test_the_rollout_actually_moves_the_baseline(ubiquitin):
     )
     moved = (result.state.coords.detach() - start).norm(dim=-1).max()
     assert float(moved) > 0.1
+
+
+def test_identity_weight_zero_keeps_the_perception_and_drops_the_gradient(ubiquitin):
+    """The controlled ablation: same rule, same perception, no identity gradient.
+
+    ``growth_objective`` used to build the identity start state only when the
+    loss was weighted, which conflated two different things. A rollout's
+    *perception* depends on whether an identity state exists -- it supplies the
+    neighbours' committed types and, under ``blind``, collapses the side chains
+    -- while the weight decides only whether the labels are supervised. So a
+    run with the head and a weight of zero has to be the weighted run with one
+    term removed, and nothing else; otherwise an ablation measures two changes.
+
+    The identity head still takes a *little* gradient at zero weight, and that
+    is correct rather than a leak: the labels it commits are an input at the
+    next step, so FAPE reaches it through its neighbours' perception. Four
+    orders of magnitude below the frame head's is the signature of that path
+    and not of a supervised one.
+    """
+    topo, coords, _links = ubiquitin
+    grads = {}
+    for weight in (93.7, 0.0):
+        rule = AANCARule(growth=True, birth="none", identity=True)
+        torch.manual_seed(0)
+        for head in (rule.frame_head, rule.identity_head):
+            for p in head[-1].parameters():
+                p.data.add_(torch.randn_like(p) * 0.01)
+        config = RolloutConfig(
+            steps=6, truncate=99, k=24, blind=True,
+            growth=GrowthConfig(birth="none", initial="helix"),
+        )
+        terms, result = growth_objective(
+            rule, coords, topo, config, torch.Generator().manual_seed(0),
+            identity_weight=weight,
+        )
+        assert result.state.identity is not None, (
+            f"identity_weight {weight} built no identity state, so the "
+            "perception differs from the weighted run's"
+        )
+        terms.total.backward()
+        grads[weight] = {
+            name: sum(
+                float(p.grad.abs().sum())
+                for p in getattr(rule, name).parameters()
+                if p.grad is not None
+            )
+            for name in ("frame_head", "identity_head")
+        }
+        if weight == 0.0:
+            assert float(terms.identity) == 0.0
+
+    assert grads[0.0]["frame_head"] > 0.0
+    assert grads[0.0]["identity_head"] < grads[0.0]["frame_head"] / 1000
+    assert grads[93.7]["identity_head"] > 100 * grads[0.0]["identity_head"]

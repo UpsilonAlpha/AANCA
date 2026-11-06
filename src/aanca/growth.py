@@ -1324,7 +1324,18 @@ def growth_objective(
         )
         start_coords = native_coords
     identity_start_state = None
-    if identity_weight:
+    # **Built when the rule has the head, not when the loss has a weight.**
+    # Those are different questions and conflating them silently changed the
+    # experiment: a rollout's *perception* depends on whether an identity state
+    # exists -- it supplies the neighbours' committed types and, under
+    # ``blind``, collapses the side chains -- while ``identity_weight`` decides
+    # only whether the labels are supervised. So a run with the head and a
+    # weight of zero is "the same rule, the same perception, no identity
+    # gradient", which is the controlled way to ask what the identity term is
+    # doing to the geometry. Gating the state on the weight instead would have
+    # made that run differ in perception as well, and the comparison would have
+    # measured two changes.
+    if identity_weight or getattr(rule, "identity", False):
         identity_start_state = initial_identity(
             topo, native_coords, identity_start, generator, alive=alive
         )

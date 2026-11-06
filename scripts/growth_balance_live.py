@@ -64,6 +64,19 @@ from aanca.torch_graph import feature_topology
 
 ROOT = Path(__file__).resolve().parent.parent
 RAW = ROOT / "data" / "raw"
+PDB = ROOT / "data" / "pdb"
+MANIFEST = ROOT / "data" / "manifest.json"
+
+#: Above this, a gradient norm is not a measurement. Trained weights run on a
+#: rollout they were not trained on diverge, and the backward pass then reports
+#: numbers like 1.95e+11 with every value in the forward pass still finite --
+#: which looks exactly like a finding and is not one. Measured: the first
+#: trained-weights run of this probe, on 1UBQ with 6 seeds and 30 steps against
+#: g5_ctrl's crop-128/16-seed/120-step training, returned 1e+08 to 1e+11 on
+#: every row. Flagged rather than hidden, because the fix is to match the
+#: training configuration (``--crop``) and the reader has to know which it is
+#: looking at.
+SANE_GRADIENT = 1e5
 HEADS = (
     "activation_head", "birth_head", "frame_head", "identity_head", "trunk",
 )
@@ -120,8 +133,19 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--checkpoint", default=None)
     parser.add_argument("--pdb", default="1UBQ")
-    parser.add_argument("--seeds", type=int, default=6)
-    parser.add_argument("--steps", type=int, default=30)
+    parser.add_argument(
+        "--crop", action="store_true",
+        help=(
+            "load a held-out crop from the pool at the checkpoint's own crop "
+            "size and split, instead of a whole PDB from data/raw. **Use this "
+            "with --checkpoint.** Trained weights on a structure unlike the "
+            "ones they were trained on diverge in the backward pass, and the "
+            "table then prints gradient norms of 1e+11 with every forward "
+            "value still finite"
+        ),
+    )
+    parser.add_argument("--seeds", type=int, default=0)
+    parser.add_argument("--steps", type=int, default=0)
     parser.add_argument(
         "--truncate",
         type=int,
@@ -134,7 +158,7 @@ def main() -> int:
         "rule -- the third time in this project that a probe diverging from "
         "the training setup produced a number that looked like a finding.",
     )
-    parser.add_argument("--k", type=int, default=24)
+    parser.add_argument("--k", type=int, default=0)
     parser.add_argument(
         "--birth", default=None,
         choices=("torsion", "cartesian", "free", "none"),
@@ -184,13 +208,6 @@ def main() -> int:
     if args.detect_anomaly:
         torch.autograd.set_detect_anomaly(True)
 
-    path = RAW / f"{args.pdb}.pdb"
-    if not path.exists():
-        print(f"{path} missing")
-        return 1
-    topo, native = feature_topology(load_protein(path))
-    links = growth_links(topo)
-
     stored: dict = {}
     trained = None
     if args.checkpoint:
@@ -198,7 +215,84 @@ def main() -> int:
         stored = state.get("args") or {}
         trained = ckpt.rule_weights(state)
 
+    # **Which heads the rule has is read from the weights, not from the stored
+    # arguments**, the same lesson segment_placement_probe.py records: g6_self
+    # stores birth "none" and this probe read "cartesian" from somewhere, built
+    # a rule with a birth head, and ``load_state_dict`` refused -- exit 1 with
+    # nothing said about why. The weights cannot disagree with themselves.
+    has_birth_head = trained is not None and "birth_head.0.weight" in trained
+    has_identity = trained is not None and "identity_head.0.weight" in trained
+    if args.birth:
+        birth = args.birth
+    elif trained is None:
+        birth = str(stored.get("birth") or "cartesian")
+    elif not has_birth_head:
+        # No birth head means ``free`` or ``none``, and those differ in whether
+        # the rollout grows at all -- which the weights cannot say. The stored
+        # argument is the only source for that, and defaulting it to ``none``
+        # would silently turn a grown run into a self-placing one.
+        birth = str(stored.get("birth") or "free")
+        if birth not in ("free", "none"):
+            birth = "free"
+    else:
+        birth = str(stored.get("birth") or "cartesian")
+        if birth in ("free", "none"):
+            birth = "cartesian"
+
+    # Every rollout setting defaults to the *run's own*, because a probe
+    # configured differently from training measures the probe. Paid for twice
+    # now: once by backpropagating through 30 steps where training truncates at
+    # 12, and once by running trained weights on 1UBQ at 6 seeds.
     truncate = args.truncate or int(stored.get("truncate") or 12)
+    steps = args.steps or int(stored.get("steps") or 30)
+    seeds = args.seeds or int(stored.get("seeds") or 6)
+    k = args.k or int(stored.get("k") or 24)
+
+    if args.crop:
+        # A held-out crop from the pool, which is what training actually sees.
+        import random as _random
+
+        from aanca.data import RepackingDataset, read_manifest
+
+        splits = read_manifest(MANIFEST)
+        available = []
+        for spec in splits[str(stored.get("split") or "train")]:
+            for suffix in (".bcif", ".cif", ".pdb"):
+                candidate = PDB / f"{spec.pdb_id}{suffix}"
+                if candidate.exists():
+                    available.append(
+                        type(spec)(spec.pdb_id, candidate, spec.group)
+                    )
+                    break
+        wanted = int(stored.get("structures", 400)) + int(
+            stored.get("eval_structures", 12)
+        )
+        pool = available[:wanted] if len(available) >= wanted else available
+        if not pool:
+            print("no structures on disk for that split")
+            return 1
+        dataset = RepackingDataset(
+            pool, concentrations=(0.0,),
+            crop_size=int(stored.get("crop_size") or 128),
+            device=torch.device("cpu"), cache_limit=max(len(pool), 1),
+        )
+        indices = list(state.get("eval_indices") or []) if args.checkpoint else []
+        if not indices:
+            order = list(range(len(pool)))
+            _random.Random(int(stored.get("seed", 0))).shuffle(order)
+            indices = order[: int(stored.get("eval_structures", 12))]
+        topo, native, _crop, _used = dataset.load_crop(
+            indices[0], rng=_random.Random(int(stored.get("seed", 0)))
+        )
+        source = f"held-out crop {indices[0]} of {len(pool)}"
+    else:
+        path = RAW / f"{args.pdb}.pdb"
+        if not path.exists():
+            print(f"{path} missing")
+            return 1
+        topo, native = feature_topology(load_protein(path))
+        source = args.pdb
+    links = growth_links(topo)
 
     from aanca.fape import fape as fape_loss
     from aanca.identity import library_index, type_loss
@@ -212,21 +306,25 @@ def main() -> int:
     values = {n: 0.0 for n in names}
     finite = {n: 0 for n in names}
 
-    birth = args.birth or str(stored.get("birth", "cartesian"))
     self_placing = birth == "none"
-    print(f"birth {birth}" + (f", {args.initial} baseline" if self_placing else ""))
+    print(
+        f"{source}: birth {birth}, identity head "
+        f"{has_identity or trained is None}"
+        + (f", {args.initial} baseline" if self_placing else "")
+    )
 
     for repeat in range(args.repeats):
         rule = AANCARule(
             growth=True,
             birth=birth,
-            identity=True,
+            identity=has_identity or trained is None,
+            morphogen=trained is not None and "emit_head.0.weight" in trained,
             identity_keep=float(stored.get("identity_keep", 2.0)),
         )
         if trained is not None:
             rule.load_state_dict(trained)
         config = RolloutConfig(
-            steps=args.steps, truncate=truncate, k=args.k, blind=True,
+            steps=steps, truncate=truncate, k=k, blind=True,
             identity_start=str(stored.get("identity_start", "masked")),
             growth=GrowthConfig(
                 seeds=args.seeds, birth=birth, initial=args.initial
@@ -247,7 +345,7 @@ def main() -> int:
             )
         else:
             alive = seed_alive(
-                topo.n_residues, args.seeds, generator, native.device, links=links
+                topo.n_residues, seeds, generator, native.device, links=links
             )
             start = native
         start_identity = initial_identity(
@@ -314,7 +412,7 @@ def main() -> int:
                         missing.discard(h)
 
     print(
-        f"{args.pdb}, {args.seeds} seeds, {args.steps} steps, mean of "
+        f"{source}, {seeds} seeds, {steps} steps, mean of "
         f"{args.repeats} runs\nrule: {args.checkpoint or 'at initialisation'}\n"
         f"truncate {truncate} (training's, not steps)\n"
         f"weights: bond {args.bond_weight:g}, reach {args.reach_weight:g}, "
@@ -326,6 +424,10 @@ def main() -> int:
         f"  {'term':<12}{'weighted':>10}" + "".join(
             f"{h.replace('_head',''):>12}" for h in HEADS
         ) + f"{'draws':>7}"
+    )
+    exploded = any(
+        totals[name][h] / max(finite[name], 1) > SANE_GRADIENT
+        for name in names for h in HEADS if h not in missing
     )
     for name in names:
         n = max(finite[name], 1)
@@ -346,6 +448,14 @@ def main() -> int:
         "  is already producing non-finite values and the row is not\n"
         "  trustworthy. A '-' column is a head this rule does not have."
     )
+    if exploded:
+        print(
+            f"\n  ** A gradient norm above {SANE_GRADIENT:g} means this is not a\n"
+            "  measurement. The rollout has diverged, which trained weights do\n"
+            "  on a configuration they were not trained on while every forward\n"
+            "  value stays finite. Re-run with --crop so the structure, crop\n"
+            "  size, seeds and steps are the run's own."
+        )
     return 0
 
 

@@ -115,6 +115,25 @@ def resolve_device(name: str) -> torch.device:
     return torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
+def identity_track(args) -> bool:
+    """Whether the identity head and blind perception are on.
+
+    ``auto`` is the historical behaviour -- on exactly when the loss is
+    weighted -- and every run before 6 Nov is that. ``on`` with
+    ``--identity-weight 0`` is the one combination worth having a flag for: the
+    same rule and the same perception as a weighted run, with the identity
+    gradient removed. That is how to ask what the identity term is doing to the
+    geometry without also changing what the rule can see, and the balance probe
+    is the reason to ask -- it puts FAPE's gradient on the frame head at
+    6.9e-02 against identity's 1.4e+01 on its own.
+    """
+    if args.identity_track == "on":
+        return True
+    if args.identity_track == "off":
+        return False
+    return bool(args.identity_weight)
+
+
 def build_config(args, activation: str) -> RolloutConfig:
     return RolloutConfig(
         steps=args.steps,
@@ -122,7 +141,7 @@ def build_config(args, activation: str) -> RolloutConfig:
         k=args.k,
         update_schedule=args.update_schedule,
         coupling_radius=args.coupling_radius,
-        blind=bool(args.identity_weight),
+        blind=identity_track(args),
         identity_start=args.identity_start,
         identity_sampling=args.identity_sampling,
         growth=GrowthConfig(
@@ -272,6 +291,16 @@ def main() -> int:
     parser.add_argument(
         "--birth", choices=("torsion", "cartesian", "free", "none"),
         default="cartesian",
+    )
+    parser.add_argument(
+        "--identity-track", choices=("auto", "on", "off"), default="auto",
+        help=(
+            "whether to build the identity head and blind the perception. "
+            "auto follows --identity-weight and is what every run before "
+            "6 Nov did. Set it to on with --identity-weight 0 for the "
+            "controlled ablation: identical rule, identical perception, no "
+            "identity gradient"
+        ),
     )
     parser.add_argument(
         "--initial", choices=("helix", "extended", "random"), default="helix",
@@ -473,7 +502,7 @@ def main() -> int:
         activation_init=args.activation_init,
         max_rotation=args.max_rotation,
         max_translation=args.max_translation,
-        identity=bool(args.identity_weight),
+        identity=identity_track(args),
         identity_keep=args.identity_keep,
     ).to(device)
     optimiser = torch.optim.Adam(rule.parameters(), lr=args.lr)
