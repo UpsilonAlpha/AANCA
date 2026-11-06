@@ -7669,3 +7669,44 @@ That is a property of how windows are sampled, not of the rule, and it puts a
 floor under `rmsd_dmg` that no objective can lift. If `rmsd_dmg` stalls a little
 above the baseline, this is the first thing to subtract before concluding
 anything.
+
+### 12.23 Angstrom is an attractor of the rollout, not of either objective
+
+`g7_regen` (FAPE 1.0) and `g8_ceiling` (every move teacher-forced against the
+exact ideal) share no placement term. Both reach **rmsd_dmg 12.23 A by update
+250** and hold it to three significant figures -- g8 across 1,500 updates, g7
+across 3,500. The baseline is 10.77.
+
+Two unrelated objectives landing on the same number is the signature of a
+measurement fault, and this project has produced four of those, so it was
+checked before being believed: the probe's `rmsd_dmg` path and the trainer's
+were compared on the start state, crop by crop. They agree **exactly** -- 10.77
+mean, two decimals on every one of the twelve crops. The baseline is right and
+the 12.23 is real.
+
+Where it comes from: the start state scores 10.77 at one step and 12.23 after
+120, so the rule applies a systematic drift of about 0.012 A per step a hundred
+and twenty times and parks. Both arms do it, so the thing setting that drift is
+not the placement term.
+
+**And I cannot yet say which failure it is, because of a gap in my own
+instrumentation.** `growth_objective` computes the ceiling term only
+`if move_weight:` and `evaluate()` never passed the weight, so the held-out
+`move` was structurally absent for g8_ceiling's whole run -- not unprinted,
+absent. The two readings need opposite fixes:
+
+  * `move` falling while `rmsd_dmg` sits still: the rule learns the right moves
+    and they fail to accumulate, which points at the rollout's composition --
+    the bernoulli update schedule, rotating about each residue's own CA, or
+    moves applied and undone.
+  * `move` flat: the placement gradient never reaches the frame head, and the
+    capacity question answers no.
+
+Both weights now reach the evaluation, which also makes the eval `total` the
+same weighted sum training optimises. On a damaged start state `clash` reads
+0.05195 against a crystal's 0.00002 at the same tolerance, so that term has
+real signal here.
+
+So the next GPU arm is **the same experiment made readable**, not a new one --
+and that is the honest cost of the gap: 70 minutes of card time bought a number
+I already had from g7_regen.
