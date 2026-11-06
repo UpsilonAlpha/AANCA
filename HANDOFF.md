@@ -7908,3 +7908,60 @@ node to `supported` made check 4 flag it for citing 32405172, which is void for
 its `move` column. The body already stated that scope -- the job's `rmsd_dmg`
 stands and is what the node cites it for -- so the acknowledgement is honest
 rather than an exemption.
+
+### k=12 moved the denominator, not the conclusion
+
+The three reach probes re-run over twelve held-out crops instead of
+`indices[0]`:
+
+    arm       path   net   needed   net/path   path spread   net spread
+    g6_self   7.71   7.54   13.94     0.982    7.39-9.74     7.37-7.80
+    g6_ext    5.95   5.75   28.77     0.973    5.72-7.69     5.67-5.85
+    g6_noid   0.29   0.07   13.94     0.530    0.12-2.13     0.07-0.07
+
+**`path` and `net` reproduce to within noise; `needed` moved from 8.64 A to
+13.94 A.** Crop 180 had an unusually short journey, so "g6_self travels 7.67 A
+against 8.64 needed" -- 89 % of the distance, which licensed "the right
+magnitude, the wrong direction" -- becomes 7.54 against 13.94, or **54 %**.
+
+What survives: the split between the arms, and the straight lines. The spreads
+on `path` and `net` are tight, so the three arms genuinely differ and all three
+either move coherently or barely move. What does not survive: the claim that
+the magnitude was well calibrated. A straight walk covering half the required
+distance that arrives no closer is still a magnitude without a bearing, and it
+fits the lab-frame diagnosis *better* than the original reading -- a
+near-constant vector has no reason to be the right length either.
+
+So the k=1 version got the direction conclusion right and overstated the
+magnitude one, and only the re-run could separate them. This is the second time
+tonight that a statistic's denominator was the thing that moved.
+
+### `g10_equiv_ceil` moved the geometry, and paid for it
+
+First four evaluations of the equivariant arm:
+
+    updates   rmsd_dmg   move     twist   bond    clash
+       250      12.18   0.2489     9.9    5.95    0.023
+       500      12.21   0.2422    10.0    5.98    0.023
+       750      12.19   0.2478    10.2    5.95    0.023
+      1000      11.82   0.7532    52.3    8.87    0.369
+
+**The first geometric improvement anything in this project has produced** --
+12.19 to 11.82 -- and it is still 1.05 A *worse* than the 10.77 A baseline, so
+it has not yet beaten doing nothing. The cost is severe: twist from 10 to 52
+degrees, bond up half again, clash up sixteenfold, and `move` itself rising
+because its rotation half tracks the twist.
+
+Two readings, and the bearing readout on its own checkpoint (32421950) decides:
+either the frame fix released a real gradient and the restraints are now too
+weak to keep the structure physical while it acts, or the conjugated rotation
+(`frame @ rot @ frame.T`) is mis-scaled and the twist explosion is the fix's
+own doing. The second is a live worry precisely because the fix touched the
+rotation as well as the translation, and nothing has isolated the two halves.
+
+### `g7_regen` is degrading monotonically
+
+At 7,250 of 8,000: twist 44.4 degrees against a 9.6 baseline, bond 13.7 against
+4.5, rmsd 4.72 A against 3.45. The FAPE-1.0 control gets steadily worse at
+everything while `rmsd_dmg` creeps up, which is what getting better at emitting
+an unaimable move looks like.
