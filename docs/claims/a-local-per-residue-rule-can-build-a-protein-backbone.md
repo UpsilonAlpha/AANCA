@@ -1,9 +1,26 @@
 ---
-type: thesis
+type: claim
 status: unsupported
 ---
 
-# One local update rule, applied per residue, can build a protein backbone
+# One local update rule, applied per residue, can build a whole protein backbone from a baseline
+
+**This was the map's thesis for about an hour on 6 Nov, and it was the wrong
+root.** It is a claim, and a strictly stronger one than the project's actual
+thesis: a rule that can build an entire backbone from a constructed baseline
+could certainly fill a damaged window into intact context, so if this held it
+would support
+[[a-local-rule-can-regenerate-a-damaged-region-from-its-surviving-context]].
+The reverse does not follow, which is the whole point -- and it is why four
+arms failing at *this* is not evidence against the thesis
+([[the-four-arms-measured-the-architectures-ceiling]]).
+
+How the error happened is worth keeping. I inferred the thesis from the last
+three weeks of work -- the growth arms -- instead of reading the README and
+HANDOFF §1, both of which state the objective plainly. argmap's own guide calls
+getting the thesis as an assertion "the single most important step and the
+easiest to skip", and skipping it meant every node's relevance was being judged
+against a question the project is not asking.
 
 The project's assertion. A single rule reads a residue's neighbourhood and
 emits a small change to that residue's pose; applying it everywhere, for many
@@ -25,8 +42,14 @@ floor, the self-placing architecture does what it was built to do
 data pipeline and optimiser are all demonstrably functioning. The geometry is
 the part that has never moved.
 
-This node exists so the premises below can be listed and checked. Two of the
-three are not holding.
+Its own premises are kept below, because they are what the four arms actually
+tested and both of the hard ones failed.
+
+## Supports
+- [[a-local-rule-can-regenerate-a-damaged-region-from-its-surviving-context]]
+
+## Supported by
+- [[whole-structure-growth-is-a-harder-and-different-task-than-regeneration]]
 
 ## Requires
 - [[the-rule-can-move-a-residue-far-enough-to-reach-the-native]]

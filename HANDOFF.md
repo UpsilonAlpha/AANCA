@@ -7184,3 +7184,77 @@ Two findings remain and are deliberate: `identity-supplies-the-trunk` and
 claims *about our own model's gradient flow*, so our own measurements are the
 subject rather than a weak proxy, and each body says so. Check 4 is skipped --
 no retractions index yet, and given today that is worth adding.
+
+### The thesis, stated by Ulban, and what it does to today's four arms
+
+**Regeneration from damage is the goal.** Delete a part of a protein and have
+the rule fill it back in from local information. The purpose is design: if
+there is a region you want to redesign, destroy it and regrow it, into the same
+thing or a better one. The two applications driving it are **regrowing a
+designed binder's interface** with the target still present -- so the context
+the rule reads includes the thing the result has to bind -- and **growing a
+scaffold around a known peptide motif**.
+
+This is written down because the map was first rooted in the wrong thesis. I
+inferred "a local rule can build a protein backbone" from the last three weeks
+of growth work instead of reading README and HANDOFF 1, both of which state
+the objective plainly. Every node's relevance was being judged against a
+question the project is not asking.
+
+**And that mistake was not confined to the map. It is what the last three
+weeks measured.** `--birth none` starts every residue at a constructed
+baseline with one native anchor per covalent run -- 15.7 anchors in a
+128-residue crop, native context at about one residue in eight. Regeneration
+is the opposite ratio: the intact remainder is most of the structure and the
+damage is a window in it.
+
+Measured on 1UBQ, a 12-residue window damaged and the other 64 left native:
+
+    start state                     fape     error outside the window
+    whole structure from helix      0.836    17.45 A  (12 held-out crops)
+    12-residue window damaged       0.283    exactly zero
+
+**The same loss is three times smaller on the task the project is for**, and
+all three of today's blockers weaken or vanish under it:
+
+  * the clamp gates little when a damaged residue's neighbours are intact and
+    inside 10 A, so the wrong pairs carry a direction instead of a constant;
+  * the 36 A reach ceiling is not binding when a residue must travel a few
+    Angstrom rather than 17 or 36;
+  * and **"emit nothing" stops being a free fixed point.** Doing nothing leaves
+    the window wrong while the context is right, which is exactly the
+    comparison FAPE can make.
+
+The third is the one to sit with. The four arms converged on the identity map,
+which is a perfectly stable fixed point and therefore *rewarded* by the half of
+the objective that asks for stability past the trained horizon. The accuracy
+term was supposed to exclude it, and today established that the accuracy term
+has no gradient to give. On a regeneration task the stable answer and the
+correct answer stop being the same thing, so the degenerate solution is not
+available in the first place.
+
+So `the-four-arms-measured-the-architectures-ceiling` is now a `void` node.
+Nobody ever wrote that claim down -- each arm's write-up concluded something
+narrower about FAPE or the clamp or the trunk -- which is how it survived a day
+of being assumed.
+
+### What a regeneration arm needs, and the one thing in the way
+
+`baseline_coords` already takes an arbitrary bool mask of which residues keep
+their crystal pose. Handing it `~damaged` instead of one-anchor-per-run
+preserves the context exactly, and the geometry is right:
+
+    intact residues moved      0.00e+00 A     context exactly preserved
+    CA-CA inside the window    3.804 A        ideal, as designed
+    damaged residues moved     73.96 A mean   parked past the 36 A ceiling
+    CA-CA at the N-ward join   64.78 A        not hinged off its neighbour
+
+**The walk order is wrong for this use.** A walk runs out of every anchor and
+later walks overwrite earlier ones, so a window surrounded by anchors is last
+written by a walk from the *furthest* anchor in its run rather than the
+adjacent one. With one anchor per run that is harmless -- there is only ever
+one walk -- which is why it has never shown up in fifteen tests.
+
+Fixing it is anchor ordering, not geometry: start the walk at the intact
+residue adjacent to the window. Both joins should stay open afterwards, because
+loop closure is part of the task rather than something to hand the rule.
