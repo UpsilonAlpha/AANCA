@@ -6992,3 +6992,67 @@ own baseline (36.7 A, 84.1 deg) rather than at the helix one, which is a second
 reading of the collapse from 19 A away. `g6_open` is the one that can move, and
 if it does not then the clamp was not the gate either and the next suspect is
 the frame head's own parameterisation.
+
+### 2026-11-06, evening: `g6_self` and `g6_noid` finished, and neither ever left its baseline
+
+Both at 8,000 updates, exit 0, ~296 min each. Every held-out evaluation:
+
+    updates   g6_self rmsd  twist   bond  |  g6_noid rmsd  twist   bond
+       500        17.45     64.4   0.006  |      17.45     64.4   0.003
+      1500        17.46     65.2   0.318  |      17.45     64.4   0.003
+      2500        17.45     64.6   0.045  |      17.45     64.4   0.003
+      3500        17.47     65.3   0.483  |      17.45     64.4   0.002
+      4500        17.49     64.9   0.423  |      17.45     64.4   0.004
+      5500        17.48     65.9   1.379  |      17.45     64.4   0.003
+      6500        17.46     64.8   0.173  |      17.45     64.4   0.003
+      7500        17.53     67.0   4.757  |      17.45     64.4   0.004
+      8000        17.44     65.2   0.489  |      17.45     64.4   0.002
+
+The helix baseline is 17.45 A and 64.4 deg, with no model at all.
+
+**`g6_noid` did not move by one digit in eight thousand updates.** Its `total`
+and its `fape` are the same number to three decimals at every evaluation
+(0.837), because the identity term is zero, completion and reach are zero on a
+fully-alive rollout, and the bond term times 0.122 is 0.0002. So geometry was
+*literally the entire objective*, the entire objective was motionless, and the
+run ended precisely where `baseline_coords` put it.
+
+**And the earlier reading of `g6_self` was too generous.** Over the full run
+its RMSD spans 17.44 to 17.53 and its twist 64.4 to 67.0, around baseline
+values of 17.45 and 64.4 -- that is noise about the baseline, not progress, and
+I had called it "motion against a control that has none" on a partial log. The
+correction matters because of the third column: `g6_self`'s **bond term climbs
+from 0.006 to 4.757**. It is not folding and it is not holding still either; it
+is progressively breaking the exact peptide geometry the baseline handed it,
+while buying no fold with the damage. That is worse than frozen.
+
+So the identity term does not help geometry. It perturbs it.
+
+### `g6_ext` confirms its prediction, at 19 Angstrom's distance
+
+At 5,625 of 8,000 updates:
+
+    updates   rmsd    twist    bond
+       500   36.73     84.1   0.004
+      2500   36.73     84.3   0.069
+      3500   36.72     84.2   0.039
+      5500   36.74     84.4   0.449
+
+The `extended` baseline is 36.73 A and 84.1 deg. **The arm is sitting on it to
+two decimal places**, exactly as predicted, while identity trains normally
+alongside (NLL 2.654 against the ln-20 floor of 2.996, recovery 15.4 %).
+
+This is the control that was worth running. `g6_self` and `g6_noid` freezing at
+17.45 A was consistent with 17.45 being a genuine optimum the rule had found;
+`g6_ext` freezing at 36.73 A, nineteen Angstrom away and at a conformation no
+fold resembles, is not. **The rule keeps whatever conformation it is given.**
+Two independent baselines, two freezes, each at its own starting value: the
+collapse is not a basin the optimisation falls into, it is the optimisation
+never leaving.
+
+It also kills the one remaining innocent explanation -- that a 17.45 A helix is
+near enough to a real fold that FAPE cannot tell the difference. 36.73 A is not
+near anything, and FAPE still cannot move it.
+
+`g6_ext` is also reproducing `g6_self`'s bond drift (0.004 to 0.449), so that
+is a property of the identity term rather than of the helix.
