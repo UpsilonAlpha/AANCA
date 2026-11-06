@@ -7617,3 +7617,55 @@ at 150x it.
 It is at FAPE 1.0 with no clash term, which makes it the control separating the
 *task* change from the *objective* change. Killing it would cost that
 comparison for nothing.
+
+### Working autonomously: two slots, and authority to test rollout parameters
+
+Ulban is away. Standing authorisation: **hold at most two GPU QOS slots**, his
+`asppull3`/`pmhccamp`/`pmhcmd` array has priority, and **I may test rollout
+hyperparameters myself** if the ceiling check says the architecture is the
+constraint. His addition, recorded as a map node rather than acted on: if
+parameters keep needing hand-calibration, a secondary model or search should
+calibrate them.
+
+Both slots are full (`g7_regen`, `g8_ceiling`), so rung 2 waits for one to free
+rather than being queued now. The hourly round is on the half hour and carries
+the decision tree, so it acts without asking.
+
+### The truncation window binds, and the per-step cap does not
+
+Measured model-free on the twelve held-out crops a run sees, 12-residue window,
+helix baseline -- done while both slots were busy, to pre-position the decision
+tree rather than discover it after a failure:
+
+    per-step translation cap        0.3 A
+    budget over 120 steps          36.0 A
+    inside the 12-step window       3.6 A   <- all the gradient ever sees
+
+    the window must travel         10.10 A mean, 36.92 A worst
+
+    budget / need                   3.6x    not binding
+    gradient window / need          0.36x   BINDING
+
+**This is the opposite of the whole-structure case.** There the 36 A budget
+disqualified `g6_ext` outright, at a 36.73 A baseline. Here the budget has 3.6x
+headroom and the *truncation window* is short: a rule is being taught about a
+third of the journey it has to make.
+
+So if the ceiling check comes back saying the architecture is the constraint,
+`--truncate` is the first ablation, and it is already a trainer flag so the
+experiment costs nothing to express.
+
+**It also predicts the pair now in flight.** The ceiling check teacher-forces a
+target at every step inside the live window, so what it learns is a *policy* --
+move toward where you belong -- which applies at all 120 steps at inference.
+Truncation should therefore not limit `g8_ceiling` the way it limits a run
+learning from the outcome. **If `g8_ceiling` succeeds and rung 2 then fails, the
+12-step window is the difference between them**, and that is a cleaner
+attribution than either run gives alone.
+
+One case worth carrying: the worst window must travel 36.92 A against a 36.0 A
+budget, so a small share are unreachable in 120 steps however good the rule is.
+That is a property of how windows are sampled, not of the rule, and it puts a
+floor under `rmsd_dmg` that no objective can lift. If `rmsd_dmg` stalls a little
+above the baseline, this is the first thing to subtract before concluding
+anything.
