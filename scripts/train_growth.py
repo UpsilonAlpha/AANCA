@@ -187,6 +187,14 @@ def score(rule, dataset, indices, args, config, seed: int = 0) -> dict[str, floa
         # is too short to hold one is undamaged, and folding its absent score
         # in as a zero would read as a perfect fill.
         "rmsd_dmg", "damaged", "dmg_n",
+        # **Added 7 Nov because I built two terms and could not see either.**
+        # `move` is the ceiling check's own loss and `clash` the steric one;
+        # without them a run reports that rmsd_dmg is flat and gives no way to
+        # tell "the rule is not learning the moves" from "the rule learns the
+        # moves and they do not accumulate into placement", which need
+        # opposite fixes. g8_ceiling ran its first 1,250 updates unreadable
+        # for exactly this reason.
+        "move", "clash",
     )
     sums = {key: 0.0 for key in keys}
     n = 0
@@ -210,6 +218,18 @@ def score(rule, dataset, indices, args, config, seed: int = 0) -> dict[str, floa
                 reach_weight=args.reach_weight,
                 orientation_weight=args.orientation_weight,
                 damage=args.damage,
+                # **The weights have to reach the evaluation, not just the
+                # training step.** `growth_objective` only computes these two
+                # terms `if weight:`, so leaving them out here did not merely
+                # fail to print them -- it meant the held-out `move` and
+                # `clash` were structurally absent, and g8_ceiling's first
+                # 1,250 updates could not be read at all. Passing them also
+                # makes the eval `total` the same weighted sum training
+                # optimises, which it should have been anyway.
+                fape_weight=args.fape_weight,
+                move_weight=args.move_weight,
+                clash_weight=args.clash_weight,
+                clash_tolerance=args.clash_tolerance,
             )
             sums["total"] += float(terms.total)
             sums["fape"] += float(terms.fape)
@@ -228,6 +248,10 @@ def score(rule, dataset, indices, args, config, seed: int = 0) -> dict[str, floa
                 sums["rmsd_dmg"] += float(terms.rmsd_damaged)
                 sums["damaged"] += float(terms.damaged)
                 sums["dmg_n"] += 1.0
+            if terms.move is not None:
+                sums["move"] += float(terms.move)
+            if terms.clash is not None:
+                sums["clash"] += float(terms.clash)
             sums["alive"] += float(terms.alive_fraction)
             sums["closures"] += float(terms.closures)
             sums["frontier"] += float(terms.frontier)
@@ -270,6 +294,15 @@ def report(scores: dict[str, float], identity: bool) -> str:
     # `baseline` is where the window started, which is what "learned nothing"
     # looks like here -- the equivalent of the 17.45 A the reconstruction arms
     # never left.
+    if scores.get("move", 0) or scores.get("clash", 0):
+        # Unweighted, like every other restraint, so `clash` is comparable
+        # against a crystal structure's own 0.00002 at tolerance 0.5 A and
+        # `move` against its own starting value rather than against anything
+        # else's.
+        lines.append(
+            f"\n  move {scores['move']:>7.4f}   clash {scores['clash']:>8.5f}"
+            "   (both unweighted; clash reads 0.00002 on a crystal)"
+        )
     if scores.get("dmg_n", 0):
         lines.append(
             "\n"
