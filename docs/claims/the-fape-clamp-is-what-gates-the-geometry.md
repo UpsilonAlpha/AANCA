@@ -1,6 +1,6 @@
 ---
 type: claim
-status: open
+status: void
 sources: [32359791]
 ---
 
@@ -21,16 +21,29 @@ where there is nothing to fix.
 updates, leave a tenth open. The held-out evaluation stays clamped at 10 A
 unconditionally, so the reported numbers remain comparable across arms.
 
-At 5,625 of 8,000 updates the held-out RMSD is 17.45 to 17.51 against the
-baseline's 17.45 -- the same band as `g6_self` -- while identity trains
-normally (recovery 21.5 %). **The recorded prediction was that this is the arm
-that can move; so far it has not.** If it finishes there, the clamp was not the
-gate either.
+**`g6_open` finished all 8,000 updates and the prediction failed.** Held-out
+RMSD 17.53 A against the helix baseline's 17.45, having spent the whole run
+between 17.44 and 17.69 -- the same band as `g6_self`. Twist ended at 73.4 deg
+against the baseline's 64.4, so nine degrees *worse*, and the bond term drifted
+to 4.7 as in every identity-weighted arm. Exit 0, 3 of 8,000 updates skipped.
 
-The reason this node is `open` and not already `void` is that 2,375 updates
-remain and the prediction deserves its full run before being written off, which
-is the mistake made this morning on a partial log
-([[g6-self-wobbled-around-the-helix-baseline-and-broke-its-bonds]]).
+The recorded prediction was "this is the arm that can move". It did not, so the
+clamp was not the gate on whole-structure reconstruction. That is the fourth
+failed prediction in two days and, like the others, it narrows rather than
+wastes: with reach, credit assignment, identity balance and now the clamp all
+eliminated for a helix arm, what is left is that FAPE's direction is wrong
+([[the-reach-probes-split-the-three-frozen-arms]]).
+
+**The mechanism was not wrong, only its importance on that task.** The clamp
+really is flat above 10 A and really does leave only near-diagonal pairs, which
+`tests/test_fape_clamp.py` pins. It gates little on *regeneration*, where 90.1 %
+of pairs are live rather than 26.5 %
+([[the-regeneration-baseline-is-10-77-angstrom-and-90-percent-live]]) -- so the
+flag stays, and the arm that needed it never needed it.
+
+## Superseded by
+- [[the-reach-probes-split-the-three-frozen-arms]]
 
 ## Refuted by
+- [[g6-open-did-not-move-with-the-clamp-open-a-tenth-of-the-time]]
 - [[the-rule-can-move-a-residue-far-enough-to-reach-the-native]]

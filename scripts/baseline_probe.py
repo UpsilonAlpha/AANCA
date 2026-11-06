@@ -42,12 +42,13 @@ from aanca.growth import (  # noqa: E402
     BASELINE_MODES,
     baseline_coords,
     count_runs,
+    damage_window,
     growth_links,
     peptide_bond_restraint,
     relative_frame_restraint,
     run_anchors,
 )
-from aanca.fape import backbone_rmsd  # noqa: E402
+from aanca.fape import backbone_rmsd, backbone_rmsd_on  # noqa: E402
 
 PDB = ROOT / "data" / "pdb"
 MANIFEST = ROOT / "data" / "manifest.json"
@@ -84,6 +85,18 @@ def main() -> int:
     parser.add_argument("--crop-size", type=int, default=128)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--device", default="cpu")
+    parser.add_argument(
+        "--damage", type=int, default=0,
+        help=(
+            "measure the REGENERATION start state instead: a contiguous window "
+            "of this many residues destroyed and every other residue left at "
+            "its crystal pose. Reports rmsd_dmg, the window alone superposed "
+            "on the intact context, which is the only number comparable with "
+            "a --damage training run's. **Run this before reading a "
+            "regeneration arm's curve**: the whole-structure baselines are a "
+            "different task, and 12.23 against 10.76 is not a comparison"
+        ),
+    )
     args = parser.parse_args()
 
     device = torch.device(args.device)
@@ -119,6 +132,7 @@ def main() -> int:
         mode: [] for mode in BASELINE_MODES
     }
     runs_seen: list[int] = []
+    windows: dict[str, list[float]] = {mode: [] for mode in BASELINE_MODES}
     rng = random.Random(args.seed)
     with torch.no_grad():
         for index in indices:
@@ -133,10 +147,32 @@ def main() -> int:
             runs_seen.append(count_runs(links))
             for mode in BASELINE_MODES:
                 generator = torch.Generator().manual_seed(args.seed + index)
-                anchors = run_anchors(topo.n_residues, links, generator, device)
+                if args.damage > 0:
+                    # Everything outside the window keeps its crystal pose, so
+                    # ``anchors`` is the intact context rather than one residue
+                    # per covalent run.
+                    damaged = damage_window(
+                        topo.n_residues, links, args.damage, generator, device
+                    )
+                    if not bool(damaged.any()):
+                        continue
+                    anchors = ~damaged
+                else:
+                    damaged = None
+                    anchors = run_anchors(
+                        topo.n_residues, links, generator, device
+                    )
                 start = baseline_coords(
                     native, topo, links, anchors, mode, generator
                 )
+                if damaged is not None:
+                    windows[mode].append(
+                        float(
+                            backbone_rmsd_on(
+                                start, native, topo, alive, damaged
+                            )
+                        )
+                    )
                 rows[mode].append((
                     float(backbone_rmsd(start, native, topo, alive)),
                     float(fape_loss(start, native, topo, alive)),
@@ -160,6 +196,31 @@ def main() -> int:
         print(f"{mode:<10} {mean[0]:>8.2f} {mean[1]:>7.3f} {mean[2]:>6.1%} "
               f"{mean[3]:>8.4f} {mean[4]:>7.1f}")
 
+    if args.damage > 0:
+        print(
+            "\n"
+            f"REGENERATION: a {args.damage}-residue window destroyed, the rest "
+            "native.\n"
+            "rmsd_dmg is the window alone, superposed on the intact context, "
+            "which is\n"
+            "the only figure comparable with a --damage training run's.\n"
+        )
+        print(f"{'baseline':<10} {'rmsd_dmg':>9} {'crops':>7}")
+        for mode in BASELINE_MODES:
+            values = windows[mode]
+            if values:
+                print(
+                    f"{mode:<10} {sum(values) / len(values):>9.2f} "
+                    f"{len(values):>7d}"
+                )
+        print(
+            "\n"
+            "This is what 'learned nothing' looks like on this task, the way "
+            "17.45 A\n"
+            "was on whole-structure reconstruction. An arm above its own line "
+            "here has\n"
+            "made the window worse than leaving it where the walk put it."
+        )
     print(f"\nFAPE's clamp is {CLAMP:g} A over a scale of {SCALE:g}, so a loss "
           f"near 1.0 is\nsaturated and `live` is the share of scored pairs that "
           f"can still move.\nA baseline with a small live fraction is not a hard "

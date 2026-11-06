@@ -23,5 +23,13 @@ is the premise rather than either of them: see the `## Refuted by` edges on
 [[the-identity-gradient-starves-the-geometry]] and the open status of
 [[the-fape-clamp-is-what-gates-the-geometry]].
 
+**As of 7 Nov this is no longer merely the premise left standing after others
+failed; there is direct evidence against it.** `g6_self` moves 7.67 A per
+residue against a mean need of 8.64 A, coherently, and ends no closer to its
+native than it began. The magnitude is right and the result is not, so the
+gradient is supplying a distance and not a direction
+([[the-reach-probes-split-the-three-frozen-arms]]).
+
 ## Refuted by
 - [[the-rule-keeps-whatever-conformation-it-is-given]]
+- [[the-reach-probes-split-the-three-frozen-arms]]

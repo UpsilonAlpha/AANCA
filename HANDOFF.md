@@ -7334,3 +7334,87 @@ closed would already be the answer.
 So `rmsd_dmg` is the number. 10.76 A is where an untrained rule leaves the
 window, and it is the figure a trained arm has to beat -- the regeneration
 equivalent of the 17.45 A the reconstruction arms never left.
+
+### 7 Nov: the reach probes split the arms, and g6_self moves the right distance the wrong way
+
+`scripts/reach_ceiling_probe.py` on each finished arm's `last.pt`, held-out
+crop 180 of 412, 120 steps against the 36.0 A ceiling:
+
+    arm       path   net   net/path   % of ceiling   needs (mean)
+    g6_self   7.69   7.67    0.998       21.4%          8.64 A
+    g6_ext    5.78   5.74    0.993       16.0%         19.48 A
+    g6_noid   0.12   0.07    0.575        0.3%          8.64 A
+
+Three different failures, and only one is the one that was suspected.
+
+**`g6_noid` asks for nothing** -- 0.3 % of its budget over 120 steps. That is
+the probe's own third branch, and it is what
+`identity-supplies-the-trunk-that-geometry-reads` predicts: remove the identity
+gradient and the frame head emits approximately zero because the trunk it reads
+is no longer being trained.
+
+**`g6_ext` is genuinely short**, 5.74 A against a mean need of 19.48 A and
+69.50 A at worst, so the ceiling binds for it as the arithmetic said.
+
+**`g6_self` is a fourth case the probe did not anticipate, and it is the
+important one.** It travels 7.67 A against a mean need of 8.64 A, in an almost
+perfectly straight line (net/path 0.998), using a fifth of its budget. So it is
+**not** out of budget and it is **not** thrashing -- it moves very nearly the
+right distance and ends no closer to its native than it started.
+
+The only reading left is that the **direction** is wrong. For a helix arm
+neither the reach ceiling nor credit assignment over steps is binding, and
+`fape-can-teach-the-frame-head-which-way-to-move` goes from "the premise left
+standing after the others failed" to a claim with direct evidence against it.
+The gradient supplies a magnitude and not a bearing.
+
+### `g6_open` finished: the clamp was not the gate either
+
+8,000 updates, exit 0. Held-out RMSD 17.53 A against the helix baseline's
+17.45, having spent the whole run between 17.44 and 17.69 -- `g6_self`'s band --
+and twist ended at **73.4 deg against the baseline's 64.4**, nine degrees
+worse. Identity trained normally alongside (NLL 2.555, recovery 21.5 %).
+
+That is the fourth failed prediction in two days, and like the others it
+narrows rather than wastes. For a helix arm: reach eliminated, credit
+assignment eliminated, identity balance eliminated, clamp eliminated.
+
+**The mechanism was not wrong, only its importance on that task.** The clamp is
+flat above 10 A and does leave only near-diagonal pairs; `tests/test_fape_clamp.py`
+pins both. It simply was not what was stopping a 17.45 A arm. The node is
+`void`; the flag stays, because the task it matters on is the next one.
+
+### The regeneration baseline, measured on the right crops
+
+`scripts/baseline_probe.py --damage 12` now measures the regeneration start
+state with no model, on the same twelve held-out crops a run sees:
+
+    baseline    rmsd_dmg   rmsd   fape    live    bond   twist
+    helix         10.77    3.45   0.128   90.1%   4.504    9.6
+    extended      21.30    6.87   0.157   86.6%  17.945    9.5
+    random        14.12    4.57   0.155   87.1%   5.487   10.8
+
+**10.77 A is the "learned nothing" line for regeneration**, the way 17.45 A was
+for reconstruction, and it is the only figure comparable with a `--damage 12`
+run's `rmsd_dmg`. This had to be measured before reading `g7_regen`'s curve: the
+10.76 A quoted last night came from three crops on a six-structure pool, and
+comparing a run's number against a baseline from a different crop sample is the
+exact error that cost a wrong commit on the morning of 6 Nov. It happens to
+agree to a hundredth, which is luck and not method.
+
+**The live fraction settles the clamp argument quantitatively.** 90.1 % of
+scored pairs sit inside FAPE's 10 A clamp on this task, against 26.5 % on
+whole-structure reconstruction -- because a damaged residue's neighbours are
+intact and nearby. So the clamp gates almost nothing here, with no need for
+`--fape-clamp-prob` at all.
+
+### `g7_regen`, first reading
+
+At 500 of 8,000 updates: **`rmsd_dmg` 12.23 A against the baseline's 10.77**.
+fape 0.141, twist 9.0 deg, rmsd 3.89 A, bond 6.02, recovery 5.7 % at 625.
+
+So on its first evaluation the arm has made the window **1.5 A worse** than
+leaving it where the walk put it. One eval out of sixteen, 6 % of the way in,
+and the three reconstruction arms all sat at their baseline rather than above
+it -- so moving at all is new, and moving the wrong way at 500 updates is not
+yet a result. The thing to watch is whether it crosses back under 10.77.

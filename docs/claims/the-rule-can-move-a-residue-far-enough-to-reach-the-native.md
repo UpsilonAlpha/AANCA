@@ -1,6 +1,6 @@
 ---
 type: claim
-status: unsupported
+status: open
 ---
 
 # The rollout can move a residue far enough to reach its native position
@@ -23,12 +23,24 @@ steps of coherent motion while being taught through a window covering 3.6 A of
 it. **The extended baseline is 36.73 A away, past the 36.0 A ceiling** -- so
 `g6_ext` could not have reached the native in 120 steps with a perfect rule.
 
-Marked `unsupported` rather than `void` because the ceiling disqualifies one
-arm outright and squeezes the others; whether it is what stopped the 17.45 A
-arms is a separate question, and the probe that would settle it has not run.
+**The probe has now run and the answer is: it depends on the arm, which is why
+this is `open` rather than settled either way.**
+[[the-reach-probes-split-the-three-frozen-arms]] measured `g6_self` moving
+7.67 A against a mean need of 8.64 A, in an almost perfectly straight line and
+using a fifth of its budget -- so for a helix arm the ceiling is not binding and
+this premise effectively holds. For `g6_ext`, 5.74 A against a need of 19.48 A
+mean and 69.50 A at worst, it does not.
+
+So the ceiling explains `g6_ext` and explains nothing about the arms that
+started 17.45 A out. That matters more than it sounds: it removes the last
+mechanical excuse for those arms and leaves the direction of FAPE's gradient as
+the only candidate.
 
 ## Requires
 - [[question-does-a-trained-rule-use-its-movement-budget]]
+
+## Supported by
+- [[the-reach-probes-split-the-three-frozen-arms]]
 
 ## Refuted by
 - [[the-per-step-translation-cap-is-0-3-angstrom]]
