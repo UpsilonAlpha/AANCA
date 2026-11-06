@@ -6737,3 +6737,84 @@ absent head is now `None` and the table prints a dash. The 1.4x figure quoted fo
 the orientation weight last night was measured on a Cartesian rule, which has a
 birth head, so that number stands; any free-mode balance measurement would have
 silently read zero.
+
+### 2026-11-06, later: the trunk measurement failed twice, and both failures were the probe
+
+The two CPU jobs queued to read the trunk gradient on trained weights came back
+useless, in two different ways, and both are worth recording because both are
+repeats of lessons this project has already paid for.
+
+**Job 32240478 died with exit 1 and one line of output: `birth cartesian`.** The
+checkpoint was `g6_self/best.pt`, whose run is `--birth none`; the probe built a
+rule with a birth head, and `load_state_dict` refused. This is exactly the
+failure `segment_placement_probe.py` carries a paragraph about -- *which heads
+the rule has is read from the weights, not from the stored arguments, because
+the weights cannot disagree with themselves* -- and the balance probe had not
+been given it. Fixed: `birth_head.0.weight`, `identity_head.0.weight` and
+`emit_head.0.weight` in the state dict now decide what gets built, with the
+stored argument consulted only for the one thing the weights cannot say, which
+is whether a rule with no birth head is `free` (grows, at the reference pose) or
+`none` (does not grow at all).
+
+**Job 32240477 ran and returned gradient norms between 1e+08 and 1e+11** on
+every row, with `draws 3` -- so the forward values were all finite and the
+backward pass had diverged. It was g5_ctrl's trained weights on 1UBQ at 6 seeds
+and 30 steps, against a run trained on 128-residue crops at 16 seeds and 120
+steps. **This is the third time in this project that a probe configured
+differently from training has produced a number that looked like a finding**;
+the probe's own docstring says so about the previous two. Two fixes: every
+rollout setting now defaults to the checkpoint's own (`steps`, `seeds`, `k`,
+`truncate`), and `--crop` loads a held-out crop from the pool at the run's crop
+size and split instead of a whole PDB. And a gradient norm above 1e5 now prints
+a paragraph saying the table is not a measurement, rather than leaving a
+plausible-looking 1.95e+11 on the page.
+
+**So the trunk question is still open.** The one thing that can be said without
+it is the shape of the init-time numbers, which are sound because an untrained
+rule cannot diverge: FAPE 6.9e-02 on the frame head against identity's 1.4e+01
+on its own. The trunk column reads exactly zero for every term at
+initialisation, which is not a measurement either -- every output layer is
+zero-initialised, so `W.T @ g` is zero and no term reaches the trunk at all.
+It has to be read on trained weights, with `--crop`.
+
+### `--identity-track`, because the ablation had a confound built into it
+
+The test of the diagnosis is a self-placing arm with the identity term removed,
+so geometry is the whole objective. But `--identity-weight 0` did not mean that:
+the trainer wired both `blind` and the identity head's *existence* to
+`bool(identity_weight)`, so dropping the weight to zero also gave the rule
+sighted perception and took its head away. The arm would have differed from
+`g6_self` in three ways and measured none of them.
+
+Those are different questions. A rollout's **perception** depends on whether an
+identity state exists -- it supplies the neighbours' committed types and, under
+`blind`, collapses the side chains to CB -- while the **weight** decides only
+whether the labels are supervised. `growth_objective` was conflating them too,
+building the identity start state `if identity_weight:`. It now builds it
+whenever the rule has the head, and `--identity-track {auto,on,off}` separates
+the two in the trainer, with `auto` reproducing every run before today.
+
+So `--identity-weight 0 --identity-track on` is the controlled ablation:
+identical rule, identical perception, one term removed. Verified -- held-out
+RMSD 31.45 against 31.46 on the same seed, the identity term exactly 0, and the
+identity head's gradient down by four orders of magnitude.
+
+**It does not go to exactly zero, and that is correct rather than a leak.** The
+labels the head commits are an input at the next step, so FAPE reaches it
+through its neighbours' perception: 2.1e-04 against the frame head's 1.7. A test
+pins the ratio, because "the identity head is unsupervised" and "the identity
+head is disconnected" are different claims and only the first one is true.
+
+### `g6_noid`
+
+Job 32241722, `--birth none --initial helix --identity-weight 0
+--identity-track on`, otherwise g5_ctrl's command, running beside `g6_self`
+(32215014) -- two of the four GPU QOS slots, which leaves two for Ulban's array.
+The banner confirms the ablation is the controlled one: 242,891 parameters, the
+same as `g6_self`, so the identity head is built and only its weight is gone. The prediction worth writing
+down first, since the last one paid off: if the geometry is being starved by the
+identity gradient, this arm moves off 17.45 A and `g6_self` does not. If both sit
+at the baseline, the gradient ratio was a red herring -- Adam had already
+cancelled it, as the caveat above says it largely should -- and the problem is
+not the objective's balance but that the frame head has nothing it can learn
+from a 26 % live FAPE.
