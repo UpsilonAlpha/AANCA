@@ -7258,3 +7258,79 @@ one walk -- which is why it has never shown up in fifteen tests.
 Fixing it is anchor ordering, not geometry: start the walk at the intact
 residue adjacent to the window. Both joins should stay open afterwards, because
 loop closure is part of the task rather than something to hand the rule.
+
+### 7 Nov: the root is the strongest claim, and the regeneration arm is built
+
+**Ulban's call on the root, and he is right.** The thesis is "one local rule can
+build a whole protein backbone from a baseline" -- the strongest assertion --
+and regeneration is a claim that *supports* it. I had the edge upside down:
+argmap's `supports` is evidence-for rather than entailment, so the strongest
+assertion belongs at the root and the achievable results feed it. Regeneration
+succeeding is strong evidence that local information suffices to place a
+residue, without being the whole claim.
+
+One consequence of that root, now recorded on the node: **the four frozen arms
+are evidence against the thesis**, because they tested it directly. Under the
+regeneration root they were off-topic; under this one they are a standing
+refutation, attached as `## Refuted by`. That is the more honest arrangement and
+it is also the more uncomfortable one, which is a point in its favour.
+
+#### What was built
+
+`--damage N` on `train_growth.py`. A contiguous window of N residues inside one
+covalent run is destroyed and **every other residue keeps its crystal pose**.
+
+Three pieces:
+
+`damage_window` picks the window inside a single covalent run, never spanning a
+chain break -- a window straddling a break is two independent holes and a
+failure on it would not say which one failed. Interior only, so there is an
+intact neighbour on each side. A run too short yields an empty mask rather than
+an exception, because one short crop in a pool of 412 should not stop a run.
+
+**The walk order in `baseline_coords` had to be fixed first, and this is the
+part worth remembering.** Every anchor's walk ran to the end of its covalent
+run and the highest-indexed anchor overwrote the rest, so a window surrounded
+by anchors was placed off the far end of the chain: 73.96 A mean displacement,
+N-ward join at 64.78 A, both past the rollout's own 36 A ceiling. The task
+would have been impossible for a reason with nothing to do with regeneration.
+A C-ward walk now stops at the next anchor and the N-ward walks run afterwards
+onto whatever no C-ward walk claimed, so a residue is placed off the nearest
+preceding anchor in its run. **At one anchor per run that is byte-identical to
+the old behaviour**, which is what keeps the 6 Nov arms reproducible, and a
+test pins the equivalence rather than asserting it.
+
+With one anchor per run there is only ever one walk, which is why fifteen tests
+never caught this.
+
+`backbone_rmsd_on` reports the window's CA RMSD **superposed on the context**,
+not on itself. A window superposed onto its own native copy scores well for any
+plausible shape placed anywhere, because the superposition absorbs exactly the
+error being asked about. A test moves the native window rigidly by 8 A: on the
+context that reads 8.00, on itself it reads under 0.001.
+
+#### Read `rmsd_dmg`, and nothing else across the two tasks
+
+On an **untrained** rule, three held-out crops, a 12-residue window:
+
+    quantity        regeneration   reconstruction (the 6 Nov arms)
+    fape                0.186           0.836
+    twist              10.7 deg        64.4 deg
+    rmsd                3.42 A         17.45 A
+    rmsd_dmg          10.76 A           --
+
+**None of the first three is comparable between the tasks**, and the banner now
+says so on every regeneration run. fape and twist are means over pairs and
+bonded pairs, and with the context intact most of those are already correct;
+`rmsd` is over every residue, so a 12-residue window can be filled
+catastrophically wrongly and move it by under an Angstrom. Reading an untrained
+regeneration run's 0.186 against a trained reconstruction arm's 0.836 would
+look like a breakthrough and would be nothing.
+
+`bond` is also not comparable, and high by design: the window's C-ward join
+starts open, because closing it is the task. A start state with both joins
+closed would already be the answer.
+
+So `rmsd_dmg` is the number. 10.76 A is where an untrained rule leaves the
+window, and it is the figure a trained arm has to beat -- the regeneration
+equivalent of the 17.45 A the reconstruction arms never left.

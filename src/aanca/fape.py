@@ -129,3 +129,50 @@ def backbone_rmsd(
     rot = u @ correction @ vh
     aligned = a @ rot
     return ((aligned - b) ** 2).sum(dim=-1).mean().sqrt()
+
+
+def backbone_rmsd_on(
+    coords: Tensor,
+    native: Tensor,
+    topo: FeatureTopology,
+    superpose: Tensor,
+    read: Tensor,
+) -> Tensor:
+    """CA RMSD read off ``read``, superposed on ``superpose``.
+
+    The regeneration metric. A damaged window superposed **onto its own native
+    copy** scores well for any plausible shape placed anywhere, because the
+    superposition absorbs exactly the error being asked about -- whether the
+    hole was filled in the right place relative to the context that survived.
+    So the rotation is fitted on the intact structure and the deviation is then
+    read off the window, which is the thing a regeneration run has to report.
+
+    Degenerate cases return ``nan`` rather than raising: fewer than three
+    residues to superpose on gives no unique rotation, and an empty ``read``
+    gives nothing to report. A caller that has damaged nothing should not call
+    this at all, and ``growth_objective`` does not.
+    """
+    fit = torch.nonzero(superpose, as_tuple=False).flatten()
+    out = torch.nonzero(read, as_tuple=False).flatten()
+    if fit.numel() < 3 or out.numel() < 1:
+        return torch.full((), float("nan"), device=coords.device, dtype=coords.dtype)
+
+    def ca(source: Tensor, index: Tensor) -> Tensor:
+        rows = index.unsqueeze(-1)
+        return source[rows, topo.frame_idx[index, 1:2]][:, 0]
+
+    a_fit, b_fit = ca(coords, fit), ca(native, fit)
+    a_mean, b_mean = a_fit.mean(dim=0, keepdim=True), b_fit.mean(dim=0, keepdim=True)
+    a_fit, b_fit = a_fit - a_mean, b_fit - b_mean
+    u, _s, vh = torch.linalg.svd(a_fit.transpose(0, 1) @ b_fit)
+    d = torch.sign(torch.det(u @ vh))
+    correction = torch.diag(
+        torch.tensor([1.0, 1.0, 1.0], device=coords.device, dtype=coords.dtype)
+    ).clone()
+    correction[2, 2] = d
+    rot = u @ correction @ vh
+    # The same rigid motion the intact structure asked for, applied to the
+    # window: centred on the fit's centroid, not the window's own.
+    a_read = (ca(coords, out) - a_mean) @ rot
+    b_read = ca(native, out) - b_mean
+    return ((a_read - b_read) ** 2).sum(dim=-1).mean().sqrt()

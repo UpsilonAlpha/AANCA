@@ -480,6 +480,63 @@ def run_anchors(
     return seed_alive(n_residues, count_runs(links), generator, device, links=links)
 
 
+def damage_window(
+    n_residues: int,
+    links: Tensor,
+    width: int,
+    generator: torch.Generator | None = None,
+    device: torch.device | str = "cpu",
+) -> Tensor:
+    """``(R,)`` bool: a contiguous run of ``width`` residues to destroy.
+
+    The regeneration task's start state. Everything *outside* the window keeps
+    its crystal pose, so the rule reads an intact protein with a hole in it and
+    has to fill the hole from local context -- which is the project's objective,
+    and is not what the baseline arms trained on: they started every residue
+    from a constructed conformation with one native anchor per covalent run,
+    native context at about one residue in eight.
+
+    **The window is drawn inside a single covalent run and never spans a chain
+    break**, because a window straddling a break is two independent holes and a
+    failure on it would not say which one failed. Runs shorter than
+    ``width + 2`` are skipped, so the window has an intact neighbour on at
+    least one side to hinge off; a structure with no run long enough yields an
+    empty mask, and the caller gets an undamaged start rather than an
+    exception, since one short crop in a pool should not stop a run.
+
+    Drawn on the CPU from the passed generator like every other random choice
+    here, so the window is a property of the seed and not of the device.
+    """
+    if width <= 0:
+        return torch.zeros(n_residues, dtype=torch.bool, device=device)
+    link = links.to("cpu").tolist()
+    runs: list[tuple[int, int]] = []
+    start = 0
+    for index in range(n_residues):
+        ends = index + 1 >= n_residues or not bool(link[index])
+        if ends:
+            runs.append((start, index + 1))
+            start = index + 1
+    usable = [(a, b) for a, b in runs if b - a >= width + 2]
+    mask = torch.zeros(n_residues, dtype=torch.bool, device=device)
+    if not usable:
+        return mask
+    pick = int(torch.randint(len(usable), (1,), generator=generator).item())
+    a, b = usable[pick]
+    # Interior only: one residue of slack at each end of the run, so the
+    # window is never flush against a chain terminus where it would have an
+    # intact neighbour on one side only.
+    span = (b - 1) - (a + 1) - width
+    offset = (
+        int(torch.randint(span + 1, (1,), generator=generator).item())
+        if span > 0
+        else 0
+    )
+    lo = a + 1 + offset
+    mask[lo : lo + width] = True
+    return mask
+
+
 def baseline_coords(
     coords: Tensor,
     topo: FeatureTopology,
@@ -560,22 +617,45 @@ def baseline_coords(
 
         link = links.to("cpu").tolist()
         anchored = anchors.to("cpu").tolist()
+        # **The nearest anchor places a residue, not the last one processed.**
+        # Each walk used to run to the end of its covalent run, so with several
+        # anchors the highest-indexed one overwrote every earlier walk and a
+        # residue could be positioned off an anchor twenty residues away. With
+        # one anchor per run -- every call before regeneration existed -- there
+        # is only ever one walk and it never showed. It shows immediately on a
+        # regeneration mask, where the intact context is almost all anchors:
+        # measured on 1UBQ with a 12-residue window damaged, the window landed
+        # 74 A out, past the rollout's own 36 A reach ceiling, hinged off the
+        # far end of the chain instead of off its own neighbour.
+        #
+        # So a C-ward walk stops at the next anchor, and the N-ward walks run
+        # afterwards onto residues no C-ward walk claimed. A non-anchor residue
+        # is therefore placed by walking C-ward from the nearest *preceding*
+        # anchor in its run, or N-ward from the nearest following one when it
+        # has no preceding anchor. That reduces exactly to the old behaviour at
+        # one anchor per run, which `tests/test_self_placing.py` pins.
+        written = list(anchored)
         for start in range(n_res):
             if not anchored[start]:
                 continue
             index = start
-            while index + 1 < n_res and bool(link[index]):
+            while index + 1 < n_res and bool(link[index]) and not anchored[index + 1]:
                 axis_angle, offset = reference(index, 1)
                 turn = rotation_from_vector(axis_angle).to(dtype)
                 ca[index + 1] = ca[index] + rot[index] @ offset
                 rot[index + 1] = rot[index] @ turn
+                written[index + 1] = True
                 index += 1
+        for start in range(n_res):
+            if not anchored[start]:
+                continue
             index = start
-            while index - 1 >= 0 and bool(link[index - 1]):
+            while index - 1 >= 0 and bool(link[index - 1]) and not written[index - 1]:
                 axis_angle, offset = reference(index, 0)
                 turn = rotation_from_vector(axis_angle).to(dtype)
                 ca[index - 1] = ca[index] + rot[index] @ offset
                 rot[index - 1] = rot[index] @ turn
+                written[index - 1] = True
                 index -= 1
 
         target = triad_from_frame(rot, ca)
@@ -1219,6 +1299,21 @@ class GrowthTerms:
     #: probes quote: 15-17 degrees is the per-birth error that reproduces the
     #: measured RMSD at every length scale, where a loss of 0.034 says nothing.
     orientation_degrees: float = 0.0
+    #: **The regeneration headline.** CA RMSD over the damaged window alone,
+    #: Angstrom, with the window superposed as part of the whole structure
+    #: rather than onto itself -- so it measures whether the hole was filled in
+    #: the right place, not whether its shape is plausible somewhere else.
+    #:
+    #: ``rmsd`` above is over everything and is dominated by the intact
+    #: context, which starts correct and should stay correct; on a 12-residue
+    #: window in a 76-residue protein a total failure in the window moves it by
+    #: well under an Angstrom. So the two numbers answer different questions
+    #: and a regeneration run has to report this one. ``None`` when nothing was
+    #: damaged.
+    rmsd_damaged: float | None = None
+    #: How many residues were damaged, because the RMSD above is a mean over
+    #: them and a window of 4 is a different claim from a window of 24.
+    damaged: int = 0
 
 
 def growth_objective(
@@ -1236,6 +1331,7 @@ def growth_objective(
     fape_clamp: float = 10.0,
     fape_clamp_prob: float = 1.0,
     orientation_weight: float = 0.0,
+    damage: int = 0,
 ) -> tuple[GrowthTerms, object]:
     """Supervised regrowth: from a seed, rebuild the native backbone.
 
@@ -1289,7 +1385,7 @@ def growth_objective(
     RFD4-Proteina produces directly; placing the side chains afterwards is the
     existing packing rule's job, and composing the two is its own measurement.
     """
-    from .fape import backbone_rmsd, fape as fape_loss
+    from .fape import backbone_rmsd, backbone_rmsd_on, fape as fape_loss
     from .identity import library_index, type_index, type_loss, type_marginal
     from .rollout import initial_identity, initial_state, rollout
     from .torch_geometry import measure_chis
@@ -1311,9 +1407,34 @@ def growth_objective(
         alive = torch.ones(
             topo.n_residues, dtype=torch.bool, device=native_coords.device
         )
-        anchors = run_anchors(
-            topo.n_residues, links, generator, native_coords.device
-        )
+        # **``damage`` switches the task from reconstruction to
+        # regeneration**, which is what this project is for. With it, a
+        # contiguous window inside one covalent run is destroyed and
+        # *everything else keeps its crystal pose*, so the rule reads an intact
+        # protein with a hole in it. Without it, one anchor per run and the
+        # whole structure starts from the baseline -- the four arms of 6 Nov,
+        # all of which froze at their own starting conformation.
+        #
+        # The difference is not a matter of degree. Scoring FAPE over the whole
+        # structure now teaches two things at once: fill the window, and leave
+        # the context alone. That second half is the stability the fixed-point
+        # objective asks for, and it is what makes "emit nothing" stop being a
+        # free solution -- doing nothing leaves the window wrong while the
+        # context is right, which is a difference FAPE can see. Under
+        # reconstruction the stable answer and the correct answer were the same
+        # thing, and the rule found the stable one.
+        if damage > 0:
+            damaged = damage_window(
+                topo.n_residues, links, damage, generator, native_coords.device
+            )
+            anchors = ~damaged
+        else:
+            damaged = torch.zeros(
+                topo.n_residues, dtype=torch.bool, device=native_coords.device
+            )
+            anchors = run_anchors(
+                topo.n_residues, links, generator, native_coords.device
+            )
         start_coords = baseline_coords(
             native_coords, topo, links, anchors, growth.initial, generator
         )
@@ -1325,6 +1446,9 @@ def growth_objective(
             links=links,
         )
         start_coords = native_coords
+        damaged = torch.zeros(
+            topo.n_residues, dtype=torch.bool, device=native_coords.device
+        )
     identity_start_state = None
     # **Built when the rule has the head, not when the loss has a weight.**
     # Those are different questions and conflating them silently changed the
@@ -1400,6 +1524,20 @@ def growth_objective(
         if draw >= fape_clamp_prob:
             clamp = float("inf")
     fape = fape_loss(final.coords, native_coords, topo, geometric, clamp=clamp)
+    # **Superposed as part of the whole structure, not onto itself.** The
+    # question a regeneration run asks is whether the hole was filled in the
+    # right place relative to the context that survived, and a window
+    # superposed onto its own native copy would score well for any plausible
+    # shape anywhere. So the rotation comes from every alive residue and the
+    # error is read off the damaged ones -- which is also why this cannot be
+    # recovered afterwards from the reported ``rmsd``.
+    rmsd_damaged = None
+    if bool(damaged.any()):
+        rmsd_damaged = float(
+            backbone_rmsd_on(
+                final.coords, native_coords, topo, geometric, damaged
+            ).detach()
+        )
     bond = peptide_bond_restraint(final.coords, topo, final.alive, links)
     # Measured on every run whether or not it is weighted, because it is the
     # quantity the probes identified as the dominant error and a run that does
@@ -1506,6 +1644,8 @@ def growth_objective(
             unreachable=unreachable,
             orientation=orientation.detach(),
             orientation_degrees=orientation_degrees,
+            rmsd_damaged=rmsd_damaged,
+            damaged=int(damaged.sum()),
         ),
         result,
     )

@@ -89,6 +89,11 @@ WARM_START_MUST_MATCH = (
     # where the rollout starts, so resuming a ``helix`` run as ``extended``
     # would silently splice two different experiments into one curve.
     "birth", "morphogen", "initial",
+    # ``damage`` decides which *task* the run trains on, which is a larger
+    # difference than any weight: resuming a reconstruction run as a
+    # regeneration one would splice two experiments into one curve, and the
+    # held-out numbers are not even comparable between them.
+    "damage",
 )
 
 
@@ -172,6 +177,11 @@ def score(rule, dataset, indices, args, config, seed: int = 0) -> dict[str, floa
         "total", "fape", "bond", "completion", "reach", "twist",
         "identity", "rmsd", "alive", "recovery", "closures",
         "frontier", "wake", "segments", "unreachable",
+        # Regeneration only, and the headline when it is on. Averaged over the
+        # crops that actually had a window: a crop whose longest covalent run
+        # is too short to hold one is undamaged, and folding its absent score
+        # in as a zero would read as a perfect fill.
+        "rmsd_dmg", "damaged", "dmg_n",
     )
     sums = {key: 0.0 for key in keys}
     n = 0
@@ -194,6 +204,7 @@ def score(rule, dataset, indices, args, config, seed: int = 0) -> dict[str, floa
                 identity_start=args.identity_start,
                 reach_weight=args.reach_weight,
                 orientation_weight=args.orientation_weight,
+                damage=args.damage,
             )
             sums["total"] += float(terms.total)
             sums["fape"] += float(terms.fape)
@@ -206,6 +217,12 @@ def score(rule, dataset, indices, args, config, seed: int = 0) -> dict[str, floa
             sums["twist"] += float(terms.orientation_degrees)
             sums["identity"] += float(terms.identity)
             sums["rmsd"] += float(terms.rmsd)
+            if terms.rmsd_damaged is not None and not math.isnan(
+                terms.rmsd_damaged
+            ):
+                sums["rmsd_dmg"] += float(terms.rmsd_damaged)
+                sums["damaged"] += float(terms.damaged)
+                sums["dmg_n"] += 1.0
             sums["alive"] += float(terms.alive_fraction)
             sums["closures"] += float(terms.closures)
             sums["frontier"] += float(terms.frontier)
@@ -218,6 +235,11 @@ def score(rule, dataset, indices, args, config, seed: int = 0) -> dict[str, floa
             n += 1
     rule.train()
     out = {key: value / max(n, 1) for key, value in sums.items()}
+    # Over the damaged crops, not over every crop.
+    windows = max(sums["dmg_n"], 1.0)
+    out["rmsd_dmg"] = sums["rmsd_dmg"] / windows
+    out["damaged"] = sums["damaged"] / windows
+    out["dmg_n"] = sums["dmg_n"]
     out["n"] = float(n)
     return out
 
@@ -234,6 +256,22 @@ def report(scores: dict[str, float], identity: bool) -> str:
         f"{scores['reach']:>8.3f}"
         f"{scores['closures']:>10.1f}{scores['completion']:>7.3f}"
     )
+    # **The regeneration headline, printed first because `rmsd` above is not
+    # the answer when a window is damaged.** `rmsd` is over every residue and
+    # the intact context dominates it: a 12-residue window in a 128-residue
+    # crop can be filled catastrophically wrongly and move the total by under
+    # an Angstrom. `rmsd_dmg` is the window alone, superposed as part of the
+    # whole structure so it measures placement rather than plausible shape.
+    # `baseline` is where the window started, which is what "learned nothing"
+    # looks like here -- the equivalent of the 17.45 A the reconstruction arms
+    # never left.
+    if scores.get("dmg_n", 0):
+        lines.append(
+            "\n"
+            f"  regeneration: rmsd_dmg {scores['rmsd_dmg']:>6.2f} A over "
+            f"{scores['damaged']:.1f} damaged residues "
+            f"in {int(scores['dmg_n'])} of {int(scores['n'])} crops"
+        )
     # The stall diagnostics. Read `done` beside `frontier`: a small completion
     # loss means "the rule wants to grow" only if the frontier is non-empty,
     # and with an empty frontier it means the term saw nothing at all.
@@ -291,6 +329,19 @@ def main() -> int:
     parser.add_argument(
         "--birth", choices=("torsion", "cartesian", "free", "none"),
         default="cartesian",
+    )
+    parser.add_argument(
+        "--damage", type=int, default=0,
+        help=(
+            "destroy a contiguous window of this many residues and keep every "
+            "other residue at its crystal pose, so the rule regenerates a hole "
+            "in an intact protein. 0 (the default) is whole-structure "
+            "reconstruction from the baseline with one anchor per covalent "
+            "run, which is what every arm before 7 Nov trained on and is a "
+            "harder and different task. Requires --birth none. Read "
+            "rmsd_dmg, not rmsd: the latter is dominated by the intact "
+            "context, which starts correct"
+        ),
     )
     parser.add_argument(
         "--fape-clamp", type=float, default=10.0,
@@ -470,9 +521,32 @@ def main() -> int:
         if args.seeds != 1:
             print(
                 f"note: --seeds {args.seeds} is ignored under --birth none. "
-                "Every slot is alive from step 0 and the anchors are one "
-                "residue per covalent run, which is the same information "
-                "budget a grown run gets from its seeds."
+                "Every slot is alive from step 0, and what keeps its crystal "
+                "pose is "
+                + (
+                    f"everything outside the {args.damage}-residue damaged "
+                    "window"
+                    if args.damage > 0
+                    else "one residue per covalent run, which is the same "
+                    "information budget a grown run gets from its seeds"
+                )
+                + "."
+            )
+        if args.damage > 0:
+            # **Say which task this is, in the banner, because the held-out
+            # numbers are not comparable with a reconstruction run's.** fape
+            # and twist are means over residue pairs and bonded pairs, and
+            # with the context intact most of those pairs are already correct:
+            # an untrained rule scores fape 0.19 and twist 10.7 deg here
+            # against 0.84 and 64.4 on whole-structure reconstruction. Reading
+            # one against the other would look like a breakthrough.
+            print(
+                f"REGENERATION: a {args.damage}-residue window is destroyed "
+                "and every other residue keeps its crystal pose. Read "
+                "rmsd_dmg, not rmsd -- the latter is dominated by the intact "
+                "context. fape, twist and bond are not comparable with a "
+                "--damage 0 run's; bond is high by design because the "
+                "window's C-ward join starts open and closing it is the task."
             )
 
     if args.identity_weight and args.birth == "torsion":
@@ -691,6 +765,7 @@ def main() -> int:
             fape_clamp=args.fape_clamp,
             fape_clamp_prob=args.fape_clamp_prob,
             orientation_weight=args.orientation_weight,
+            damage=args.damage,
         )
         if not torch.isfinite(terms.total):
             continue
