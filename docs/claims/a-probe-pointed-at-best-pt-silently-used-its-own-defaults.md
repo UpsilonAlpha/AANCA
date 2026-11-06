@@ -3,6 +3,7 @@ type: observation
 status: supported
 evidence: ours
 sources: [32240477, 32240478, 32241768, 32241769]
+checked: [32240477, 32240478, 32241768, 32241769]
 ---
 
 # best.pt carried only the weights, so four probe runs silently measured the probe

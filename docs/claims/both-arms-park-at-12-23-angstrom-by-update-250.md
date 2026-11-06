@@ -3,6 +3,7 @@ type: observation
 status: open
 evidence: ours
 sources: [32389742, 32405172]
+checked: [32405172]
 ---
 
 # Two unrelated objectives both park the window at 12.23 Angstrom by update 250 and never move it

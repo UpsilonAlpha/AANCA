@@ -3,5 +3,10 @@
   "source_id_pattern": "\\d{8}|[a-z_]+\\.py",
   "source_field": "sources",
   "acknowledged_field": "checked",
-  "require_sources": "supported"
+  "require_sources": "supported",
+  "retracted_sources": "../RETRACTIONS.md",
+  "retracted_sources_ignore_headings": [
+    "already marked",
+    "claims measured away"
+  ]
 }
