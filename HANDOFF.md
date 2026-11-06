@@ -6929,3 +6929,66 @@ the same place from both baselines has not merely kept its initialisation.
 Under the clamp mechanism above it should freeze at `extended`'s own baseline
 values rather than at the helix ones -- which, if it holds, is a second
 independent reading of the same claim, since the two baselines differ by 19 A.
+
+### The trunk measurement, at last -- and it does not say what it was asked to
+
+Jobs 32315224 and 32315225, pointed at `last.pt` so the arguments came with
+the weights: 16 seeds, 120 steps, truncate 12, held-out crop 180 of 412. Both
+finite, both reading the run's own birth mode. The shared-trunk column, which
+is the only one where a ratio means anything, because Adam normalises per
+parameter and the trunk is where the terms are summed before that happens:
+
+    trunk gradient        FAPE      identity    ratio
+    g5_ctrl  (grown)    3.57e-03    3.72e+01    10,400x
+    g6_self  (self)     3.96e-03    9.31e+00     2,350x
+
+So identity *does* dominate the trunk, by three to four orders of magnitude,
+which is the number the starvation hypothesis went looking for. **And the
+hypothesis is still dead, because `g6_noid` already ran the experiment: remove
+identity and the geometry does not improve, it stops moving entirely.**
+
+Both facts at once say something neither says alone. The trunk representation
+is identity's -- it is paid for by the only term with a gradient large enough
+to shape it -- and the frame head reads that representation. Identity is not
+geometry's competitor for the trunk; it is geometry's *supplier*. Take it away
+and the frame head is reading a trunk that nothing is training.
+
+That reframes what a fix has to do. It is not "rebalance the two terms", which
+is what a 2,350x ratio invites and what `g6_noid` falsifies. It is "give FAPE a
+gradient of its own that is large enough to matter", and the clamp is what
+stands between it and one.
+
+Caveat on the numbers, since this probe has now been wrong four times: one
+rollout, one crop, `--repeats 1`. Direction and order of magnitude, not
+precision. The `activation` and `birth` columns read exactly zero on both runs
+because at 120 steps with 16 seeds the crop is finished -- `completion` is
+0.0000 with `draws 0` -- so there is no activation decision left to price.
+That is a property of the configuration, not a bug, but it does mean this
+table says nothing about the growth heads.
+
+### `g6_open`
+
+Job 32359791, `--fape-clamp-prob 0.9`: AF2's scheme, clamp on ninety per cent
+of updates and leave the rest open. Otherwise `g6_self`'s command exactly, from
+scratch, and the banner confirms the one difference -- `FAPE clamp 10 A on 90%
+of updates; held-out evaluation always clamped at 10 A`.
+
+The held-out side staying clamped is the part worth not getting wrong: an
+unclamped held-out `fape` is a different quantity from every other run's, and
+the two would end up on the same axis anyway. So `g6_open`'s reported `fape`,
+`rmsd` and `twist` are directly comparable with `g6_self`'s and `g6_noid`'s.
+
+Three arms now differ from `g6_self` in exactly one thing each, which is the
+first time this project has had a clean three-way:
+
+    g6_self   helix baseline, identity on,  clamped      the reference
+    g6_noid   helix baseline, identity off, clamped      froze completely
+    g6_ext    extended baseline, identity on, clamped    does the answer depend
+                                                         on where it started?
+    g6_open   helix baseline, identity on, 90% clamped   does the clamp gate it?
+
+Predictions on the record before the results: `g6_ext` freezes at `extended`'s
+own baseline (36.7 A, 84.1 deg) rather than at the helix one, which is a second
+reading of the collapse from 19 A away. `g6_open` is the one that can move, and
+if it does not then the clamp was not the gate either and the next suspect is
+the frame head's own parameterisation.
