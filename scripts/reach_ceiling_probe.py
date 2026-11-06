@@ -98,10 +98,28 @@ def held_out_crop(stored: dict, state: dict):
         order = list(range(len(pool)))
         random.Random(int(stored.get("seed", 0))).shuffle(order)
         indices = order[: int(stored.get("eval_structures", 12))]
-    topo, native, _crop, _used = dataset.load_crop(
-        indices[0], rng=random.Random(int(stored.get("seed", 0)))
-    )
-    return topo, native, f"held-out crop {indices[0]} of {len(pool)}"
+    # **Every held-out crop, not the first one.** This probe reported a single
+    # crop until 7 Nov, and the number it produced -- 7.67 A travelled against
+    # 8.64 A needed, which is the whole evidence for "FAPE supplies a magnitude
+    # and not a bearing" -- was therefore k=1. The pMHC binder session made the
+    # general point while correcting its own rho: **the reportable quantity is
+    # the unit count, not the interval**, and a statistic from too few
+    # independent units does not mean what its spread implies. One crop is the
+    # degenerate case of that, so the probe now reports the spread across crops
+    # and the count beside it.
+    crops = []
+    rng = random.Random(int(stored.get("seed", 0)))
+    for index in indices:
+        try:
+            topo, native, _crop, _used = dataset.load_crop(index, rng=rng)
+        except Exception:
+            continue
+        if topo.n_residues < 12:
+            continue
+        crops.append((index, topo, native))
+    if not crops:
+        raise SystemExit("no held-out crop loaded")
+    return crops, f"{len(crops)} held-out crops of {len(pool)}"
 
 
 def main() -> int:
@@ -143,8 +161,7 @@ def main() -> int:
 
     steps = args.steps or int(stored.get("steps") or 120)
     initial = str(stored.get("initial") or "helix")
-    topo, native, source = held_out_crop(stored, state)
-    links = growth_links(topo)
+    crops, source = held_out_crop(stored, state)
 
     rule = AANCARule(
         growth=True,
@@ -156,77 +173,94 @@ def main() -> int:
     rule.load_state_dict(weights)
     rule.eval()
 
-    generator = torch.Generator().manual_seed(args.seed)
-    anchors = run_anchors(topo.n_residues, links, generator, native.device)
-    start = baseline_coords(native, topo, links, anchors, initial, generator)
-    alive = torch.ones(topo.n_residues, dtype=torch.bool)
-    config = RolloutConfig(
-        steps=steps,
-        truncate=int(stored.get("truncate") or 12),
-        k=int(stored.get("k") or 24),
-        blind=bool(stored.get("blind", True)),
-        growth=GrowthConfig(birth="none", initial=initial),
-    )
-    identity = None
-    if rule.identity:
-        identity = initial_identity(
-            topo, str(stored.get("identity_start", "masked")), alive=alive
-        )
-    rollout_state = initial_state(start, rule, identity=identity, alive=alive)
-
-    begin = ca_positions(start, topo)
-    previous = begin
-    path_length = torch.zeros(topo.n_residues)
-    with torch.no_grad():
-        for _ in range(steps):
-            rollout_state, _mu, _kappa = step_once(
-                rule, rollout_state, topo, config, alive, generator=generator
-            )
-            here = ca_positions(rollout_state.coords, topo)
-            path_length += (here - previous).norm(dim=-1)
-            previous = here
-    end = previous
-
-    net = (end - begin).norm(dim=-1)
-    needed = (begin - ca_positions(native, topo)).norm(dim=-1)
     ceiling = steps * rule.max_translation
-    # min, because a rollout shorter than the truncation window is its own
-    # window -- otherwise a short diagnostic run prints a window larger than
-    # its own ceiling, which reads as a bug in the arithmetic being argued.
-    truncated = min(config.truncate, steps)
+    truncated = min(int(stored.get("truncate") or 12), steps)
     window = truncated * rule.max_translation
 
-    print(f"{source}, {topo.n_residues} residues, {count_runs(links)} covalent runs")
-    print(f"rule: {path} ({initial} baseline, {steps} steps)\n")
+    rows = []
+    for index, topo, native in crops:
+        links = growth_links(topo)
+        generator = torch.Generator().manual_seed(args.seed + index)
+        anchors = run_anchors(topo.n_residues, links, generator, native.device)
+        start = baseline_coords(native, topo, links, anchors, initial, generator)
+        alive = torch.ones(topo.n_residues, dtype=torch.bool)
+        config = RolloutConfig(
+            steps=steps,
+            truncate=truncated,
+            k=int(stored.get("k") or 24),
+            blind=bool(stored.get("blind", True)),
+            growth=GrowthConfig(birth="none", initial=initial),
+        )
+        identity = None
+        if rule.identity:
+            identity = initial_identity(
+                topo, str(stored.get("identity_start", "masked")), alive=alive
+            )
+        rollout_state = initial_state(start, rule, identity=identity, alive=alive)
+
+        begin = ca_positions(start, topo)
+        previous = begin
+        path_length = torch.zeros(topo.n_residues)
+        with torch.no_grad():
+            for _ in range(steps):
+                rollout_state, _mu, _kappa = step_once(
+                    rule, rollout_state, topo, config, alive,
+                    generator=generator,
+                )
+                here = ca_positions(rollout_state.coords, topo)
+                path_length += (here - previous).norm(dim=-1)
+                previous = here
+        net = (previous - begin).norm(dim=-1)
+        needed = (begin - ca_positions(native, topo)).norm(dim=-1)
+        rows.append((
+            index,
+            float(path_length.mean()),
+            float(net.mean()),
+            float(needed.mean()),
+            float(net.mean() / path_length.mean().clamp_min(1e-9)),
+        ))
+
+    print(f"rule: {path} ({initial} baseline, {steps} steps)")
+    print(f"{source}\n")
     print(f"per-step translation cap   {rule.max_translation:g} A")
     print(f"ceiling over {steps:4d} steps     {ceiling:.1f} A   (all steps coherent)")
-    print(f"inside the {truncated:2d}-step window  {window:.1f} A   (all the gradient sees)")
-    print(f"distance to native         {needed.mean():.2f} A mean, {needed.max():.2f} A max\n")
-    print("                           mean     max    as % of ceiling")
+    print(f"inside the {truncated:2d}-step window  {window:.1f} A   (all the gradient sees)\n")
+
+    print(f"{'crop':>6} {'path':>8} {'net':>8} {'needed':>8} {'net/path':>9}")
+    for index, path_len, net_len, need, ratio in rows:
+        print(f"{index:>6} {path_len:>8.2f} {net_len:>8.2f} {need:>8.2f} "
+              f"{ratio:>9.3f}")
+    k = len(rows)
+    mean_path = sum(r[1] for r in rows) / k
+    mean_net = sum(r[2] for r in rows) / k
+    mean_need = sum(r[3] for r in rows) / k
+    mean_ratio = sum(r[4] for r in rows) / k
+    print(f"\n{'mean':>6} {mean_path:>8.2f} {mean_net:>8.2f} {mean_need:>8.2f} "
+          f"{mean_ratio:>9.3f}")
+    print(f"{'spread':>6} {min(r[1] for r in rows):>8.2f}"
+          f"-{max(r[1] for r in rows):<7.2f}"
+          f"{min(r[2] for r in rows):>8.2f}-{max(r[2] for r in rows):<7.2f}")
+    print(f"\n  k = {k} independent crops. **Report the unit count, not just "
+          f"the mean.**\n"
+          "  This probe read a single crop until 7 Nov, so the figure that\n"
+          "  carries 'FAPE supplies a magnitude and not a bearing' was k=1.\n"
+          "  A spread across crops that straddles the mean says the split\n"
+          "  between arms is real; one that does not says the arms differ by\n"
+          "  less than the crops do.\n")
     print(
-        f"  path length           {path_length.mean():7.2f} {path_length.max():7.2f}"
-        f"      {100 * path_length.mean() / ceiling:5.1f}%"
+        "  Read net/path first. Near 1 means the rule moves in a straight\n"
+        "  line and is simply out of budget; near 0 means it spends the\n"
+        "  budget going nowhere, a credit-assignment problem rather than a\n"
+        "  reach problem. A path length near zero means the rule asks for\n"
+        "  nothing at all, and neither the ceiling nor the window stops it."
     )
-    print(
-        f"  net displacement      {net.mean():7.2f} {net.max():7.2f}"
-        f"      {100 * net.mean() / ceiling:5.1f}%"
-    )
-    efficiency = float(net.mean() / path_length.mean().clamp_min(1e-9))
-    print(f"  net / path            {efficiency:7.3f}\n")
-    print(
-        "  Read the last number first. Near 1 means the rule moves in a\n"
-        "  straight line and is simply out of budget; near 0 means it spends\n"
-        "  the budget going nowhere, which is a credit-assignment problem\n"
-        "  rather than a reach problem. A path length near zero means the\n"
-        "  rule has learned to ask for nothing at all, and neither the\n"
-        "  ceiling nor the window is what is stopping it."
-    )
-    if needed.mean() > ceiling:
+    if mean_need > ceiling:
         print(
-            f"\n  ** The baseline is {needed.mean():.1f} A from native and the ceiling is\n"
-            f"  {ceiling:.1f} A, so this rollout cannot reach the native structure in\n"
-            f"  {steps} steps however good the rule is. The arm's freeze needs no\n"
-            "  further explanation than that."
+            f"\n  ** The baseline is {mean_need:.1f} A from native on average "
+            f"and the\n  ceiling is {ceiling:.1f} A, so this rollout cannot "
+            f"reach the native\n  structure in {steps} steps however good the "
+            "rule is. The arm's\n  freeze needs no further explanation than "
+            "that."
         )
     return 0
 
