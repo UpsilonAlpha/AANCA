@@ -7418,3 +7418,108 @@ leaving it where the walk put it. One eval out of sixteen, 6 % of the way in,
 and the three reconstruction arms all sat at their baseline rather than above
 it -- so moving at all is new, and moving the wrong way at 500 updates is not
 yet a result. The thing to watch is whether it crosses back under 10.77.
+
+### 7 Nov: the objective restrains the output, it does not teach the placement
+
+Ulban's framing, and it decides the shape of the terms rather than their
+weights. **The AANCA is the centrepiece, so the more supervision the objective
+carries, the weaker the result.** A rule told where each residue goes is a
+regression fitter that happens to be arranged as a cellular automaton.
+Physically realistic restraints -- the ones that make an output look like a
+protein -- are fine, and loose. Redundant restraints are not.
+
+**This killed a term I had half-built, and that is the point of saying it
+early.** The reading of the reach probes is that FAPE supplies a magnitude and
+not a bearing, and the obvious repair is to supervise the emitted move against
+the ideal one: the target pose is exactly computable at every step, so the
+rollout plumbing would hand over 128 residues x 12 live steps x 6 degrees of
+freedom against FAPE's one clamped scalar. It would very likely have moved
+`rmsd_dmg`. It is also teacher forcing, and "it worked" would have been the
+least interesting available result. The plumbing was reverted unused.
+
+#### The audit, since "no redundant restraints" needs the list
+
+    term          what it constrains              native?   verdict
+    bond          C-N length, omega planarity      no        keep, physical
+    reach         closure feasibility              no        keep, geometric
+    clash         non-bonded atom overlap          no        MISSING -- add
+    fape          placement onto the crystal       YES       keep, loose
+    identity      residue type from neighbours     yes*      keep, drives trunk
+    orientation   bonded-pair relative rotation    YES       already 0, leave
+    completion    frontier activation              no        dead under `none`
+
+`orientation` is the one that would have been redundant: a bonded pair's
+relative rotation *is* (phi, psi, omega), so it overlaps `bond` on omega and
+duplicates a Ramachandran restraint on phi/psi, while being supervised against
+the native. It has been weighted 0 in every g5, g6 and g7 arm already, so there
+is nothing to remove; it stays as the reported `twist` diagnostic.
+
+**A Ramachandran restraint was considered and rejected as redundant.** The
+Ramachandran plot is the empirical shadow of backbone sterics -- its disallowed
+regions are disallowed because adjacent atoms collide -- so a proper clash term
+subsumes its hard constraint and adding both double-counts. What is lost is the
+alpha-versus-beta basin preference, which is partly electrostatic; if
+conformations come out legal but implausible, that is the gap, and the reason
+to add Ramachandran then rather than now.
+
+**`clash` is genuinely missing, which is the audit's real finding.**
+`steric.py` has an all-atom `clash_loss` that the repacking objective uses, and
+`growth_objective` mentions it in three comments and calls it nowhere. So
+nothing currently stops a regenerated loop passing straight through the
+protein. The all-atom version is the wrong tool here -- growth runs at
+backbone-and-CB resolution and the machinery needs a TorsionTopology where
+growth carries a FeatureTopology, and keeping two topologies in sync is a
+documented silent-failure spot (`alive_topology`). A focused
+`backbone_clash_loss` over N, CA, C, O, CB is being written instead.
+
+#### `--fape-weight`, and why loose rather than off
+
+It was a hardcoded 1.0 in every run before today -- not even a flag -- and the
+comment beside it read "nothing should ever set it to 0 in training". That was
+wrong in its reasoning, not only its value: it assumed FAPE is what teaches
+placement, and four arms say it is not.
+
+It should still not be zero, for a reason about the objective rather than the
+measurement. **Regeneration is meant to find a conformation that works, not to
+reproduce a crystal.** The application is regrowing a designed binder's
+interface into something that binds *better* than the original -- which would
+score badly against the native and be exactly the result wanted. A term pulling
+hard onto the crystal works against the goal; a loose one keeps the output in
+the space of real protein geometry. Reported unweighted either way, so arms
+stay comparable.
+
+**The honest risk, recorded before the arm runs.** With FAPE loose and nothing
+else supervising placement, the rule may close the loop into a conformation
+that is physically valid and wrong -- every restraint at zero, `rmsd_dmg` at its
+10.77 A baseline. That is indistinguishable *by loss* from success, and also
+indistinguishable from the better-than-original outcome the project wants. So
+`rmsd_dmg` stays reported and must not be the pass/fail criterion, and judging
+a structure that is valid, closed, clash-free and 10 A from the crystal needs a
+measurement this project does not yet have.
+
+### `g7_regen` broke the degeneracy, and settled somewhere worse
+
+At 1,500 of 8,000:
+
+    updates   rmsd_dmg   twist   recovery
+       500     12.23      9.0      5.7%
+      1000     12.27      ...      ...
+      1500     12.27     14.7     18.0%
+
+The baseline is 10.77 A and 9.6 deg. So the arm moved the window about 1.5 A
+*away*, settled there, and has held it for three evaluations.
+
+**That is a different failure from the four reconstruction arms and a more
+informative one.** They sat exactly at their starting conformation: the
+identity map, a perfect fixed point, which is what the stability half of the
+objective rewards when the accuracy half has no gradient. `g7_regen` found a
+fixed point that is **not** the identity map. The degeneracy the regeneration
+task was supposed to break did break.
+
+It settled on the wrong one, and the shape of the error is what the reach
+probes predicted: given an unambiguous magnitude signal -- the window starts
+~11 A out, with 90 % of FAPE's pairs live -- it moves about that far in a
+direction that does not help, and degrades the local conformation on the way
+(twist 9.6 to 14.7). A rule that moves decisively and wrongly is what a loss
+with no physical constraint on *where* produces, which is the gap
+`backbone_clash_loss` and a loose FAPE are meant to close.

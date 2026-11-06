@@ -1615,7 +1615,23 @@ def growth_objective(
     # ``scripts/growth_balance_probe.py`` unable to isolate any other term --
     # every row measured "FAPE plus that term" and reported it as the term --
     # and gradient norms do not decompose linearly, so the difference could not
-    # be taken afterwards either. Nothing should ever set it to 0 in training.
+    # be taken afterwards either.
+    #
+    # **"Nothing should ever set it to 0 in training" stood here until 7 Nov
+    # and was wrong in its reasoning, not just its value.** It assumed FAPE is
+    # what teaches placement. Four arms say it is not: `g6_self` travels 7.67 A
+    # per residue against a mean need of 8.64 A, coherently (net/path 0.998),
+    # and ends no closer than it began -- the magnitude is right and the result
+    # is not, so FAPE supplies a distance and not a bearing.
+    #
+    # The deeper reason to keep it loose is the objective, not the measurement.
+    # Regeneration is meant to fill a hole with a conformation that *works*,
+    # and the application is regrowing a binder interface into something
+    # better than the original -- which would score badly against the crystal
+    # and be exactly the result wanted. A term pulling hard onto the native is
+    # therefore a restraint that the output look like a protein, not a target,
+    # and `--fape-weight` is now a trainer flag rather than a hardcoded 1.0.
+    # It stays reported unweighted so arms remain comparable.
     total = (
         fape_weight * fape
         + bond_weight * bond.to(fape.dtype)

@@ -331,6 +331,20 @@ def main() -> int:
         default="cartesian",
     )
     parser.add_argument(
+        "--fape-weight", type=float, default=1.0,
+        help=(
+            "how hard FAPE pulls the structure onto the native. 1.0 is every "
+            "run before 7 Nov, where it was not even a flag. **A loose value "
+            "is the point**: FAPE is a restraint keeping the output "
+            "protein-like, not the thing that teaches placement, because "
+            "regeneration is meant to find a conformation that works and not "
+            "to reproduce a crystal -- a binder interface regrown into "
+            "something better than the original would score badly on FAPE and "
+            "be the result we want. Reported unweighted either way, so the "
+            "number stays comparable across arms"
+        ),
+    )
+    parser.add_argument(
         "--damage", type=int, default=0,
         help=(
             "destroy a contiguous window of this many residues and keep every "
@@ -668,7 +682,7 @@ def main() -> int:
         f"weights: bond {args.bond_weight:g}, completion "
         f"{args.completion_weight:g}, reach {args.reach_weight:g}, identity "
         f"{args.identity_weight:g}, orientation "
-        f"{args.orientation_weight:g}"
+        f"{args.orientation_weight:g}, fape {args.fape_weight:g}"
     )
     if args.fape_clamp != 10.0 or args.fape_clamp_prob != 1.0:
         # Only when it is not AF2's, so every earlier run's banner is unchanged
@@ -757,6 +771,7 @@ def main() -> int:
             identity_weight=args.identity_weight,
             identity_start=args.identity_start,
             reach_weight=args.reach_weight,
+            fape_weight=args.fape_weight,
             # **Training only.** The held-out evaluation above keeps the clamp
             # unconditionally, because a reported `fape` has to mean the same
             # thing across arms -- an unclamped held-out score is a different
