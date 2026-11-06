@@ -7710,3 +7710,84 @@ real signal here.
 So the next GPU arm is **the same experiment made readable**, not a new one --
 and that is the honest cost of the gap: 70 minutes of card time bought a number
 I already had from g7_regen.
+
+### The ceiling check answers, and the answer is the branch I listed and did not expect
+
+`g8_ceiling` finished: 2,000 updates, exit 0, 71.3 min, `rmsd_dmg` 12.23 to
+12.25 across all eight evaluations. Flat.
+
+`move` could not pick the branch, and finding that out was worth the detour.
+Measured on a local checkpoint, it tracks `rmsd_dmg` at a near constant ratio
+-- 0.0206 against 1.11 A, 0.2269 against 11.12 A, about 50x throughout --
+because its position half *is* the same per-residue distance the RMSD is,
+averaged over live steps and diluted by the intact residues. So "move fell but
+rmsd_dmg did not" is close to impossible by construction. **A loss value was
+the wrong instrument**; what separates the readings is direction.
+
+`scripts/ceiling_readout.py` reports the bearing off a checkpoint the run
+already wrote, on the CPU, so it cost no slot. `align` is the cosine between
+each emitted translation and the one that would reach the native CA, over the
+damaged window and the live segment; `step` is the emitted length against the
+0.3 A cap. On g8_ceiling's weights, **k = 12 held-out crops**:
+
+    align   mean -0.259    spread -0.942 to +0.624
+    step    mean 0.0309 A  spread 0.0302 to 0.0315   (cap 0.30)
+    move    mean 0.4894
+    rmsd_dmg mean 12.25
+
+So after two thousand updates of being handed the exact ideal move at every
+step, the rule emits moves **anti-correlated with the direction it needs to
+go**, while asking for about a tenth of the step available to it -- and asking
+for almost exactly that tenth on every crop.
+
+**The sign of my own term was checked before any of this was written down, and
+it is correct.** A sign error between the emitted translation and the scalar
+would produce exactly this number and would be indistinguishable from a finding
+about the architecture. Differentiating the loss with respect to the emitted
+translation on a purely translated structure gives
+`cos(descent step, ideal) = +1.0000` on every residue, so gradient descent on
+this term moves the translation toward the native CA. The existing test only
+asserted the loss *value* is lower along the ideal bearing, which is a weaker
+claim than the gradient being right, and the two can come apart.
+
+One honest limit on that check: the test structure is translated and not
+rotated, so the rotation half's gradient is legitimately zero there
+(4.1e-18) and the check says nothing about it.
+
+### Which leaves one explanation, and it is the next arm
+
+The frame head's own last layer receives the move gradient directly. What it
+*reads* is the trunk -- and the trunk is identity's, by 2,350x, measured. So the
+composition can be: a correctly-signed gradient on the output layer, applied to
+a representation that another term is shaping, producing moves that point
+somewhere else. That is consistent with every number in this project, including
+the 12.23 A attractor shared by two arms with no placement term in common.
+
+`g9_ceil_noid` (32419399) is the test, one variable from `g8_ceiling`:
+`--identity-weight 0 --identity-track on`, so the head and blind perception
+stay and only the identity gradient goes. 2,000 updates.
+
+  * **`align` turns positive** -- identity's trunk dominance is what prevents
+    placement, and the fix is architectural separation rather than reweighting
+    (which `g6_noid` already showed cannot work on its own: with identity gone
+    and FAPE alone, the rule asked for nothing at all, 0.3 % of its budget).
+  * **`align` stays negative** -- the capacity question answers no, and the
+    ablations are next: `--truncate` first, on the arithmetic that the gradient
+    sees 3.6 A of a 10.10 A journey.
+
+### k = 1 was carrying the project's strongest claim
+
+Prompted by the pMHC binder session, which was correcting its own confidence
+interval and made the general point: **the reportable quantity is the unit
+count, not the corrected interval.** Their case is the instructive one -- at
+k=4 independent clusters their stratified interval came out *narrower* than the
+naive one, which looks like surviving stratification and is actually a
+degenerate bootstrap.
+
+Checking my own exposure: `reach_ceiling_probe.py` read `indices[0]` and
+nothing else. So *"g6_self travels 7.67 A against 8.64 A needed, net/path
+0.998"* -- the whole evidence for FAPE supplying a magnitude and not a bearing,
+and the strongest claim in the map -- was **k = 1**, and had been load-bearing
+for a day. The probe now loops every held-out crop, prints the per-crop rows
+and the spread, and states k beside the mean. Re-runs on the three finished
+arms are queued (32419283, 32419284).
