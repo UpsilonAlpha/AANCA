@@ -86,7 +86,7 @@ def held_out(stored: dict, state: dict):
     return dataset, indices, len(pool)
 
 
-def _bearing(result, native, topo, damage, stored, seed, index):
+def _bearing(result, native, topo, damage, stored, seed, index, local=False):
     """``(align, step, net_over_path, series)`` over the damaged window.
 
     ``align`` is the cosine between the emitted translation and the direction
@@ -111,6 +111,7 @@ def _bearing(result, native, topo, damage, stored, seed, index):
     The fix removes one failure and can introduce the other, and only the path
     ratio distinguishes them.
     """
+    from aanca.backbone import frame_from_triad
     from aanca.growth import backbone_atoms, damage_window, growth_links
 
     moves = getattr(result, "moves", [])
@@ -142,7 +143,25 @@ def _bearing(result, native, topo, damage, stored, seed, index):
         if not bool(scored.any()):
             continue
         ideal = (ca_native - ca_now)[scored]
-        emitted = translation.to(coords.dtype)[scored]
+        emitted = translation.to(coords.dtype)
+        if local:
+            # **Compare like with like.** Under `--equivariant-move` the rule's
+            # output is a vector in each residue's own N-CA-C basis, and
+            # `rigid_relax` maps it to the lab with `frame @ t` before applying
+            # it. The ideal direction here is a lab-frame difference of CA
+            # positions, so the emitted vector has to make the same trip or the
+            # cosine is between two different spaces.
+            #
+            # Found by the numbers being too clean: align tight around -0.9
+            # from the first step, `net/path` exactly 1.000, and `step`
+            # identical to three digits across twelve structures. That is the
+            # signature of a frame mismatch, which is the failure the pMHC
+            # binder session warned about -- and I introduced it into the
+            # diagnostic with the very fix the diagnostic was measuring.
+            bb_all = backbone_atoms(coords, topo)
+            frame = frame_from_triad(bb_all[:, 0], bb_all[:, 1], bb_all[:, 2])
+            emitted = (frame @ emitted.unsqueeze(-1)).squeeze(-1)
+        emitted = emitted[scored]
         ideal_unit = ideal / ideal.norm(dim=-1, keepdim=True).clamp_min(1e-8)
         emitted_norm = emitted.norm(dim=-1, keepdim=True)
         # **Skip a step that emitted nothing instead of scoring it zero.** A
@@ -266,7 +285,8 @@ def main() -> int:
         if terms.rmsd_damaged is None:
             continue
         align, step, ratio, series = _bearing(
-            result, native, topo, damage, stored, seed, index
+            result, native, topo, damage, stored, seed, index,
+            local=bool(stored.get("equivariant_move")),
         )
         rows.append((
             index,
@@ -290,8 +310,15 @@ def main() -> int:
             else "UNTRAINED (zero-initialised head: `align` is vacuous, see "
             "--perturb)"
         )
+    frame_note = (
+        "emitted move rotated into the lab frame for comparison "
+        "(--equivariant-move run)"
+        if stored.get("equivariant_move")
+        else "emitted move is already a lab-frame vector"
+    )
     print(f"{label}, {len(rows)} held-out crops of {pool_size}, "
-          f"{damage}-residue window, {config.steps} steps\n")
+          f"{damage}-residue window, {config.steps} steps")
+    print(f"{frame_note}\n")
     print(f"{'crop':>6} {'move':>8} {'clash':>9} {'rmsd_dmg':>9} "
           f"{'align':>7} {'step':>7} {'net/path':>9}")
     for index, move, clash, dmg, align, step, ratio, _s in rows:
