@@ -89,6 +89,10 @@ WARM_START_MUST_MATCH = (
     # where the rollout starts, so resuming a ``helix`` run as ``extended``
     # would silently splice two different experiments into one curve.
     "birth", "morphogen", "initial",
+    # ``equivariant_move`` changes what the rule's output MEANS, so it is the
+    # largest architectural difference in the list: a warm start across it
+    # would reinterpret every weight the frame head learned.
+    "equivariant_move",
     # ``move_weight`` decides whether the run is the ceiling diagnostic or a
     # real arm, which is the largest difference of all: resuming one as the
     # other would put a teacher-forced curve and a learned one on the same
@@ -163,6 +167,7 @@ def build_config(args, activation: str) -> RolloutConfig:
             max_rotation=args.max_rotation,
             max_translation=args.max_translation,
             initial=args.initial,
+            equivariant_move=args.equivariant_move,
             placement_steps=args.placement_steps,
             placement_rotation=args.placement_rotation,
             placement_translation=args.placement_translation,
@@ -367,6 +372,19 @@ def main() -> int:
     parser.add_argument(
         "--birth", choices=("torsion", "cartesian", "free", "none"),
         default="cartesian",
+    )
+    parser.add_argument(
+        "--equivariant-move", action="store_true",
+        help=(
+            "interpret the rule's emitted move in the residue's own N-CA-C "
+            "frame instead of the lab frame. **Off is the behaviour that "
+            "cannot work.** Perception is invariant by construction, so a "
+            "lab-frame output is a direction the rule has no way to choose: "
+            "the equivariance error is 0.36 A per step against a 1.32 A move, "
+            "compounding over 120 steps, and it explains every arm from g1 to "
+            "g9. Off by default so those arms stay reproducible, because they "
+            "are the evidence for the bug"
+        ),
     )
     parser.add_argument(
         "--clash-weight", type=float, default=0.0,

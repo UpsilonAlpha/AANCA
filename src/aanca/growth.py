@@ -208,6 +208,12 @@ class GrowthConfig:
     #: not simply kept its initialisation. One run of each is worth more than
     #: either alone.
     initial: str = "helix"
+    #: Interpret the rule's emitted move in the residue's own N-CA-C frame
+    #: rather than in the lab frame. **False is the behaviour that cannot
+    #: work**: the perception is invariant, so a lab-frame output is a
+    #: direction the rule has no way to choose. See :func:`rigid_relax`.
+    #: Defaults False so g1-g9 stay reproducible, since they are the evidence.
+    equivariant_move: bool = False
 
 
 # -- term weights, measured rather than chosen ----------------------------
@@ -832,19 +838,67 @@ def rigid_relax(
     translation: Tensor,
     topo: FeatureTopology,
     moving: Tensor,
+    local: bool = False,
 ) -> Tensor:
     """Rotate and translate each moving residue's atoms about its own CA.
 
     About CA rather than the centroid so the move is a frame update in the
     sense ``aanca.fape`` scores: the residue's position *is* its CA and its
     orientation *is* its N-CA-C frame.
+
+    **``local`` decides which frame the rule's output is interpreted in, and
+    the default is the one that cannot work.** Found on 7 Nov after seven arms
+    and four dead hypotheses, and it explains all of them.
+
+    The perception features are invariant by construction, so the network's
+    output does not change when the whole structure is rotated -- measured at
+    1.0e-08 on the rotation half and 1.2e-08 on the translation half, which is
+    numerical noise. With ``local=False`` that output is then applied in the
+    **lab frame**: the translation is added to lab coordinates and the rotation
+    composes on the left. Those two facts are incompatible. A lab-frame
+    direction is precisely what an invariant encoder cannot represent, so the
+    rule could not express "move toward my target" however it was trained, and
+    **no objective could teach it**. The equivariance error is 0.36 A per step
+    against a 1.32 A move -- a third of the move, every step, compounding over
+    the 120 a rollout takes.
+
+    It accounts for every observation in the record: a teacher-forced rule
+    emitting translations anti-correlated with the ideal ones (cosine -0.259
+    over 12 crops); two arms with no placement term in common parking at the
+    same 12.23 A, because a near-constant vector applied 120 times goes to a
+    fixed place; an emitted step length identical to three digits on every crop
+    (0.0302-0.0315 A), which is what a constant looks like; four reconstruction
+    arms frozen at their own baselines; ``g6_noid`` asking for 0.3 % of its
+    budget once identity stopped shaping the trunk, the best constant being
+    zero; and FAPE supplying "a magnitude and not a bearing", which is now
+    mechanical rather than mysterious -- a distance is invariant and learnable,
+    a lab-frame direction is not representable.
+
+    ``local=True`` interprets the output in the residue's own N-CA-C frame:
+    the translation becomes ``R_i t_i`` and the rotation composes on the right,
+    so a globally rotated input gives a globally rotated output and the same
+    local neighbourhood always produces the same local move. A rotation
+    preserves norm, so the 0.3 A cap ``_bounded`` already applied still bounds
+    the step and the two forms are comparable on budget.
+
+    Defaulting to ``False`` keeps every g1-g9 arm reproducible, which matters
+    because those runs are the evidence for the bug. ``--equivariant-move``
+    selects the fix. ``tests/test_move_equivariance.py`` pins both.
     """
     rot = rotation_from_vector(axis_angle).to(coords.dtype)
-    ca = backbone_atoms(coords, topo)[:, 1]
+    bb = backbone_atoms(coords, topo)
+    ca = bb[:, 1]
     origin = ca.unsqueeze(1)
-    moved = (coords - origin) @ rot.transpose(-1, -2) + origin + translation.unsqueeze(1).to(
-        coords.dtype
-    )
+    shift = translation.to(coords.dtype)
+    if local:
+        frame = frame_from_triad(bb[:, 0], bb[:, 1], bb[:, 2])
+        # The frame's columns are the residue's own axes, so ``frame @ t``
+        # reads ``t`` as coordinates in that basis; and conjugating the
+        # rotation puts it in the same basis, which is composing on the right
+        # once both are expressed in the lab frame.
+        shift = (frame @ shift.unsqueeze(-1)).squeeze(-1)
+        rot = frame @ rot @ frame.transpose(-1, -2)
+    moved = (coords - origin) @ rot.transpose(-1, -2) + origin + shift.unsqueeze(1)
     return torch.where(moving[:, None, None], moved, coords)
 
 

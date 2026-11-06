@@ -548,7 +548,10 @@ def step_once(
             # automaton. It is here to answer "can this architecture place
             # residues at all", which no run has ever established.
             moves.append((axis_angle, translation, coords, moving))
-        coords = rigid_relax(coords, axis_angle, translation, topo, moving)
+        coords = rigid_relax(
+            coords, axis_angle, translation, topo, moving,
+            local=growth.equivariant_move,
+        )
 
         was_alive = alive
         # Under ``birth="none"`` the relaxation above is the entire step. Every
