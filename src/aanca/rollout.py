@@ -551,6 +551,7 @@ def step_once(
         coords = rigid_relax(
             coords, axis_angle, translation, topo, moving,
             local=growth.equivariant_move,
+            lab_rotation=growth.lab_rotation,
         )
 
         was_alive = alive

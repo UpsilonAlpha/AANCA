@@ -7965,3 +7965,67 @@ At 7,250 of 8,000: twist 44.4 degrees against a 9.6 baseline, bond 13.7 against
 4.5, rmsd 4.72 A against 3.45. The FAPE-1.0 control gets steadily worse at
 everything while `rmsd_dmg` creeps up, which is what getting better at emitting
 an unaimable move looks like.
+
+### The 11.82 was transient, and I over-reported it
+
+`g10_equiv_ceil`'s full curve:
+
+    updates   rmsd_dmg   move     twist
+       250      12.18   0.2489     9.9
+       500      12.21   0.2422    10.0
+       750      12.19   0.2478    10.2
+      1000      11.82   0.7532    52.3   <- the dip
+      1250      12.55   0.7455    50.0
+      1500      12.67   0.7182    46.6
+      1750      12.42   0.7400    48.8
+
+One evaluation of seven, and the three after it are all **worse** than the
+three before. Calling it "the first geometric improvement anything in this
+project has produced" was reading a trend off a single point, which is the
+thing I had corrected in someone else's work twice tonight.
+
+**So the equivariance fix alone does not improve the geometry.** What it does
+is change the failure: a phase transition at about 1,000 updates where twist
+jumps from 10 to 50 degrees and stays, `move` triples, and `rmsd_dmg` settles
+above where it started. Nothing beats the 10.77 A baseline at any point.
+
+### The bearing readout was measuring my own frame mismatch
+
+Its first run said `align` -0.676 with `net/path` **exactly** 1.000 on every
+crop and `step` identical to three digits across twelve structures. Too clean,
+which is the tell.
+
+Under `--equivariant-move` the rule's output is a vector in each residue's own
+N-CA-C basis, and `rigid_relax` maps it to the lab with `frame @ t` before
+applying it. `_bearing` was comparing that local vector against a lab-frame
+difference of CA positions -- **a cosine between two different spaces.** So the
+fix for a lab-frame defect introduced a lab-frame defect into the instrument
+measuring the fix, in the exact words I had quoted back at the pMHC session an
+hour earlier.
+
+Corrected: the emitted move is rotated into the lab frame when the run used the
+flag, and the readout states which convention it applied. On an untrained
+perturbed equivariant rule the sign flips from negative to **+0.206**, so
+-0.676 was substantially the artefact. Job 32421950's `align` and `net/path`
+are in `docs/RETRACTIONS.md`, scoped per column -- its `rmsd_dmg` and `clash`
+stand. Resubmitted as 32423296.
+
+### `--lab-rotation`, to isolate the two halves
+
+The twist explosion is qualitative and arrived with a change that touched both
+halves of the move at once, so nothing has isolated them. A conjugation is the
+half that changes what an emitted rotation *does* rather than merely where it
+points, which makes it the suspect.
+
+`--lab-rotation` makes only the translation local and leaves the rotation
+exactly as g1-g9 had it, so an arm differs from `g10_equiv_ceil` in one thing.
+Three arms now sit one variable apart:
+
+    g8_ceiling      lab translation, lab rotation      flat at 12.23
+    g10_equiv_ceil  local translation, local rotation  twist explosion, 12.4-12.7
+    next            local translation, lab rotation    ?
+
+If the twist explosion follows the rotation, the conjugation is wrong and the
+translation half can be kept. If it follows the translation, the fix releases a
+gradient the physical restraints cannot contain, and the next lever is their
+weights rather than the frame.

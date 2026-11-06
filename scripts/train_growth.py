@@ -92,7 +92,7 @@ WARM_START_MUST_MATCH = (
     # ``equivariant_move`` changes what the rule's output MEANS, so it is the
     # largest architectural difference in the list: a warm start across it
     # would reinterpret every weight the frame head learned.
-    "equivariant_move",
+    "equivariant_move", "lab_rotation",
     # ``move_weight`` decides whether the run is the ceiling diagnostic or a
     # real arm, which is the largest difference of all: resuming one as the
     # other would put a teacher-forced curve and a learned one on the same
@@ -168,6 +168,7 @@ def build_config(args, activation: str) -> RolloutConfig:
             max_translation=args.max_translation,
             initial=args.initial,
             equivariant_move=args.equivariant_move,
+            lab_rotation=args.lab_rotation,
             placement_steps=args.placement_steps,
             placement_rotation=args.placement_rotation,
             placement_translation=args.placement_translation,
@@ -372,6 +373,17 @@ def main() -> int:
     parser.add_argument(
         "--birth", choices=("torsion", "cartesian", "free", "none"),
         default="cartesian",
+    )
+    parser.add_argument(
+        "--lab-rotation", action="store_true",
+        help=(
+            "with --equivariant-move, make only the TRANSLATION local and "
+            "leave the rotation exactly as g1-g9 had it. Isolates the two "
+            "halves of the fix, which g10_equiv_ceil showed is needed: doing "
+            "both at once produced a phase transition at ~1000 updates, twist "
+            "jumping 10 to 52 degrees and rmsd_dmg settling worse than it "
+            "started. The conjugated rotation is the suspect"
+        ),
     )
     parser.add_argument(
         "--equivariant-move", action="store_true",
@@ -653,6 +665,11 @@ def main() -> int:
             "N-CA-C frame. Comparable column-for-column with an otherwise "
             "identical --equivariant-move-off arm; NOT warm-startable across "
             "the flag, and ~20% slower per update by construction."
+            + (
+                " TRANSLATION ONLY: the rotation is left in the lab frame, so "
+                "this differs from a full --equivariant-move arm in one thing."
+                if args.lab_rotation else ""
+            )
         )
     if args.move_weight:
         print(

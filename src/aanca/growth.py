@@ -214,6 +214,10 @@ class GrowthConfig:
     #: direction the rule has no way to choose. See :func:`rigid_relax`.
     #: Defaults False so g1-g9 stay reproducible, since they are the evidence.
     equivariant_move: bool = False
+    #: With ``equivariant_move``, leave the *rotation* in the lab frame and make
+    #: only the translation local. Isolates the two halves of the fix; see
+    #: :func:`rigid_relax`.
+    lab_rotation: bool = False
 
 
 # -- term weights, measured rather than chosen ----------------------------
@@ -839,6 +843,7 @@ def rigid_relax(
     topo: FeatureTopology,
     moving: Tensor,
     local: bool = False,
+    lab_rotation: bool = False,
 ) -> Tensor:
     """Rotate and translate each moving residue's atoms about its own CA.
 
@@ -897,7 +902,20 @@ def rigid_relax(
         # rotation puts it in the same basis, which is composing on the right
         # once both are expressed in the lab frame.
         shift = (frame @ shift.unsqueeze(-1)).squeeze(-1)
-        rot = frame @ rot @ frame.transpose(-1, -2)
+        if not lab_rotation:
+            rot = frame @ rot @ frame.transpose(-1, -2)
+        # **``lab_rotation`` isolates the two halves of the fix**, which
+        # `g10_equiv_ceil` showed is necessary. Making both halves local at
+        # once produced a phase transition at ~1000 updates: twist jumped from
+        # 10 to 52 degrees and stayed, `move` tripled, and `rmsd_dmg` dipped
+        # once to 11.82 before settling worse than it began (12.42-12.67).
+        # Something qualitative happens and the conjugated rotation is the
+        # suspect, because a conjugation is the half that changes what an
+        # emitted rotation *does* rather than merely where it points.
+        #
+        # With this set, the translation is read in the residue's frame and the
+        # rotation is left exactly as g1-g9 had it, so an arm differs from
+        # `g10_equiv_ceil` in one thing only.
     moved = (coords - origin) @ rot.transpose(-1, -2) + origin + shift.unsqueeze(1)
     return torch.where(moving[:, None, None], moved, coords)
 
