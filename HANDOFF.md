@@ -8128,3 +8128,43 @@ Nothing in this project has yet beaten the model-free 10.77 A baseline.
   * The pMHC binder session (binder-physics, deadline Sunday) is on an open
     channel and its frame warning found the equivariance bug. It is owed
     nothing, but it asked for the corrected bearing number when it lands.
+
+### The corrected bearing has a measured dynamic range, and `step` uniformity was never a tell
+
+The pMHC session's challenge, which is the right one: **+0.206 on an untrained
+control is not a bearing result, it is the absence of the old artefact.** The
+old one was exposed by uniformity, so the question for the corrected instrument
+is not "is it positive" but "does it respond to anything". Established locally
+from the 412-structure pool, with no Bunya:
+
+    A. one crop, eight different random heads -- must separate RULES
+       align  -0.170 to +0.246   spread 0.416
+       step   0.0298 to 0.1492   a factor of five
+
+    B. one head, twelve different crops -- must separate GEOMETRY
+       align  -0.387 to +0.238   spread 0.625
+       step   0.0394 to 0.0441   near-constant
+
+**So the instrument is not flat on either axis.** A trained `align` can now be
+judged against a measured null rather than against zero, and the null is wide:
+a random head spans roughly -0.4 to +0.25 depending on the crop it meets.
+Anything inside that band is not evidence of aiming.
+
+**And one of my own tells was wrong.** I treated "step identical to three
+digits across twelve crops" as part of the signature of a broken instrument.
+Panel B shows a single fixed head gives step 0.0394-0.0441 across twelve
+different structures by construction -- a rule emitting a near-constant local
+vector *should* produce a near-constant magnitude, and uniformity there is the
+expected behaviour rather than a fault. The same goes for `net/path` near 1.0,
+which is what a straight walk gives.
+
+What actually exposed the frame mismatch was reading the code after the numbers
+looked odd, not the oddness itself. The honest sequence was: eleven of twelve
+crops negative with magnitudes to -0.999 drew attention, and comparing
+`_bearing`'s basis against `rigid_relax`'s settled it. "Too clean" was the
+prompt, not the proof, and I had been describing it as though it were both.
+
+**This also changes why `--lab-rotation` is the right next arm.** Not only to
+isolate the two halves: three arms one variable apart give a *spread* to check,
+and a spread is the one thing neither of the broken bearings could have
+produced. Theirs is the better reason and it is now the one recorded.
