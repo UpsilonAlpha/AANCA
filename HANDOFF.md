@@ -7097,3 +7097,90 @@ regenerates and the call is his. `.cache/comgr` (1.6 GB) is a ROCm code-object
 cache that a running GPU job may be writing to this minute, for a small gain.
 The `v*` runs stay too: that deletion has been Ulban's to run since it was
 first raised, and half a gigabyte does not change that.
+
+### `g6_ext` finished frozen, `g6_open` is heading the same way, and 23 GB more came back
+
+`g6_ext` (32314557), 8,000 updates, exit 0: every one of sixteen held-out
+evaluations between **36.72 and 36.75 A** against the extended baseline's own
+36.73, twist 84.1 to 85.4 against its 84.1. The prediction recorded before the
+run held exactly -- the first of three today that did. Bond drifted 0.004 to
+5.415, the same signature as `g6_self`.
+
+`g6_open` (32359791) at 5,625 of 8,000 is at 17.44 to 17.51 against the helix
+baseline's 17.45 -- indistinguishable from `g6_self`'s band. The clamp
+prediction is failing so far; it gets its full 8,000 before being written off,
+which is the mistake made this morning on a partial log.
+
+`.cache/huggingface/hub/models--biohub--ESMFold2` deleted with Ulban's say-so,
+25,101 MB, verified by `ls` returning `LS=2`. **Scratch 294 -> 262 GB across
+the two deletions, headroom 6 -> 38 GB.** The top-level `hub/blobs` (7.7 GB)
+stays: it may serve the boltzgen and RFD4 entries and could not be attributed
+without inspecting it.
+
+### The thing I should have checked before spending three GPU slots
+
+`AANCARule` bounds every step's translation to `max_translation = 0.3` A and
+every step's rotation to `max_rotation = 0.1` rad, applied by `_bounded`, which
+is a tanh on the norm and so a **true ceiling** rather than a preference the
+rule can learn past. At the 120 steps these runs use:
+
+    120 x 0.3  =  36.0 A    the furthest a residue can ever travel, and only
+                            if all 120 steps push the same way
+     12 x 0.3  =   3.6 A    the furthest it can travel inside the truncation
+                            window, which is all the gradient ever sees
+
+The helix baseline is 17.45 A from native, so the rule must produce ~58 steps
+of coherent motion while being taught through a window covering 3.6 A of it.
+**The extended baseline is 36.73 A away, which is past the 36.0 A ceiling** --
+so `g6_ext` could not have reached the native in 120 steps with a perfect rule,
+and its freeze needs no explanation beyond arithmetic that was in `model.py`
+the whole time.
+
+This does not retire the clamp argument; a 17.45 A arm is inside the ceiling
+and its problem may still be what FAPE can see. What it does is make the
+ceiling the first thing to measure rather than the last, and
+`scripts/reach_ceiling_probe.py` is the measurement: it reports, per residue,
+the **path length** and the **net displacement** over the full rollout against
+the ceiling. Those separate two failures that look identical in a held-out
+RMSD -- path length near the ceiling with net near zero is a credit-assignment
+problem over steps; path length near zero means the rule has learned to ask for
+nothing at all. CPU only, reads a `last.pt`.
+
+### An argument map, because this journal has now misled me twice in one day
+
+`docs/claims/`, validated by `python docs/claims/check.py` (the generic tool is
+vendored unchanged in `docs/argmap/`). Eighteen nodes: one thesis, ten claims,
+eight observations, one open question.
+
+**HANDOFF stays the journal and is not migrated.** Its chronology is evidence
+-- when a prediction was timestamped, how long a wrong finding stood -- and
+each node cites the job ids or source files its numbers came from. The point of
+the graph is that **a refutation is attached to the thing it refutes as an
+edge**, so the retracted half of a correction cannot be grepped in isolation.
+That failed twice today: the 22-degree orientation claim was committed and
+corrected an hour later in a different section, and the identity-starvation
+hypothesis stood six hours on a number measured in the wrong place. Both are
+now `void` nodes carrying their own `## Refuted by`.
+
+Three things the validator said that I had not:
+
+1. **The thesis is `unsupported`.** No observation in the map is evidence *for*
+   "one local per-residue rule can build a protein backbone" -- four arms of
+   8,000 updates have each ended at their starting baseline, so there is
+   nothing to point at. Writing the node forced the status, and `supported`
+   would have been a lie that nothing in the journal would have caught.
+2. **I had three edges pointing the wrong way.** I had written `## Supported
+   by` under "the rollout can move a residue far enough" listing the per-step
+   cap and the baseline distances -- which *refute* it. Same for the FAPE
+   premise under the collapse claim. Listing related nodes is not asserting a
+   direction, and the format does not let the two be confused.
+3. **Check 3 now flags `fape-can-teach-the-frame-head-which-way-to-move` as an
+   unsupported premise of the thesis**, which is the single most useful line in
+   the report: it names the one assumption the whole project rests on and has
+   never evidenced.
+
+Two findings remain and are deliberate: `identity-supplies-the-trunk` and
+`the-identity-term-perturbs-geometry` rest only on `ours` evidence. They are
+claims *about our own model's gradient flow*, so our own measurements are the
+subject rather than a weak proxy, and each body says so. Check 4 is skipped --
+no retractions index yet, and given today that is worth adding.
