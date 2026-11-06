@@ -1,6 +1,6 @@
 ---
 type: claim
-status: supported
+status: open
 sources: [32241722, 32315225]
 ---
 
@@ -19,9 +19,32 @@ gradient is large enough to shape it, and the frame head reads that
 representation. Take identity away and the frame head is reading a trunk that
 nothing is training.
 
-This matters for what a fix may be. A 2,350x ratio invites a reweighting, and
-`g6_noid` is the experiment showing a reweighting cannot work: the small term's
-problem is not that the large one crowds it out.
+**Demoted to `open` on 7 Nov, on two counts, the first from a review by the
+pMHC binder session and the second from my own measurement an hour later.**
+
+*The foreclosure was unsound.* This node used to end: "a 2,350x ratio invites a
+reweighting, and `g6_noid` is the experiment showing a reweighting cannot work".
+It is not. **`g6_noid` removed identity; it did not upweight geometry**, and
+those differ in exactly the case at issue -- two insufficient terms produce
+"more static than `g6_self`" with no supplier relation at all. Worse, my own
+Adam finding cuts against the foreclosure rather than for it: a gradient ratio
+cancels between separate heads and **only bites on shared parameters**, and the
+trunk is shared, so the 2,350x is real precisely where a reweighting would act.
+I discovered the mechanism that makes my own foreclosure unsafe and the two
+notes did not know about each other.
+
+*And the evidence has an alternative explanation.* The stasis this node reads
+as "no trunk, so nothing for the frame head to read" is equally explained by
+[[the-emitted-move-was-applied-in-the-lab-frame-and-perception-is-invariant]]:
+the move was not representable, so **no** term could have produced placement,
+and the best constant vector with identity gone is zero. "Supplier"
+additionally requires that the trunk identity builds is *usable* by the frame
+head, and nothing here measures usability.
+
+So the conclusion may still be right while its argument was wrong -- which is
+the shape the pMHC session's own `§231` had, and worth naming rather than
+quietly inheriting. What survives unchanged is the measurement:
+[[identity-dominates-the-shared-trunk-by-2350x]].
 
 **On check 1's finding that every observation beneath this is `ours`:** it is,
 and it stands. The claim is *about* our own model's gradient flow -- which
