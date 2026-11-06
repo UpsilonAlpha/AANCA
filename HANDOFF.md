@@ -8029,3 +8029,102 @@ If the twist explosion follows the rotation, the conjugation is wrong and the
 translation half can be kept. If it follows the translation, the fix releases a
 gradient the physical restraints cannot contain, and the next lever is their
 weights rather than the frame.
+
+---
+
+## ON RECONNECT: the OnDemand session expired at ~00:45 on 7 Nov
+
+`vscode-remote-resource` began returning `TypeError: Failed to fetch` on a URL
+that still read `bun095/59422`; a reload redirected to `iam.rcc.uq.edu.au`.
+Nothing was signed in on Ulban's behalf. **SLURM jobs are unaffected by this** --
+they are separate jobs and everything below kept running, so the logs are
+waiting under `logs/`.
+
+### Read these first, in this order
+
+**1. `logs/aanca-cpu-32423296.out` -- the decisive unread number.** The bearing
+readout on `g10_equiv_ceil`'s checkpoint with the frame convention *corrected*.
+Its predecessor (32421950) is void and indexed in `docs/RETRACTIONS.md`: it
+compared a local-frame emitted vector against a lab-frame target and read
+`align` -0.676, which is an artefact. What to expect and what each answer means:
+
+  * **`align` clearly positive** -- the equivariance fix released a real
+    bearing, the rule now aims, and the twist explosion is the physical
+    restraints being too weak to keep the structure legal while it acts. Next
+    lever is `--clash-weight` and `--bond-weight`, not the frame.
+  * **`align` still ~0** -- the frame was not the only blocker, and
+    `--truncate` is the next ablation: the gradient sees 3.6 A of a 10.10 A
+    journey, which is the arithmetic in
+    `docs/claims/the-gradient-window-is-a-third-of-the-journey...`.
+  * Either way read `net/path` beside it. Exactly 1.000 was part of what
+    exposed the last artefact, so treat a suspiciously clean value as a tell
+    rather than a result.
+
+**2. `logs/aanca-gpu-32420154.out`** -- `g10_equiv_ceil` to 2000. Last seen at
+1860 with `rmsd_dmg` 12.42 and twist 48.8. Its curve is 12.18, 12.21, 12.19,
+**11.82**, 12.55, 12.67, 12.42: the dip at 1000 is one point in seven with
+three worse after it, so it is not an improvement and was over-reported here
+once already.
+
+**3. `logs/aanca-gpu-32389742.out`** -- `g7_regen` to 8000, the FAPE-1.0
+control. Last seen at 7250 degrading monotonically: twist 44.4 deg against a
+9.6 baseline, bond 13.7 against 4.5.
+
+### The one experiment that is built and not yet run
+
+`--lab-rotation` is committed, tested and unused. It makes only the
+*translation* local and leaves the rotation exactly as g1-g9 had it, so three
+arms sit one variable apart:
+
+    g8_ceiling      lab translation, lab rotation       flat at 12.23
+    g10_equiv_ceil  local translation, local rotation   twist 10 -> 50, 12.4-12.7
+    NOT YET RUN     local translation, lab rotation     ?
+
+The command, two slots being free once the two GPU jobs above finish:
+
+    export AANCA_ENTRY=scripts/train_growth.py
+    bash scripts/bunya_submit.sh gpu \
+      --tag g11_split --split train --updates 2000 --eval-every 250 \
+      --seeds 16 --steps 120 --resume --birth none --initial helix \
+      --damage 12 --fape-weight 0.1 --clash-weight 1.0 --move-weight 1.0 \
+      --identity-weight 93.7 --equivariant-move --lab-rotation
+
+**Why it is the right next arm.** The twist explosion arrived with a change
+that touched both halves of the move at once and nothing has isolated them. A
+conjugation changes what an emitted rotation *does* rather than merely where it
+points, which makes it the suspect. If the explosion follows the rotation, the
+conjugation is wrong and the translation half survives; if it follows the
+translation, the fix released a gradient the restraints cannot contain and the
+lever is their weights.
+
+### Where the project stands
+
+**The root cause is found and it is architectural.** Perception is invariant by
+construction and the emitted move was applied in the lab frame, so a lab-frame
+direction -- which is what "move toward my target" is -- was never
+representable. That explains all of g1-g9 at once: the bearing at chance, the
+12.23 A attractor shared by arms with no placement term in common, the step
+length constant to three digits across crops, four arms frozen at their
+baselines, `g6_noid` asking 0.2 % of its budget, and FAPE supplying a magnitude
+and not a bearing. The capacity question is answered: after 2,000 updates of
+being handed the exact ideal move at every step, the bearing was statistically
+indistinguishable from a randomly initialised head.
+
+**The fix is necessary and not sufficient.** `--equivariant-move` makes the
+move equivariant -- pinned by four tests -- and does not improve `rmsd_dmg`.
+Nothing in this project has yet beaten the model-free 10.77 A baseline.
+
+### Carried over, unfinished
+
+  * The queued map chore: split the broken walk-order state out of
+    `the-damaged-region-must-start-within-reach-of-where-it-belongs` into its
+    own `void` node, since a reader can quote its 73.96 A broken-state numbers
+    out of a node whose heading asserts the opposite.
+  * Two check-1 findings stand deliberately unargued. Re-arguing them in their
+    narrowed form would be the convenient move a peer review already attacked.
+  * `docs/RETRACTIONS.md` now holds six invalid measurements. Four share one
+    root cause -- `best.pt` carried no run arguments -- and two are frame or
+    instrument faults in diagnostics I wrote the same day.
+  * The pMHC binder session (binder-physics, deadline Sunday) is on an open
+    channel and its frame warning found the equivariance bug. It is owed
+    nothing, but it asked for the corrected bearing number when it lands.
