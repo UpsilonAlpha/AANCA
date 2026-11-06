@@ -45,6 +45,8 @@ import torch
 from aanca import checkpoint as ckpt
 from aanca.growth import (
     BOND_WEIGHT,
+    baseline_coords,
+    run_anchors,
     COMPLETION_WEIGHT,
     REACH_WEIGHT,
     GrowthConfig,
@@ -62,15 +64,49 @@ from aanca.torch_graph import feature_topology
 
 ROOT = Path(__file__).resolve().parent.parent
 RAW = ROOT / "data" / "raw"
-HEADS = ("activation_head", "birth_head", "frame_head", "identity_head")
+HEADS = (
+    "activation_head", "birth_head", "frame_head", "identity_head", "trunk",
+)
+
+#: Everything that is not an output head: the message passing, the gating, the
+#: edge embedding -- the shared representation every head reads.
+#:
+#: **This is the column the head columns cannot replace.** The trainer uses
+#: Adam, which divides each parameter's step by that parameter's own gradient
+#: RMS, so a head whose gradient is uniformly a hundred times smaller than
+#: another's still takes full-size steps. What Adam cannot undo is a *shared*
+#: parameter receiving the sum of several objectives' signals: there the ratio
+#: is real, because the sum is what gets normalised and the larger contribution
+#: decides the direction. So "which objective is shaping the representation the
+#: frame head reads" is a question about the trunk and not about the heads.
+TRUNK = (
+    "aggregate_norm", "candidate", "delta_head", "edge_embed", "gate",
+    "kappa_head", "message",
+)
 
 
-def head_gradients(rule) -> dict[str, float]:
-    out = {}
+def head_gradients(rule) -> dict[str, float | None]:
+    """Gradient norm per head. ``None`` for a head this rule does not have.
+
+    **``None`` and not ``nan``, and that distinction was a silent bug.** A
+    ``free`` or ``none`` rule has no birth head, this returned ``nan`` for it,
+    and the caller's "every gradient is finite" check then rejected *every row
+    of the table* -- so the probe printed a complete grid of zeros with
+    ``draws 0`` and nothing said the architecture was the reason. An absent
+    head is not a non-finite gradient; it is the absence of a question.
+    """
+    out: dict[str, float | None] = {}
     for name in HEADS:
+        if name == "trunk":
+            total = 0.0
+            for parameter_name, p in rule.named_parameters():
+                if parameter_name.split(".")[0] in TRUNK and p.grad is not None:
+                    total += float((p.grad**2).sum())
+            out[name] = total**0.5
+            continue
         head = getattr(rule, name, None)
         if head is None:
-            out[name] = float("nan")
+            out[name] = None
             continue
         total = 0.0
         for p in head.parameters():
@@ -99,6 +135,22 @@ def main() -> int:
         "the training setup produced a number that looked like a finding.",
     )
     parser.add_argument("--k", type=int, default=24)
+    parser.add_argument(
+        "--birth", default=None,
+        choices=("torsion", "cartesian", "free", "none"),
+        help=(
+            "override the checkpoint's birth mode, or set one when there is no "
+            "checkpoint. ``none`` is the self-placing rollout: every slot alive "
+            "from step 0 on a baseline conformation, no births, and the frame "
+            "head doing the whole job -- which is the configuration this probe "
+            "is most needed for, because 'the rule holds still' and 'the "
+            "geometry gradient is swamped' look identical in a training log"
+        ),
+    )
+    parser.add_argument(
+        "--initial", default="helix", choices=("helix", "extended", "random"),
+        help="baseline conformation for --birth none; see growth.BASELINE_MODES",
+    )
     parser.add_argument("--repeats", type=int, default=3)
     parser.add_argument("--bond-weight", type=float, default=BOND_WEIGHT)
     parser.add_argument("--reach-weight", type=float, default=REACH_WEIGHT)
@@ -154,13 +206,20 @@ def main() -> int:
 
     names = ("fape", "bond", "completion", "identity", "reach", "twist")
     totals = {n: {h: 0.0 for h in HEADS} for n in names}
+    #: Heads this rule does not have, so the table can print ``-`` for them
+    #: rather than a zero that reads as "measured, and nothing there".
+    missing = set(HEADS)
     values = {n: 0.0 for n in names}
     finite = {n: 0 for n in names}
+
+    birth = args.birth or str(stored.get("birth", "cartesian"))
+    self_placing = birth == "none"
+    print(f"birth {birth}" + (f", {args.initial} baseline" if self_placing else ""))
 
     for repeat in range(args.repeats):
         rule = AANCARule(
             growth=True,
-            birth=str(stored.get("birth", "cartesian")),
+            birth=birth,
             identity=True,
             identity_keep=float(stored.get("identity_keep", 2.0)),
         )
@@ -170,19 +229,33 @@ def main() -> int:
             steps=args.steps, truncate=truncate, k=args.k, blind=True,
             identity_start=str(stored.get("identity_start", "masked")),
             growth=GrowthConfig(
-                seeds=args.seeds, birth=str(stored.get("birth", "cartesian"))
+                seeds=args.seeds, birth=birth, initial=args.initial
             ),
         )
         generator = torch.Generator().manual_seed(repeat)
-        alive = seed_alive(
-            topo.n_residues, args.seeds, generator, native.device, links=links
-        )
+        if self_placing:
+            # The same start ``growth_objective`` builds: all alive, one native
+            # anchor per covalent run, everything else on the reference walk.
+            alive = torch.ones(
+                topo.n_residues, dtype=torch.bool, device=native.device
+            )
+            anchors = run_anchors(
+                topo.n_residues, links, generator, native.device
+            )
+            start = baseline_coords(
+                native, topo, links, anchors, args.initial, generator
+            )
+        else:
+            alive = seed_alive(
+                topo.n_residues, args.seeds, generator, native.device, links=links
+            )
+            start = native
         start_identity = initial_identity(
             topo, native, config.identity_start, generator, alive=alive
         )
         result = rollout(
             rule,
-            initial_state(native, rule, identity=start_identity, alive=alive),
+            initial_state(start, rule, identity=start_identity, alive=alive),
             topo, config, generator=generator, record=False,
         )
         final = result.state
@@ -232,12 +305,13 @@ def main() -> int:
                 continue
             term.backward(retain_graph=True)
             grads = head_gradients(rule)
-            if all(
-                not (g != g or g == float("inf")) for g in grads.values()
-            ):
+            present = [g for g in grads.values() if g is not None]
+            if all(not (g != g or g == float("inf")) for g in present):
                 finite[name] += 1
                 for h in HEADS:
-                    totals[name][h] += grads[h]
+                    if grads[h] is not None:
+                        totals[name][h] += grads[h]
+                        missing.discard(h)
 
     print(
         f"{args.pdb}, {args.seeds} seeds, {args.steps} steps, mean of "
@@ -257,7 +331,10 @@ def main() -> int:
         n = max(finite[name], 1)
         print(
             f"  {name:<12}{values[name] / args.repeats:>10.4f}"
-            + "".join(f"{totals[name][h] / n:>12.2e}" for h in HEADS)
+            + "".join(
+                f"{'-':>12}" if h in missing else f"{totals[name][h] / n:>12.2e}"
+                for h in HEADS
+            )
             + f"{finite[name]:>7d}"
         )
     print(
@@ -267,7 +344,7 @@ def main() -> int:
         "  decomposition of the total. 'draws' counts how many repeats gave a\n"
         "  finite gradient -- anything below the repeat count means the rollout\n"
         "  is already producing non-finite values and the row is not\n"
-        "  trustworthy."
+        "  trustworthy. A '-' column is a head this rule does not have."
     )
     return 0
 
