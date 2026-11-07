@@ -2,7 +2,8 @@
 type: claim
 status: open
 evidence: ours
-sources: [32423296, model.py]
+sources: [32449992, model.py]
+checked: [32423296]
 ---
 
 # The move head asks for five times the cap, so tanh kills its magnitude gradient
@@ -11,6 +12,9 @@ sources: [32423296, model.py]
 is 100 % of the 0.3 A per-step cap. That looks like a clamp sitting on its
 limit and is not: `_bounded` in `src/aanca/model.py` is a **tanh**, so it never
 reaches the cap and saturating it means the head is asking for far more.
+
+**Measured: 1.61 A per step, 5.4x the cap, with a magnitude gradient 9.58e-05
+of its near-origin value** -- a ten-thousandfold attenuation (job 32449992).
 
 The curve is invertible, so the raw request comes back from the printed number
 without touching `model.py`:
@@ -101,9 +105,10 @@ promoted four measurements that turned out to be defaults.
 
 So the status reflects the weaker half. The claim is really two:
 
-  * **the head asks for >= 4.7x the cap and its magnitude gradient is <= 3.3e-4
-    of its near-origin value** -- arithmetic on a measurement in hand, and not
-    in doubt;
+  * **the head asks for 5.4x the cap and its magnitude gradient is 9.58e-05 of
+    its near-origin value** -- measured, and before it was measured the same
+    thing was bounded at >= 4.7x and <= 3.3e-4 by arithmetic on four printed
+    decimals; not in doubt either way;
   * **this is why the record looks as it does** -- interpretive, and what
     `open` refers to.
 
@@ -120,12 +125,17 @@ own, and it is not a competing explanation for
 [[the-emitted-move-was-applied-in-the-lab-frame-and-perception-is-invariant]],
 which concerns what a direction could mean rather than how long a step is.
 
-The recovered request is a **lower bound with no upper bound**, not a
-measurement. Job 32449794 re-reads the same checkpoint with the inversion
-computed on full-precision norms, and there are only two outcomes: a figure, or
-a declaration that the float32 bound was already reached and the request is
-unresolvable from a finished run. **Either refines the number without
-establishing the claim**, which is arithmetic on a measurement already in hand.
+**The request is now measured rather than bounded.** Job 32449992 inverted it
+on full-precision norms and it resolved, below the float32 ceiling:
+
+    the head is ASKING for 1.61 A per step = 5.4x the 0.3 A cap
+    tanh gradient on the magnitude: 9.58e-05 of its near-origin value
+
+So the attenuation is **ten thousandfold, not three**, and the heading
+understates it by a factor of three. The `>= 4.7x` lower bound read off four
+printed decimals was correct and conservative. Not renamed, because a node that
+is cited under one name and silently answers to another is worse than a heading
+that undersells its own number; the figure in the body is the one to quote.
 
 Nothing here says the gradient being dead is *why* `rmsd_dmg` is 12.5 A. It
 says the rule cannot be taught to ask for a shorter step, which is a different

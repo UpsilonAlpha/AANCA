@@ -8421,3 +8421,78 @@ does not take them, argparse exited 2. Diagnostics go through
 The constraint is not optional there -- `bunya_submit.sh` adds it for you and a
 bare `sbatch` does not, and without it the venv dies with SIGILL on an epyc3
 node.
+
+### 7. Correction: the "decisive number" was a different checkpoint
+
+Everything in section 1 above was reported from job 32423296 and **it measured
+an intermediate checkpoint, not the arm's result.** Caught by re-running the
+same readout on the same path and getting materially different numbers:
+
+                       32423296        32449992
+    align   mean       +0.008          -0.096
+    align   per crop   -0.534..+0.457  -0.742..+0.717
+    rmsd_dmg           12.52           12.85
+    crop 180 rmsd      9.75            10.26
+    crop 297 rmsd      1.75            2.52
+
+For as long as it took to check the SLURM timestamps this looked like
+**instrument non-determinism**, which would have been much worse than what it
+is. The timestamps:
+
+    32423296 ran            01:05:19 -> 01:10:55
+    last.pt was written     01:10:13
+    g10_equiv_ceil finished 01:10:15
+
+So the job loaded a complete but intermediate `last.pt` at about 01:05:30 --
+somewhere around update 1860-1922 -- and the training run overwrote the file 34
+seconds before the job ended. 32449992 read the final 2000-update weights at
+11:52.
+
+**This is `best.pt` carrying no args in a second costume**, and the lesson is
+the one already written down for it: *a default is indistinguishable from a
+measurement once printed under a column heading.* Here it is not a default but
+an unrecorded file version, and nothing in either output said which weights it
+had read. `docs/RETRACTIONS.md` now has seven entries; this one is void **as an
+attribution to the arm** rather than wrong, since the numbers are real
+measurements of a real checkpoint nobody can now name precisely.
+
+The structural fix is in: `ceiling_readout.py` prints the checkpoint path, its
+stored `update` and its mtime before anything else, and says so loudly when the
+checkpoint records no update. Reading a probe's log now shows a mid-training or
+stale read without anyone having to suspect it.
+
+**The conclusion does not move and is slightly strengthened** -- -0.096 is
+further below the +0.206 null than +0.008 was, eight of twelve crops are
+negative, and the 0.5 threshold is nowhere near. But the published precision
+was wrong for an hour and the per-crop table was wrong throughout, which is
+what the retraction records.
+
+### 8. What the valid readout adds
+
+**The request is measured, not bounded.** The float32 inversion resolved:
+
+    the head is ASKING for 1.61 A per step = 5.4x the 0.3 A cap
+    tanh gradient on the magnitude: 9.58e-05 of its near-origin value
+
+So the attenuation is **ten thousandfold, not three.** The `>= 4.7x` and
+`<= 3.3e-4` read off four printed decimals were correct and conservative.
+
+**And one crop aims, which is the only one the gradient can follow to arrival:**
+
+    crop   needs    inside the 3.6 A gradient window?   align
+     297    2.52 A  yes                                 +0.717
+     225    3.87 A  no, just                            -0.742
+     the other ten  no, by 6 to 20 A                    -0.568 to +0.467
+
++0.717 is **above half-aimed's 0.670** -- the first value in this project's
+history to clear that bar -- and it belongs to the one crop whose damaged window
+is close enough that the truncated segment covers the whole journey. 11 of 12
+crops need more than the window can see.
+
+**n = 2 either side of that boundary, so it is a hypothesis.** It is also
+exactly the shape of the error already indexed against this arm, where the
+11.82 A dip was read as a trend from one point in seven, and crop 225 reads the
+*worst* value in the table from just outside the boundary, which a clean story
+would not predict. `g12_trunc` (32449661) moves the boundary from 3.6 A to
+18 A, so if the bearing follows the window nine more crops should cross with
+it. Written down before that lands rather than after.

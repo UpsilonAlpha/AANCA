@@ -42,6 +42,7 @@ What separates the two readings is **direction**, not magnitude:
 from __future__ import annotations
 
 import argparse
+from datetime import datetime
 import random
 from pathlib import Path
 
@@ -259,6 +260,37 @@ def main() -> int:
     if not stored:
         print(f"{path} stores no run arguments; point at the run's last.pt")
         return 1
+
+    # **Say WHICH checkpoint this is, because `last.pt` moves under you.**
+    # Job 32423296 read `runs/g10_equiv_ceil/last.pt` between 01:05 and 01:10
+    # while the run that owns it was still training; the file was overwritten at
+    # 01:10:13, 34 seconds before the job ended. Job 32449992 re-read the same
+    # path at 11:52 and got materially different numbers -- align +0.008 against
+    # -0.096, rmsd_dmg 12.52 against 12.85 -- which read as instrument
+    # non-determinism for as long as it took to check the timestamps. It was two
+    # different sets of weights with one filename.
+    #
+    # This is the `best.pt` failure again in a second costume: a probe pointed at
+    # a file whose identity nothing in the output recorded, so a real
+    # measurement of an unrecorded intermediate got reported as the arm's
+    # result. Printing the update and the mtime makes a stale or mid-training
+    # read visible in the log it produced, which is the only place anyone will
+    # look later.
+    update = state.get("update")
+    try:
+        stamp = datetime.fromtimestamp(path.stat().st_mtime).isoformat(
+            timespec="seconds"
+        )
+    except OSError:
+        stamp = "unknown"
+    print(
+        f"checkpoint : {path}\n"
+        f"  update   : {update if update is not None else 'NOT RECORDED'}\n"
+        f"  written  : {stamp}"
+    )
+    if update is None:
+        print("  *** this checkpoint does not record its update, so the number")
+        print("  *** below cannot be attributed to a point in the run.")
 
     weights = ckpt.rule_weights(state)
     dataset, indices, pool_size = held_out(stored, state, args.extra_crops)
