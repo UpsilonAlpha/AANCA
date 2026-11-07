@@ -91,7 +91,35 @@ the rule's behaviour substantially and
 [[the-move-heads-magnitude-gradient-is-attenuated-three-thousandfold]] is what
 that change cost.
 
-## The agreement check is underpowered, which is not the same as negative
+## The agreement check passed at k = 97, so the bearing instrument is now two-sided on both questions
+
+Job **32449993** raised k with `--extra-crops 88`:
+
+    k = 97   align vs rmsd_dmg : r = -0.245   95% CI [-0.424, -0.048]
+
+**Entirely below zero, so the two agree**: a better bearing goes with a lower
+RMSD, and the two were computed from different things -- emitted moves against
+ideal directions, and final coordinates against the native. That is the
+*convention* check, which a planted signal cannot give and which no number of
+negative controls can substitute for. Together with panel C's oracle ceiling
+and measured nulls, `align` is now anchored on **scale and convention both**,
+and it is the only instrument here for which that is true by two independent
+routes.
+
+**It is a weak predictor, and saying so is part of the result.** r = -0.245
+accounts for about 6 % of the variance in `rmsd_dmg`, so the bearing carries
+real but small information about where a window ends up. It is enough to
+license reading `align` as a bearing; it is not enough to treat `align` as a
+proxy for the outcome.
+
+Three further things from that run, all consistent with k = 12:
+
+    align mean      -0.034      (train crops included; -0.096 held out)
+    the request      1.62 A     against 1.61 A at k = 12 -- stable
+    crops beyond
+    the 3.6 A window 87/97
+
+### The earlier reading, kept because the conclusion was reached before the power was
 
 `align` is computed from emitted moves against ideal directions and `rmsd_dmg`
 from final coordinates against the native -- two independently derived
@@ -112,10 +140,10 @@ agreement is a property of the instruments rather than of the split, and the
 readout labels any `rmsd_dmg` printed that way as not held out on every run.
 Job 32449795 runs it at k = 100.
 
-Until that lands, **`align` and `rmsd_dmg` have not been shown to agree**, and
-that is a stated limitation of the bearing instrument rather than a reason to
-discount this reading, which rests on a calibrated scale with a measured
-ceiling.
+That limitation is now **retired** by the k = 97 run above. It is left in place
+rather than deleted, because the conclusion of this node was written while the
+limitation stood and the record should show that the instrument was doubted
+before it was vindicated, not after.
 
 ## Supports
 - [[question-can-the-architecture-place-residues-under-any-supervision]]
