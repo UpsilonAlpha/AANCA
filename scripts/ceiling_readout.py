@@ -58,7 +58,7 @@ PDB = ROOT / "data" / "pdb"
 MANIFEST = ROOT / "data" / "manifest.json"
 
 
-def held_out(stored: dict, state: dict):
+def held_out(stored: dict, state: dict, extra: int = 0):
     splits = read_manifest(MANIFEST)
     available = []
     for spec in splits[str(stored.get("split") or "train")]:
@@ -83,6 +83,26 @@ def held_out(stored: dict, state: dict):
         order = list(range(len(pool)))
         random.Random(int(stored.get("seed", 0))).shuffle(order)
         indices = order[: int(stored.get("eval_structures", 12))]
+    if extra:
+        # **These extra crops are TRAINING crops and are only ever valid for
+        # an instrument-agreement question.** The held-out set is twelve by the
+        # split, and twelve is not enough to settle whether `align` and
+        # `rmsd_dmg` agree: on `g10_equiv_ceil` the correlation came back
+        # r = -0.223 with a 95% interval of [-0.707, +0.402], which crosses
+        # zero, so the check was underpowered rather than negative.
+        #
+        # Agreement between two instruments is a property of the instruments,
+        # not of the split -- `align` is computed from emitted moves against
+        # ideal directions and `rmsd_dmg` from final coordinates against the
+        # native, so they are independently derived quantities that must agree
+        # if both read the same reality. Asking that question on seen crops is
+        # legitimate; quoting any resulting `rmsd_dmg` as performance is not,
+        # which is why the readout prints the warning rather than trusting the
+        # reader to remember.
+        held = set(indices)
+        rest = [i for i in range(len(pool)) if i not in held]
+        random.Random(int(stored.get("seed", 0)) + 1).shuffle(rest)
+        indices = indices + rest[:extra]
     return dataset, indices, len(pool)
 
 
@@ -210,6 +230,20 @@ def main() -> int:
             "reproduces the scale used in tests/test_move_equivariance.py"
         ),
     )
+    parser.add_argument(
+        "--extra-crops", type=int, default=0, metavar="N",
+        help=(
+            "add N TRAINING crops to the twelve held-out ones. **For the "
+            "instrument-agreement question only.** `align` and `rmsd_dmg` are "
+            "computed from different things -- emitted moves against ideal "
+            "directions, and final coordinates against the native -- so they "
+            "must agree if both read the same reality, and at k=12 that check "
+            "is underpowered: r = -0.223, 95%% CI [-0.707, +0.402]. Agreement "
+            "is a property of the instruments rather than of the split, so "
+            "seen crops answer it. Any `rmsd_dmg` printed under this flag is "
+            "NOT a held-out number and the readout says so on every run"
+        ),
+    )
     args = parser.parse_args()
 
     path = Path(args.checkpoint)
@@ -227,7 +261,7 @@ def main() -> int:
         return 1
 
     weights = ckpt.rule_weights(state)
-    dataset, indices, pool_size = held_out(stored, state)
+    dataset, indices, pool_size = held_out(stored, state, args.extra_crops)
     damage = int(stored.get("damage") or 0)
     if damage <= 0:
         print("this run is not a regeneration run; nothing to read")
@@ -316,8 +350,17 @@ def main() -> int:
         if stored.get("equivariant_move")
         else "emitted move is already a lab-frame vector"
     )
-    print(f"{label}, {len(rows)} held-out crops of {pool_size}, "
-          f"{damage}-residue window, {config.steps} steps")
+    if args.extra_crops:
+        print(
+            f"{label}, {len(rows)} crops of {pool_size} -- "
+            f"12 HELD OUT PLUS {args.extra_crops} TRAINING CROPS"
+        )
+        print("  *** rmsd_dmg below is NOT a held-out number. This mode exists")
+        print("  *** for the align/rmsd_dmg agreement check, which needs k the")
+        print("  *** split cannot supply. Do not quote it as performance.")
+    else:
+        print(f"{label}, {len(rows)} held-out crops of {pool_size}, "
+              f"{damage}-residue window, {config.steps} steps")
     print(f"{frame_note}\n")
     print(f"{'crop':>6} {'move':>8} {'clash':>9} {'rmsd_dmg':>9} "
           f"{'align':>7} {'step':>7} {'net/path':>9}")
@@ -330,8 +373,126 @@ def main() -> int:
           f"{sum(r[4] for r in rows)/n:>7.3f} {sum(r[5] for r in rows)/n:>7.4f} "
           f"{sum(r[6] for r in rows)/n:>9.3f}")
     cap = 0.3
-    print(f"\n  step against the {cap:g} A cap: "
-          f"{100 * sum(r[5] for r in rows) / n / cap:.1f}% used")
+    used = 100 * sum(r[5] for r in rows) / n / cap
+    print(f"\n  step against the {cap:g} A cap: {used:.1f}% used")
+    # **How much is the head actually ASKING for?** `step` is the move after
+    # ``_bounded``, which is a tanh and not a clamp:
+    #
+    #     bounded = L * tanh(raw / L)
+    #
+    # so it is invertible, and the raw request the frame head emitted comes
+    # back without touching ``model.py``:
+    #
+    #     raw = L * atanh(bounded / L)
+    #
+    # This matters because the two ends of that curve fail differently.
+    # ``_bounded``'s own docstring records the failure at the origin -- a
+    # zero-initialised head gets ``0/eps = 0`` and no gradient ever -- and the
+    # branch there is called load-bearing for that reason. The far end has the
+    # same shape: the derivative of the bounded norm with respect to the raw
+    # one is ``1 - tanh^2(raw/L)``, so a head asking for several times the cap
+    # sits in the flat tail and its MAGNITUDE gradient is attenuated by orders
+    # of magnitude. The docstring says tanh was chosen so "the gradient does
+    # not vanish for a head that is asking for too much"; whether it vanishes
+    # anyway is an empirical question about how much too much, and this is the
+    # number that answers it.
+    #
+    # **Precision ceiling, stated because the inversion has one.** atanh of a
+    # ratio within float32's last digits of 1.0 is unresolvable, so beyond
+    # roughly 8x the cap the recovered value is a LOWER BOUND and is printed as
+    # one. Do not quote a saturated figure as a measurement of the request.
+    import math as _math
+    ratios = [min(r[5] / cap, 1.0 - 1e-7) for r in rows]
+    raws = [cap * _math.atanh(v) for v in ratios]
+    atten = [1.0 - _math.tanh(v / cap) ** 2 for v in raws]
+    raw_mean = sum(raws) / n
+    saturated = sum(1 for v in ratios if v >= 1.0 - 1e-7)
+    bound = ">=" if saturated else "  "
+    print(f"\n  the head is ASKING for {bound}{raw_mean:.2f} A per step, "
+          f"which is {bound}{raw_mean / cap:.1f}x the {cap:g} A cap")
+    print(f"  tanh gradient on the magnitude: {sum(atten) / n:.2e} "
+          f"of its value near the origin")
+    if saturated:
+        print(f"  *** {saturated}/{n} crops saturate the float32 inversion, so")
+        print("  *** the request is a LOWER bound rather than a measurement.")
+    if raw_mean / cap > 3.0:
+        print("  *** The magnitude head is in tanh's flat tail. This is the")
+        print("  *** failure _bounded's docstring guards against at the ORIGIN,")
+        print("  *** arriving at the other end: the smoothing that was chosen")
+        print("  *** to keep the gradient alive for a head asking too much has")
+        print("  *** saturated, so the rule cannot be taught to ask for LESS.")
+        print(f"  *** Over {config.steps} steps at the cap the window travels")
+        print(f"  *** {config.steps * cap:.1f} A, so overshoot is forced rather")
+        print("  *** than chosen -- and a vector that overshoots turns its own")
+        print("  *** bearing negative once it is past the target, which is how")
+        print("  *** a saturated magnitude shows up in `align`.")
+
+    if used > 99.0:
+        # **Saturation is a result, not a formatting detail.** A uniform `step`
+        # across crops is expected of a rule emitting a near-constant local
+        # vector and is NOT a tell -- that was established on a fixed random
+        # head, which gave 0.0394-0.0441 over twelve structures. Sitting at
+        # 100 % of the cap is different: the rule asks for the largest move it
+        # is allowed, on every step, on every crop. Read beside `align` near
+        # zero and `net/path` near one, that says each damaged residue walks a
+        # straight line at full speed in a direction uncorrelated with where it
+        # has to go, which is a sharper statement than "it does not aim".
+        print("  *** SATURATED: the rule asks for the whole cap every step.")
+
+    window = config.truncate * cap
+    beyond = sum(1 for r in rows if r[3] > window)
+    print(f"\n  gradient window = truncate {config.truncate} x {cap:g} A "
+          f"= {window:.1f} A")
+    print(f"  crops needing more than that: {beyond}/{n}")
+    print("  *** the window is what the gradient can see. A crop whose damaged")
+    print("  *** region sits further from native than this cannot be taught to")
+    print("  *** arrive, however good the bearing is, because arriving happens")
+    print("  *** outside the segment the loss is differentiated through.")
+
+    # **The agreement check, computed here rather than by hand.** `align` comes
+    # from emitted moves against ideal directions; `rmsd_dmg` from final
+    # coordinates against the native. Two independently derived quantities that
+    # must agree if both read the same reality -- which is the only question
+    # that tests an instrument's *convention*, as against a planted signal,
+    # which tests sensitivity alone. Better aim should mean lower rmsd, so the
+    # correlation should be clearly NEGATIVE.
+    if n >= 6:
+        import math
+        a = [r[4] for r in rows]
+        d = [r[3] for r in rows]
+
+        def pearson(x, y):
+            mx, my = sum(x) / len(x), sum(y) / len(y)
+            sx = math.sqrt(sum((v - mx) ** 2 for v in x))
+            sy = math.sqrt(sum((v - my) ** 2 for v in y))
+            if sx == 0 or sy == 0:
+                return float("nan")
+            return sum(
+                (x[i] - mx) * (y[i] - my) for i in range(len(x))
+            ) / (sx * sy)
+
+        r = pearson(a, d)
+        print(f"\n  AGREEMENT  align vs rmsd_dmg : r = {r:+.3f}", end="")
+        if n > 3 and -0.999 < r < 0.999:
+            z = 0.5 * math.log((1 + r) / (1 - r))
+            se = 1 / math.sqrt(n - 3)
+            lo = math.tanh(z - 1.96 * se)
+            hi = math.tanh(z + 1.96 * se)
+            print(f"   95% CI [{lo:+.3f}, {hi:+.3f}]")
+            if lo < 0 < hi:
+                print("  *** the interval crosses zero, so this k cannot say")
+                print("  *** whether the two instruments agree. Underpowered,")
+                print("  *** which is NOT the same as disagreeing.")
+                print("  *** --extra-crops raises k for this check.")
+            elif hi < 0:
+                print("  *** they agree: better bearing goes with lower rmsd,")
+                print("  *** and the two were computed from different things.")
+            else:
+                print("  *** THEY DISAGREE IN SIGN. Better bearing going with")
+                print("  *** WORSE rmsd means one of them is misreading; find")
+                print("  *** out which before quoting either.")
+        else:
+            print()
     print("\n  per-step bearing, first crop (a mean hides 'right then lost'):")
     print("   ", rows[0][7][:14] or "(nothing emitted)")
     print(
