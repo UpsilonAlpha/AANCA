@@ -8740,3 +8740,47 @@ baseline probe builds its own helix placement, the run's comes out of
 `--initial helix` inside the rollout -- rather than that either arithmetic is
 wrong. Not resolved here, and nothing above leans on it. The check is cheap:
 one crop, both paths, print the start coordinates.
+
+#### The untrained control closes the gain column, and a much bigger one with it
+
+Pre-registered one section above as the test that would settle whether the 1 A
+is the rule's. Job 32453659, `--untrained --perturb 0.05`:
+
+    rule                      step     align    gained   rmsd_dmg
+    g8_ceiling  (trained)    0.0309   -0.259     1.02      12.25
+    g11_split   (trained)    0.0263   -0.189     1.02      12.26
+    g12_trunc   (trained)    0.0139   -0.015     1.01      12.26
+    UNTRAINED, perturbed     0.0920   -0.344     1.01      12.26
+
+**An untrained rule gains the same angstrom and lands on the same RMSD.** Its
+step is 3.5x g11's and 6.6x g12's, its `move` loss is four times theirs, and it
+has never seen a gradient. Across a sevenfold range of step size and bearings
+from -0.02 to -0.34, `gained` is 1.01-1.02 and `rmsd_dmg` is 12.25-12.26.
+
+So **`rmsd_dmg` on this task has almost no dynamic range under any rule.**
+12.25 A is not an attractor training finds; it is what the metric reads for a
+rule picked at random. Nine arms have read 12.18-12.85 whatever was changed
+about them because the final RMSD of a damaged window is set by where the damage
+put it, not by what the rule does with it.
+
+**This is the clearest statement of the project's position so far, and it is
+about the measurement, not the architecture.** `rmsd_dmg` cannot distinguish a
+trained rule from an untrained one on this task, so it cannot answer
+`question-can-the-architecture-place-residues-under-any-supervision` either way.
+Every "the arm is worse than doing nothing" and every "flat at 12.23" in this
+journal is a statement with that much less content than it appeared to have.
+
+What the project has that *does* discriminate: `align` (anchored on scale and
+convention, nulls measured, an oracle at 1.000) separates the arms -0.015 to
+-0.344, and `step` separates them 0.0139 to 0.0920 -- and the untrained control
+sits at the wrong end of neither. Both still say no arm aims. The instrument
+that works says the same thing the broken one did, which is the only reason the
+conclusion survives this.
+
+**The truncation prediction is also now falsified on a correct denominator.**
+With `need` measured from the start state, `--truncate 60` really does put 9 of
+12 crops inside the gradient window against 2 of 12 at `--truncate 12`. The
+pre-registered consequence was that those nine should cross over into aiming.
+`align` went -0.189 -> -0.015 with 6 of 12 crops positive against 4: still below
+the +0.206 null and nowhere near 0.5. The antecedent held and the consequent did
+not.
