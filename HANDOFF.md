@@ -8784,3 +8784,62 @@ pre-registered consequence was that those nine should cross over into aiming.
 `align` went -0.189 -> -0.015 with 6 of 12 crops positive against 4: still below
 the +0.206 null and nowhere near 0.5. The antecedent held and the consequent did
 not.
+
+### 11. g9 was cancelled, not run, and I had written that it had run
+
+Reading `g9_ceil_noid` to test the identity-escape claim found no trajectory to
+read. Job **32419399** was `scancel`led at 23:39 on 6 Nov -- `train exit : 143`,
+`CANCELLED AT 2026-11-06T23:39:20` in the `.err` -- after **310 updates**. It
+was killed to free one of my two GPU slots for `g10_equiv_ceil`, and the claim
+node then said the direct test "has already run", written from the submission
+instead of from the log. Its one evaluation, at update 250, reads twist 9.1 and
+`rmsd_dmg` 12.23: identical to every other arm there and 750 updates short of
+the only question it was built to answer.
+
+Resubmitted as **32457571**, resuming from the update-310 checkpoint, so only
+the 1,690 untested updates cost anything. Queue checked first: I held no GPU
+slots and the user's `aspdft`, `aspqm2` and the pending `mm_h3_6b_092_po2_1` are
+untouched.
+
+This is the fourth "a quantity labelled as one thing and sourced from another"
+of the last two days, and the cheapest of them: the log was one fetch away.
+
+### 12. A Growing NCA cell is told where it is, and that is what regeneration already supplies
+
+Ulban's framing, recorded because it reorganises what the failures mean without
+moving the thesis. Whole-backbone growth from a single residue stays at the root
+of the argmap: it is still *possible*, it just needs **more information**, the
+way Growing NCA has the grid.
+
+A Growing-NCA cell sits at a fixed site in a lattice, which hands it three
+things free: where it is, a frame shared with every other cell, and a
+determinate neighbourhood. A residue here has none of them -- perception is
+invariant by construction, there is no ambient lattice, and the only available
+frame is the residue's own N-CA-C triad, which is exactly the frame that moves
+when the residue does. So the lab-frame move bug was never only a bug: it was
+the symptom of an architecture asked to do a Growing-NCA task **without the
+information a Growing NCA is given.** The four whole-structure arms measured a
+rule starved of positional information, not an impossible claim.
+
+So the missing piece is a positional-information *channel* -- a morphogen
+gradient, the protein-shaped analogue of the grid -- and not more supervision.
+That squares with `the-objective-should-restrain-the-output-not-teach-the-placement`:
+the fix for too little information is to supply information, and the project has
+been reaching for the supervision lever while the information lever was the one
+stuck.
+
+**And in regeneration the surviving context IS the lattice.** The damaged window
+sits inside residues still in their crystal pose, which supply exactly those
+three things for free. That is a mechanistic reason -- not a difficulty argument
+-- for regeneration being the near target, which is where to aim.
+
+It also sharpens the current failure. The positional information is *present* in
+the regeneration arms and the rule still does not read it: `rmsd_dmg` cannot
+tell a trained rule from an untrained one, and `align` says no arm aims. **The
+grid is already there and the rule is not using it** -- a different and more
+tractable problem than the whole-structure arms had.
+
+Node: `in-regeneration-the-surviving-context-is-the-grid`, `open`, because the
+Growing-NCA half is literature and the protein half is an argument. What makes
+it a finding: a morphogen channel moving a whole-structure arm off its baseline,
+or a regeneration arm improving as the intact context is made more informative.

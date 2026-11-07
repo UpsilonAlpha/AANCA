@@ -70,7 +70,16 @@ it is in four arms, but only one of the four printed the NLL, so "identity
 leaving the floor" is a one-arm reading of a four-arm event. The direct test is
 `g9_ceil_noid`'s own trajectory -- `--identity-weight 0` with the head and
 blind perception kept -- which should show **no jump at 1000** if this is right,
-and the same jump if the cause is elsewhere in the trainer. Nothing in the code
+and the same jump if the cause is elsewhere in the trainer.
+
+**That test has not run, and this node said it had.** `g9_ceil_noid` (32419399)
+was `scancel`led at 23:39 on 6 Nov with `train exit : 143`, having reached
+update 310 -- it was killed to free one of the two GPU slots for
+`g10_equiv_ceil`, and "it has already run" was written from the submission
+rather than from the log. Its single evaluation at update 250 reads twist 9.1
+and `rmsd_dmg` 12.23, indistinguishable from every other arm there and 750
+updates short of the question. Resubmitted as **32457571**, resuming from the
+update-310 checkpoint, so only the untested 1,690 updates cost anything. Nothing in the code
 is keyed to update 1000: there is no learning-rate schedule in the growth
 trainer, `--fape-clamp-prob` is at its default of 1.0, and the only `% 1000` in
 the tree is a logging line.
