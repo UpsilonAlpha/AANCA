@@ -161,18 +161,41 @@ def backbone_rmsd_on(
         rows = index.unsqueeze(-1)
         return source[rows, topo.frame_idx[index, 1:2]][:, 0]
 
-    a_fit, b_fit = ca(coords, fit), ca(native, fit)
+    return ca_rmsd_on(
+        ca(coords, fit), ca(native, fit), ca(coords, out), ca(native, out)
+    )
+
+
+def ca_rmsd_on(
+    a_fit: Tensor,
+    b_fit: Tensor,
+    a_read: Tensor,
+    b_read: Tensor,
+) -> Tensor:
+    """The CA-level core of :func:`backbone_rmsd_on`, on plain ``(N, 3)`` arrays.
+
+    Separated out so that a measurement made **outside** this project's topology
+    machinery runs the *same* superposition arithmetic rather than a
+    reimplementation of it. The cross-deposition anchor in
+    ``scripts/deposition_anchor.py`` is the caller that needs this: an anchor
+    computed by different code from the quantity it anchors would be comparing
+    two conventions and calling the difference a scale, which is the exact
+    failure mode the anchor exists to rule out.
+
+    ``a_fit``/``b_fit`` are the atoms the rotation is fitted on and
+    ``a_read``/``b_read`` the ones the deviation is read off.
+    """
     a_mean, b_mean = a_fit.mean(dim=0, keepdim=True), b_fit.mean(dim=0, keepdim=True)
     a_fit, b_fit = a_fit - a_mean, b_fit - b_mean
     u, _s, vh = torch.linalg.svd(a_fit.transpose(0, 1) @ b_fit)
     d = torch.sign(torch.det(u @ vh))
     correction = torch.diag(
-        torch.tensor([1.0, 1.0, 1.0], device=coords.device, dtype=coords.dtype)
+        torch.tensor([1.0, 1.0, 1.0], device=a_fit.device, dtype=a_fit.dtype)
     ).clone()
     correction[2, 2] = d
     rot = u @ correction @ vh
     # The same rigid motion the intact structure asked for, applied to the
     # window: centred on the fit's centroid, not the window's own.
-    a_read = (ca(coords, out) - a_mean) @ rot
-    b_read = ca(native, out) - b_mean
-    return ((a_read - b_read) ** 2).sum(dim=-1).mean().sqrt()
+    moved = (a_read - a_mean) @ rot
+    target = b_read - b_mean
+    return ((moved - target) ** 2).sum(dim=-1).mean().sqrt()

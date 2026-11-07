@@ -8496,3 +8496,90 @@ exactly the shape of the error already indexed against this arm, where the
 would not predict. `g12_trunc` (32449661) moves the boundary from 3.6 A to
 18 A, so if the bearing follows the window nine more crops should cross with
 it. Written down before that lands rather than after.
+
+### 9. The missing anchor is built: a 12-residue window is reproducible to 0.31 A
+
+`rmsd_dmg` had a floor (10.77 A, model-free) and a ceiling (0.00 A, the native)
+and **no scale**. Built the cross-deposition anchor, which was recorded
+yesterday as the concrete next step and flagged as possibly impossible.
+
+**The pool could not supply it, and that was checked before anything was
+downloaded.** Across all 25,303 manifest entries there are **zero** groups with
+two structures available on disk: the dataset is deduplicated by cluster *by
+construction*, which is a stronger and simpler reason than the
+sequence-comparison difficulty recorded yesterday. So the pairs had to be
+fetched. `scripts/deposition_pairs.py` takes them from RCSB's
+`clusters-by-entity-100.txt`, so **identity is RCSB's and not from an alignment
+written here**, and they land in `data/deposition_pairs/` rather than
+`data/pdb/` -- a training pool holding two depositions of one protein would leak
+the anchor into the data the arms train on.
+
+**The result, 13 X-ray pairs, 825 sliding windows, each superposed on every
+matched residue outside it:**
+
+    median 0.31 A    10th 0.095    90th 0.98    max 7.04
+
+So **0.3 A is this metric's noise floor and ~1 A is where real disagreement
+starts.** The usable dynamic range of `rmsd_dmg` is **0.31 to 10.77 A**, and
+every arm this project has run (12.18-12.85) sits outside it.
+
+It runs `fape.ca_rmsd_on`, extracted from `backbone_rmsd_on` for this purpose,
+so the anchor and the quantity it anchors share their superposition arithmetic
+rather than one being a reimplementation. An anchor computed by different code
+would compare two conventions and call the difference a scale.
+
+#### The gate is the whole measurement, and the first run did not have it
+
+Without it the pooled figure was **0.620 A with a 90th percentile of 14.5 A** --
+two populations wearing one number:
+
+    13 pairs, global fit <= 2 A    window median 0.31 A   <- the anchor
+    12 pairs, global fit 2.5-17.7  window median 7.76 A   <- something else
+     4 pairs, mixed methods        window median 14.5 A   <- excluded
+
+Four pairs had a median window of **17-19 A with their minimum also above
+10 A**, which is not a flexible loop but the whole correspondence failing. A
+window RMSD is read *after* a fit to the context, so a pair whose global fit
+fails makes every window read large for reasons that have nothing to do with the
+window. `global` -- CA RMSD over all matched residues -- is derived
+independently of the window values and has to agree with them first. The same
+convention check this project applies to everything else, applied to a new
+instrument on the day it was built, and it caught a bimodal distribution I was
+one commit away from publishing as "the anchor: 0.62 A".
+
+#### Three traps, two caught only because they were looked for
+
+  * **AlphaFold entries in the cluster file.** `AF_*` and `MA_*` computed models
+    sit alongside depositions, and splitting them on `_` yields the token `AF`,
+    which the first run reported as the partner for nineteen of its twenty best
+    candidates. Fetching those would have measured **how far a prediction sits
+    from a crystal** and reported it as crystallographic reproducibility -- a
+    plausible number of the right size answering a different question, the same
+    shape as the probe that reported `birth free` for a `--birth none` run.
+  * **Matching residues by position.** The two entries have different
+    missing-residue sets, so position matching compares residue i to i+3
+    wherever a loop is unmodelled. Matched on author numbering instead.
+  * **Method mixing.** X-ray/NMR pairs measure the difference between two
+    techniques; their median is 14.5 A, so pooling them would have moved the
+    anchor by a factor of forty.
+
+Also worth noting: `data/pdb` is BinaryCIF, freshly fetched partners are text
+mmCIF, and reading one with the other's parser raises `UnicodeDecodeError` on
+every file -- which is what the first attempt did.
+
+#### What this does NOT close
+
+The gap in `the-success-criterion-has-no-positive-anchor` is the absence of an
+anchor for a **good non-native** answer. This measures the metric's
+*reproducibility*: it says what "as good as the crystal" means and nothing about
+what "better than the crystal" scores. **That claim stays open.**
+
+The 12 gated-out pairs are the route to it and are not yet an answer: same
+sequence, window median 7.76 A, on the face of it the scale at which "a
+different valid conformation" lives. But the population is a **mixture** --
+1VC3/2EEO reads global 3.72 A with windows inside a 0.6 A band, which looks
+rigid-body or domain-level, while 4IT4/4IT6 reads global 12.44 A with windows
+from 3.1 to 38.5 A. Separating real alternative states from broken
+correspondences needs each pair inspected, and **until then no number from that
+population should be quoted.** Writing that down rather than taking the 7.76 A,
+which is the number I would want.
