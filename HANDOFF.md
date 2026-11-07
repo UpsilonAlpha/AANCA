@@ -8583,3 +8583,160 @@ from 3.1 to 38.5 A. Separating real alternative states from broken
 correspondences needs each pair inspected, and **until then no number from that
 population should be quoted.** Writing that down rather than taking the 7.76 A,
 which is the number I would want.
+
+### 10. The control arm breaks at the same update, so the fix never caused the explosion
+
+`g11_split` and `g12_trunc` both finished, and reading them past update 1000
+answered a different question from the one they were submitted to ask.
+
+**All four frame arms break at the same evaluation:**
+
+    update    g8      g11     g10     g12        <- held-out twist, degrees
+      250     9.1     9.1     9.9     9.8
+      500     9.1     9.0    10.0     9.5
+      750     9.0     9.1    10.2    10.4
+     1000    16.1    18.4    52.3    43.3        <- all four, same row
+     2000    16.6    17.6    50.2    53.9
+
+`g8_ceiling` has **neither half of the equivariance fix** and jumps 9.0 -> 16.1
+at update 1000, with `fape` 0.146 -> 0.843 and `bond` 6.03 -> 7.60 in the same
+row. So the ~1000-update phase transition is **not the fix's**, and the
+attribution written into `growth.py`, `train_growth.py`, section 8 above and a
+claim node -- that the conjugated rotation was "the suspect" -- came from a
+two-arm comparison with no control in it. **g8's log was already on disk when
+that was written.** Retraction #9.
+
+**The pre-registered rule is void rather than answered.** It read: "if the
+explosion follows the rotation, the conjugation is wrong and the translation
+half survives; if it follows the translation, the fix released a gradient the
+restraints cannot contain and the lever is their weights." Both branches assume
+the fix caused it. On the face of it the onset "follows the translation"
+(present in g10, g11, g12), which is the branch that would have been reported --
+so a rule read rather than voided would have published a false mechanism with a
+pre-registration's authority behind it.
+
+**What survives is narrower and better supported.** The *amplitude* splits
+cleanly on the rotation half, two arms either side of one variable:
+
+    local rotation absent   g8  16.6 deg    g11  17.6 deg
+    local rotation present  g10 50.2 deg    g12  53.9 deg
+
+Threefold. The conjugation does not cause the break but makes the rule about
+three times more sensitive to it. That is what the split arm was built to
+produce, and it is a real result.
+
+#### The mechanism is in the control arm's own identity column
+
+`g8_ceiling` is the only one of the four that prints the identity NLL:
+
+    update   type NLL   recovery   twist
+      250     3.005        --       9.1     <- ln 20 = 2.996, i.e. uniform
+      500     2.992        --       9.1
+      750     2.977        --       9.0
+     1000     2.799      11.0 %    16.1     <- breaks through, and so does twist
+     2000     2.678      13.2 %    16.6
+
+For 750 updates the identity head **sits on the uniform floor** -- NLL at or
+barely under ln 20, no recovery reported. At update 1000 it leaves the floor for
+the first time and starts recovering sequence, and that is the row where every
+geometry column gets worse. Identity's weight is **93.7**, the largest in the
+objective by two orders of magnitude: while its NLL sat at the floor it
+contributed a near-constant and little gradient, and the moment it starts
+learning it starts consuming the shared trunk.
+
+That is `identity-dominates-the-shared-trunk-by-2350x` observed **as it
+happens** rather than as a static ratio. Nothing in the code is keyed to update
+1000 -- no LR schedule in the growth trainer, `--fape-clamp-prob` at its default
+1.0, and the only `% 1000` in the tree is a logging line in another trainer.
+
+**`g9_ceil_noid`'s own trajectory is the direct test** and it has already run:
+`--identity-weight 0` with the head and blind perception kept. No jump at 1000
+confirms this; the same jump puts the cause elsewhere in the trainer. Reading
+that trajectory is the cheapest next thing in the project -- no GPU, just the
+log. The node is `open` until it is read.
+
+#### A third instrument fault of the same shape, and it kills the crop-297 story
+
+`ceiling_readout.py` tested its truncation window against `r[3]`, the **final**
+`rmsd_dmg`, not the window's distance from native at the start. So:
+
+  * "11 of 12 crops need more than 3.6 A" was the **outcome distribution
+    relabelled as the need**.
+  * "crop 297 needs 2.52 A, inside the gradient window" -- 2.52 was crop 297's
+    *result*. Window membership was decided by which crop **ended** closest, so
+    "the one crop that aims is the only one inside the window" is true by
+    construction. The hypothesis was circular, and it was recorded with n=2 and
+    a caveat that did not reach the actual defect.
+
+A quantity labelled as one thing and computed from another: the same shape as
+32423296 (an intermediate checkpoint labelled as the arm) and `birth free`
+before it, and the **third of this kind in one session**. All three were caught
+by checking rather than by reasoning, which is the only part of this that
+generalises. The readout now computes the start-state window RMSD with the same
+`ca_rmsd_on` and prints `need`, `rmsd_dmg` and `need - rmsd_dmg` side by side,
+so the need can never again be read off the outcome.
+
+**With the real start distances in hand, crop 297 is not a success at all --
+it starts 0.51 A from native.** Its window was barely displaced by the damage
+draw, it ends at 0.49 A, and its `align` is +0.478 on g11 and **-0.942 on g8**,
+the worst value in that table. The crop the hypothesis rested on is a crop that
+never had anywhere to go, and the two arms disagree about its bearing more
+violently than about any other crop's.
+
+**And the test built to settle it came back negative anyway.** `--truncate 60`
+moved the window 3.6 A -> 18 A and `align` went from -0.189 (g11) to -0.015
+(g12): still below the +0.206 null, nowhere near the 0.5 threshold, 6 of 12
+crops positive against 4. Widening the gradient window fivefold did not produce
+aiming.
+
+#### The `gained` column: 1.02 A on both arms, which is why it is not the rule
+
+With a start state to compare against, the obvious new column is
+`need - rmsd_dmg` -- what the rollout actually bought:
+
+    crop     need   rmsd_dmg   gained(g8)   gained(g11)
+     180     9.7        9.3       0.33         0.32
+     167     8.9        8.8       0.14         0.14
+     393    21.4       20.1       1.33         1.33
+     264    22.8       20.8       2.00         2.02
+     330    17.3       16.3       1.00         0.98
+     193    15.3       12.7       2.53         2.54
+     348    10.0        9.6       0.35         0.36
+     297     0.5        0.5       0.03         0.01
+       6    13.1       11.9       1.25         1.24
+     319    25.9       23.9       1.97         1.98
+     225     3.0        2.8       0.20         0.22
+     129    11.3       10.2       1.10         1.10
+    mean    13.3       12.3       1.02         1.02
+
+Every crop gains, and the first reading of that was "the arm is not worse than
+doing nothing after all". **It is not the rule.** g8 and g11 agree crop by crop
+to within 0.02 A while their bearings differ (-0.259 against -0.189) and their
+step sizes differ by 18 % (0.0309 against 0.0263). Two arms with different
+weights producing the same per-crop gain to two decimal places is the signature
+of a quantity that does not depend on the learned rule -- the same reasoning
+that made the 12.23 A attractor suspicious when two objectives with no
+placement term in common both landed on it.
+
+So the honest reading is **worse than "the rule makes it worse": the rule
+contributes nothing measurable to closing the gap**, and the 1 A that closes is
+geometric. What that 1 A actually is -- the window's rigid-body component under
+re-superposition is the first suspect -- is not yet established, and an
+`--untrained --perturb` run of the same readout settles it for free.
+
+#### A 2.5 Angstrom disagreement between two instruments measuring the start state
+
+`need` is 13.28 A (mean over the twelve crops, measured on the run's own start
+state with `ca_rmsd_on`). `baseline_probe.py` reports the helix regeneration
+baseline as **10.77 A** and its node says "on the same twelve held-out crops a
+run sees", with the same `manual_seed(seed + index)` damage draw.
+
+Two instruments, nominally the same quantity, 2.5 A apart. **This is not a
+footnote: 10.77 A is the "learned nothing" line every arm has been judged
+against**, and whether an arm at 12.25 A is 1.5 A worse than doing nothing or
+1.0 A better than its own start state depends entirely on which number is the
+start. The suspect is that the two construct different start states -- the
+baseline probe builds its own helix placement, the run's comes out of
+`--initial helix` inside the rollout -- rather than that either arithmetic is
+wrong. Not resolved here, and nothing above leans on it. The check is cheap:
+one crop, both paths, print the start coordinates.

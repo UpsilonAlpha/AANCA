@@ -3,7 +3,7 @@ type: observation
 status: supported
 evidence: ours
 sources: [32449992, 32420154]
-checked: [32423296]
+checked: [32423296, 32449992, 32449993]
 ---
 
 # With the frame bug fixed and the readout corrected, the bearing is -0.096 against a +0.206 null
@@ -59,7 +59,7 @@ different finding from being inside the band. Per-crop values span -0.742 to
 responds to geometry; it responds uninformatively, and eight of twelve crops
 are negative.
 
-## The one crop that aims is the only one the gradient can follow to arrival
+## ~~The one crop that aims is the only one the gradient can follow to arrival~~
 
 Worth writing down because it is what `g12_trunc` was submitted to test, and
 because it would be easy to find afterwards and call a prediction:
@@ -72,6 +72,25 @@ because it would be easy to find afterwards and call a prediction:
 `+0.717` is **above half-aimed's 0.670**, and it belongs to the only crop whose
 damaged window sits close enough to native that the truncated segment covers
 the whole journey. 11 of 12 crops need more than the window can see.
+
+**Struck out: the table's third column was computed from the outcome.** The
+readout tested the truncation window against the *final* `rmsd_dmg` rather than
+the window's distance from native at the start, so "needs 2.52 A" was crop
+297's *result*, and "inside the 3.6 A gradient window" meant no more than
+"ended closer than 3.6 A". Window membership was therefore decided by which
+crop ended closest, which makes "the one crop that aims is the one inside the
+window" true by construction. A quantity labelled as the need and computed from
+the outcome -- the same shape as 32423296 above and as `birth free` before it,
+and the third of this kind in one session. `docs/RETRACTIONS.md` has it; the
+readout now computes the start-state window RMSD with the same `ca_rmsd_on` and
+prints `need`, `rmsd_dmg` and `need - rmsd_dmg` side by side.
+
+**And the test built to settle it came back negative anyway.** `--truncate 60`
+(job 32453594) moved the window from 3.6 A to 18 A, and `align` went from
+-0.189 on the matched `--truncate 12` arm to -0.015 -- still below the +0.206
+null and nowhere near the 0.5 threshold, with 6 of 12 crops positive against 4.
+Whatever the correct denominator turns out to be, widening the gradient window
+fivefold did not produce aiming.
 
 **n = 2 on either side of that boundary, so this is a hypothesis and not a
 finding.** It is exactly the shape of the error already indexed against this

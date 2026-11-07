@@ -1,7 +1,6 @@
 ---
 type: claim
 status: open
-evidence: ours
 sources: [32449992, model.py]
 checked: [32423296]
 ---

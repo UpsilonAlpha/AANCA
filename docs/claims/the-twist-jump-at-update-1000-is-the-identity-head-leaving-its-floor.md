@@ -1,8 +1,8 @@
 ---
 type: claim
-status: supported
-evidence: ours
+status: open
 sources: [32405172, 32420154, 32449660, 32449661]
+checked: [32405172]
 ---
 
 # Every geometry column degrades at update 1000, in the arm with no equivariance too, and that is when identity leaves its floor
@@ -60,6 +60,11 @@ rather than as a static ratio, and it is the same phenomenon as
 [[the-identity-term-perturbs-geometry-rather-than-helping-it]] seen from the
 time axis.
 
+**Status `open`, and the checker is right to insist.** The only evidence under
+this is our own calculation, which is evidence about the calculation and not
+about the rule, and the mechanism rests on one arm's NLL column. Marked `open`
+rather than argued around.
+
 **Why this is a claim and not an observation.** The coincidence is measured and
 it is in four arms, but only one of the four printed the NLL, so "identity
 leaving the floor" is a one-arm reading of a four-arm event. The direct test is
@@ -105,6 +110,9 @@ own conclusion -- `align` -0.096 against a +0.206 null -- is untouched by any
 of this, and marking the whole node contradicted would overstate what the
 control shows. The twist attribution inside it has been struck out in place
 instead, which is the narrower and truer edit.
+
+## Supported by
+- [[four-arms-break-at-update-1000-and-only-the-amplitude-follows-the-frame]]
 
 ## Supports
 - [[identity-supplies-the-trunk-that-geometry-reads]]
