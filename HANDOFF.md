@@ -9015,3 +9015,25 @@ mixed-pool and should not be quoted. The live fraction (90.1 % against 26.5 %)
 is a ratio and is the robust half. `baseline_probe --damage 0` on Bunya closes
 it for one CPU job, and the node that depends on it says so rather than
 assuming.
+
+#### And only the regeneration figure was the laptop's
+
+Checked rather than assumed, because a pool fault in one number is a reason to
+re-measure the others, not to distrust them wholesale. Job **32462194**,
+`--damage 0` on Bunya:
+
+    baseline       rmsd    fape    live     bond   twist
+    helix         17.45   0.836  26.5%   0.0021    64.4
+    extended      36.73   0.923  13.5%   0.0033    84.1
+    random        14.40   0.916  15.8%   0.0020    90.6
+
+**17.45 A, 0.836 and 26.5 % reproduce to the digit**, so the whole-structure
+baselines were Bunya figures all along and only the `--damage 12` run had been
+done locally. The comparison is pool-matched after all and the caveat written an
+hour ago is withdrawn: **12.23 A against 17.45 A**, a 5.2 A gap where the void
+figure implied 6.7.
+
+The probe now prints its pool, which is how this stops recurring:
+
+    pool: 23760 available, first 1AZI, last 2OQE; held-out ids
+    ['3B82','4CQE','1JNP','2FAZ','8QTF','6HJ6','2QB5','12XX','3N71','1T7V','3VYC','10XL']

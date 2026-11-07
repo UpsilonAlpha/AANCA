@@ -2,7 +2,7 @@
 type: observation
 status: supported
 evidence: experimental
-sources: [32462158]
+sources: [32462158, 32462194]
 ---
 
 # The baseline is 12.23 Angstrom on the pool the runs train on, which is what every arm scores
@@ -70,6 +70,21 @@ either script produces: both print "412 structures on disk", which is true on
 both machines and identical, while the 412 differ. A diagnostic that reports its
 sample size and not its sample cannot show this, and `baseline_probe` now prints
 the first and last structure id of the pool it used.
+
+## Only the regeneration figure was the laptop's
+
+Checked rather than assumed, because a pool fault found in one number is a
+reason to re-measure the others and not to distrust them wholesale. Job
+**32462194** re-ran `--damage 0` on Bunya: **17.45 A rmsd, 0.836 fape, 26.5 %
+live** — the published whole-structure figures, to the digit. So
+[[the-baselines-are-17-45-and-36-73-angstrom-from-native]] stands and the
+regeneration-against-reconstruction comparison is pool-matched after all: 12.23
+against 17.45, a 5.2 A gap where the void figure implied 6.7.
+
+The probe now prints its pool's first and last id and every held-out id
+(`first 1AZI, last 2OQE`, held out `3B82 4CQE 1JNP 2FAZ 8QTF 6HJ6 2QB5 12XX
+3N71 1T7V 3VYC 10XL`), so this class of fault is visible in the output from now
+on instead of inferable only by running the same thing twice.
 
 ## Supersedes
 - [[the-regeneration-baseline-is-10-77-angstrom-and-90-percent-live]]

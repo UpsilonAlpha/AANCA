@@ -53,12 +53,19 @@ the same thing.
 against 0.283) and on the error outside the window being exactly zero by
 construction, neither of which is a pool statement.
 
-What does need saying: the 17.45 A whole-structure figure has **not** been
-re-measured on Bunya's pool, so a regeneration-against-reconstruction
-comparison in Angstrom is now mixed-pool and should not be quoted. The live
-fraction — 90.1 % against 26.5 % — is a ratio of scored pairs inside the clamp
-and is the robust half of the comparison. Re-running `baseline_probe --damage 0`
-on Bunya closes this and costs one CPU job.
+**Re-measured on Bunya rather than assumed** (job 32462194,
+`--damage 0`, pool of 23,760 available / 412 used, held-out ids now printed):
+
+    baseline       rmsd    fape    live     bond   twist
+    helix         17.45   0.836  26.5%   0.0021    64.4
+    extended      36.73   0.923  13.5%   0.0033    84.1
+    random        14.40   0.916  15.8%   0.0020    90.6
+
+**17.45 A and 26.5 % reproduce exactly**, so the whole-structure side was a
+Bunya-pool figure all along and only the regeneration side was the laptop's.
+The comparison is **not** mixed-pool and stands as written; on matched pools it
+is 12.23 A against 17.45 A, a 5.2 A gap rather than the 6.7 A the void figure
+implied. The live fraction, 90.1 % against 26.5 %, is unchanged.
 
 ## Supported by
 - [[the-rule-keeps-whatever-conformation-it-is-given]]
