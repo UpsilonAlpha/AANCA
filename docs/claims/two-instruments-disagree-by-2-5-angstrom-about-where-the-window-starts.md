@@ -41,6 +41,21 @@ If the coordinates differ the question is answered and
 replacement comparator; if they match, one of the two superpositions is wrong
 and that is worse.
 
+## Answered in part: 1.06 A of it is the fit mask
+
+Run the baseline probe with both fit masks on one start state and the helix
+figure moves 10.77 -> **11.83 A**, because `rmsd_dmg` superposes on every
+residue including the damaged window while the readout's `need` superposed on
+the intact context alone
+([[rmsd-dmg-superposes-on-the-damaged-window-it-is-measuring]]).
+
+So the two instruments were measuring the same start state with different
+superpositions, and the readout now reports both. **1.45 A of the gap remains**
+and has to be a genuinely different start state: the probe constructs its own
+helix placement for the window, the readout reads the first frame of a real
+rollout. That part is still open, and it is the part that decides whether an arm
+at 12.25 A is above or below its own line -- 11.83 says above, 13.28 says below.
+
 Nothing is being restated or withdrawn on the strength of this yet. It is here
 so that the next summary of "every arm is worse than doing nothing" has to go
 past it.

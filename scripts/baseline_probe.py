@@ -133,6 +133,9 @@ def main() -> int:
     }
     runs_seen: list[int] = []
     windows: dict[str, list[float]] = {mode: [] for mode in BASELINE_MODES}
+    windows_intact: dict[str, list[float]] = {
+        mode: [] for mode in BASELINE_MODES
+    }
     rng = random.Random(args.seed)
     with torch.no_grad():
         for index in indices:
@@ -166,10 +169,28 @@ def main() -> int:
                     native, topo, links, anchors, mode, generator
                 )
                 if damaged is not None:
+                    # **Two fit masks, one start state.** `alive` is every
+                    # residue, so the superposition includes the 12 damaged
+                    # ones -- which is what `growth_objective` passes too
+                    # (`geometric = final.alive`, and these runs are 100 %
+                    # alive), so this column is the one comparable with a
+                    # training log's `rmsd_dmg`. `anchors` is the intact
+                    # context alone, which is what `backbone_rmsd_on`'s own
+                    # docstring says the fit should be and what
+                    # `ceiling_readout`'s `need` uses. Reporting both because
+                    # the two disagree by ~2.5 A and the project's "learned
+                    # nothing" line depends on which is meant.
                     windows[mode].append(
                         float(
                             backbone_rmsd_on(
                                 start, native, topo, alive, damaged
+                            )
+                        )
+                    )
+                    windows_intact[mode].append(
+                        float(
+                            backbone_rmsd_on(
+                                start, native, topo, anchors, damaged
                             )
                         )
                     )
@@ -201,16 +222,37 @@ def main() -> int:
             "\n"
             f"REGENERATION: a {args.damage}-residue window destroyed, the rest "
             "native.\n"
-            "rmsd_dmg is the window alone, superposed on the intact context, "
-            "which is\n"
-            "the only figure comparable with a --damage training run's.\n"
+            "rmsd_dmg is the window alone. TWO fit masks are reported, "
+            "because they\n"
+            "disagree and this banner used to name only the second:\n"
+            "  fit_all    superposed on EVERY residue, the damaged window "
+            "included.\n"
+            "             What growth_objective passes (geometric = alive, "
+            "and a\n"
+            "             damage run is 100 % alive), so this is the column\n"
+            "             comparable with a training log's rmsd_dmg.\n"
+            "  fit_intact superposed on the intact context ALONE. What\n"
+            "             backbone_rmsd_on's docstring says the fit should "
+            "be, and\n"
+            "             what ceiling_readout's `need` uses.\n"
+            "Putting the damaged residues in the fit lets the superposition "
+            "absorb\n"
+            "part of the error being asked about, which is the failure that "
+            "docstring\n"
+            "warns against -- so fit_intact is the one that means what it "
+            "says, and\n"
+            "fit_all is the one every arm has been scored by.\n"
         )
-        print(f"{'baseline':<10} {'rmsd_dmg':>9} {'crops':>7}")
+        print(f"{'baseline':<10} {'fit_all':>9} {'fit_intact':>11} "
+              f"{'diff':>7} {'crops':>7}")
         for mode in BASELINE_MODES:
             values = windows[mode]
+            intact = windows_intact[mode]
             if values:
+                a = sum(values) / len(values)
+                b = sum(intact) / len(intact) if intact else float("nan")
                 print(
-                    f"{mode:<10} {sum(values) / len(values):>9.2f} "
+                    f"{mode:<10} {a:>9.2f} {b:>11.2f} {b - a:>7.2f} "
                     f"{len(values):>7d}"
                 )
         print(

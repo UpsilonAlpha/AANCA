@@ -8843,3 +8843,60 @@ Node: `in-regeneration-the-surviving-context-is-the-grid`, `open`, because the
 Growing-NCA half is literature and the protein half is an argument. What makes
 it a finding: a morphogen channel moving a whole-structure arm off its baseline,
 or a regeneration arm improving as the intact context is made more informative.
+
+### 13. The metric superposes on the window it is measuring, and that was this morning's "gain"
+
+Settling the 10.77-vs-13.28 start distance found the cause of a number I had
+published four hours earlier.
+
+`backbone_rmsd_on`'s docstring states exactly why it exists: a damaged window
+superposed onto its own native copy "scores well for any plausible shape placed
+anywhere, because the superposition absorbs exactly the error being asked
+about", so "the rotation is fitted on the intact structure". **Both callers pass
+the mask that does the thing it warns against.** `growth_objective` passes
+`geometric = final.alive`, and a damage run is `alive 100.0%`, so the fit
+includes the twelve damaged residues. `baseline_probe` passes `alive` too, while
+its banner read "superposed on the intact context".
+
+Running the probe with both masks on one start state, nothing varying but the
+mask:
+
+    baseline     fit_all  fit_intact    diff   crops
+    helix          10.77       11.83    1.06      12
+    extended       21.30       23.74    2.44      12
+    random         14.12       15.84    1.73      12
+
+**So every number this project has reported is about 1 A flattering**, the
+10.77 A "learned nothing" line included. Nothing has to be withdrawn, because
+arms and baseline are flattered equally and every arm-to-baseline comparison
+survives -- but the metric does not mean what its own docstring says.
+
+#### And it is the whole of the 1.02 A four rules appeared to close
+
+Section 12's `gained` column was `need - rmsd_dmg` with the new `need` fitted on
+the intact context and `rmsd_dmg` fitted on everything: **two different
+superpositions subtracted.** 1.06 A on the helix baseline is the whole of the
+1.01-1.02 A that three trained arms and an untrained one all "gained".
+
+Computed on one mask the gain is **about zero**, which is the same conclusion
+reached honestly instead of by accident: the rule closes none of the gap. The
+reasoning that got there -- four rules cannot produce one number, so it is not
+the rules -- was sound, and it was pointing at my own arithmetic rather than at
+the rigid-body geometry I guessed at. That guess is now wrong and withdrawn.
+
+The readout returns the start distance on **both** masks, uses the matched one
+for `gained`, and prints the other beside it, so the convention cannot be
+invisible in the column again.
+
+#### What is settled and what is not
+
+The mask accounts for 1.06 A of the 2.5. The probe's own intact-fit figure is
+**11.83 A**, still 1.45 A short of the readout's 13.28, so the remainder is a
+genuinely different start state -- the probe builds its own helix placement, the
+readout reads the first frame of a real rollout. **Still open, and it is the
+half that decides the sign**: against 11.83 an arm at 12.25 is above its line,
+against 13.28 it is below.
+
+Three faults of this shape in two days, all three caught by computing the same
+quantity two ways. Reading either the name or the code alone cannot catch any of
+them, which is the only part of this that generalises.

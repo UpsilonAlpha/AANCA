@@ -5,7 +5,7 @@ evidence: ours
 sources: [32453593, 32453594, 32453595, 32453659]
 ---
 
-# An untrained rule closes the same 1.01 Angstrom and scores the same 12.26, so neither number is the rule's
+# An untrained rule scores the same 12.26, and the 1.01 Angstrom it also "closes" was my own fit mask
 
 The readout now measures the damaged window's distance from native **at the
 start state** (`need`) with the same `ca_rmsd_on` as `rmsd_dmg`, so
@@ -74,11 +74,23 @@ question [[question-can-the-architecture-place-residues-under-any-supervision]]
 cannot be answered with this quantity, because this quantity cannot tell a
 trained rule from an untrained one.
 
-What the 1 A itself is: the window's rigid-body component under
-re-superposition is the remaining suspect -- `rmsd_dmg` fits on the surviving
-context and reads on the window, and moving every damaged residue by *something*
-can reduce a fitted residual without any residue going anywhere useful. Worth
-knowing, but no longer load-bearing.
+## The 1 A is explained, and it was a fault of mine
+
+Settled a few hours later and it is not geometry: `gained` was
+`need - rmsd_dmg`, and the new `need` fitted on the intact context while
+`rmsd_dmg` fits on **every** residue, the damaged window included
+([[rmsd-dmg-superposes-on-the-damaged-window-it-is-measuring]]). The column
+subtracted two different superpositions. Running the baseline probe with both
+masks on one start state puts the mask at **1.06 A** on the helix baseline
+(10.77 against 11.83), which is the whole of the 1.01-1.02 A that four rules
+appeared to close.
+
+**Computed on one mask, the gain is about zero.** That is the same conclusion
+reached honestly rather than by accident: the rule closes none of the gap. The
+reasoning from the agreement -- four rules cannot produce one number -- was
+sound, and it was pointing at my own arithmetic rather than at the geometry I
+guessed. The readout now returns the start distance on both masks, uses the
+matched one for `gained`, and prints the other beside it.
 
 ## Supports
 - [[question-can-the-architecture-place-residues-under-any-supervision]]

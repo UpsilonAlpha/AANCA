@@ -148,14 +148,14 @@ def _bearing(result, native, topo, damage, stored, seed, index, local=False):
     moves = getattr(result, "moves", [])
     nan = float("nan")
     if not moves:
-        return nan, nan, nan, [], nan
+        return nan, nan, nan, [], nan, nan
     links = growth_links(topo)
     damaged = damage_window(
         topo.n_residues, links, damage,
         torch.Generator().manual_seed(seed + index), native.device,
     )
     if not bool(damaged.any()):
-        return nan, nan, nan, [], nan
+        return nan, nan, nan, [], nan, nan
     ca_native = backbone_atoms(native, topo)[:, 1]
 
     cosines, lengths, series = [], [], []
@@ -208,18 +208,38 @@ def _bearing(result, native, topo, damage, stored, seed, index, local=False):
         lengths.append(emitted.norm(dim=-1).mean())
 
     if not cosines:
-        return nan, nan, nan, [], nan
+        return nan, nan, nan, [], nan, nan
     net = (previous - first).norm(dim=-1)[damaged].mean()
     walked = path[damaged].mean()
-    # **The need: the window's RMSD before any step is taken.** The same
-    # superposition as `rmsd_dmg` -- fit on the surviving context, read on the
-    # damaged window -- but on `first`, the start state, so it is derived
-    # independently of how the rollout turns out.
+    # **The need: the window's RMSD before any step is taken, on BOTH fit
+    # masks, because the first version of this returned only the second and
+    # `gained` then subtracted two different superpositions.**
+    #
+    #   need      fit on EVERY residue, the damaged window included. This is
+    #             what `growth_objective` passes to `backbone_rmsd_on`
+    #             (`geometric = final.alive`, and a damage run is 100 % alive),
+    #             so it is the ONLY mask that makes `need - rmsd_dmg` a
+    #             like-for-like difference.
+    #   need_fit  fit on the intact context alone -- what `backbone_rmsd_on`'s
+    #             docstring says the fit should be, since putting the damaged
+    #             residues in the fit lets the superposition absorb part of the
+    #             error being asked about.
+    #
+    # Measured on the helix baseline, the mask is worth 1.06 A (10.77 against
+    # 11.83), which is the whole of the 1.02 A that three trained arms and an
+    # untrained one all appeared to "gain". Both are printed so the convention
+    # can never again be invisible in the column.
     from aanca.fape import ca_rmsd_on
     intact = ~damaged
-    need = nan
-    if int(intact.sum()) >= 3:
+    everything = torch.ones_like(damaged)
+    need = need_fit = nan
+    if int(everything.sum()) >= 3:
         need = float(ca_rmsd_on(
+            first[everything], ca_native[everything],
+            first[damaged], ca_native[damaged],
+        ))
+    if int(intact.sum()) >= 3:
+        need_fit = float(ca_rmsd_on(
             first[intact], ca_native[intact],
             first[damaged], ca_native[damaged],
         ))
@@ -229,6 +249,7 @@ def _bearing(result, native, topo, damage, stored, seed, index, local=False):
         float(net / walked.clamp_min(1e-9)),
         series,
         need,
+        need_fit,
     )
 
 
@@ -373,7 +394,7 @@ def main() -> int:
             )
         if terms.rmsd_damaged is None:
             continue
-        align, step, ratio, series, need = _bearing(
+        align, step, ratio, series, need, need_fit = _bearing(
             result, native, topo, damage, stored, seed, index,
             local=bool(stored.get("equivariant_move")),
         )
@@ -387,6 +408,7 @@ def main() -> int:
             ratio,
             series,
             need,
+            need_fit,
         ))
 
     if not rows:
@@ -424,17 +446,26 @@ def main() -> int:
     # a crop that started close is not the same result as the same number on a
     # crop that started far, and the two were conflated once already.
     print(f"{'crop':>6} {'move':>8} {'clash':>9} {'need':>7} {'rmsd_dmg':>9} "
-          f"{'gained':>7} {'align':>7} {'step':>7} {'net/path':>9}")
-    for index, move, clash, dmg, align, step, ratio, _s, need in rows:
+          f"{'gained':>7} {'needfit':>8} {'align':>7} {'step':>7} "
+          f"{'net/path':>9}")
+    for index, move, clash, dmg, align, step, ratio, _s, need, nfit in rows:
         print(f"{index:>6} {move:>8.4f} {clash:>9.5f} {need:>7.2f} {dmg:>9.2f} "
-              f"{need - dmg:>7.2f} {align:>7.3f} {step:>7.4f} {ratio:>9.3f}")
+              f"{need - dmg:>7.2f} {nfit:>8.2f} {align:>7.3f} {step:>7.4f} "
+              f"{ratio:>9.3f}")
     n = len(rows)
     print(f"\n{'mean':>6} {sum(r[1] for r in rows)/n:>8.4f} "
           f"{sum(r[2] for r in rows)/n:>9.5f} {sum(r[8] for r in rows)/n:>7.2f} "
           f"{sum(r[3] for r in rows)/n:>9.2f} "
           f"{sum(r[8] - r[3] for r in rows)/n:>7.2f} "
+          f"{sum(r[9] for r in rows)/n:>8.2f} "
           f"{sum(r[4] for r in rows)/n:>7.3f} {sum(r[5] for r in rows)/n:>7.4f} "
           f"{sum(r[6] for r in rows)/n:>9.3f}")
+    print("  *** `need` and `rmsd_dmg` share the fit mask (every residue, the")
+    print("  *** damaged window included) so `gained` is like for like.")
+    print("  *** `needfit` fits on the intact context ALONE, which is what the")
+    print("  *** metric's docstring asks for; the gap between it and `need` is")
+    print("  *** how much error the superposition absorbs, ~1 A, and it is NOT")
+    print("  *** anything the rule did.")
     cap = 0.3
     used = 100 * sum(r[5] for r in rows) / n / cap
     print(f"\n  step against the {cap:g} A cap: {used:.1f}% used")
