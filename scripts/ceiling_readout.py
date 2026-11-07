@@ -108,7 +108,17 @@ def held_out(stored: dict, state: dict, extra: int = 0):
 
 
 def _bearing(result, native, topo, damage, stored, seed, index, local=False):
-    """``(align, step, net_over_path, series)`` over the damaged window.
+    """``(align, step, net_over_path, series, need)`` over the damaged window.
+
+    **``need`` is the window's RMSD at the START state**, before a single step
+    is taken, computed by the same ``ca_rmsd_on`` as ``rmsd_dmg``. It is the
+    distance the gradient window has to cover, and it is here because the
+    readout previously tested the truncation window against the FINAL
+    ``rmsd_dmg`` -- which is the outcome, not the need. That made "crops
+    needing more than the window" a relabelling of the outcome distribution,
+    and made the one crop said to sit inside the window the crop that merely
+    *ended* closest, which is true by construction. See
+    ``docs/RETRACTIONS.md``.
 
     ``align`` is the cosine between the emitted translation and the direction
     the residue must travel to reach its native CA -- the quantity a loss value
@@ -138,14 +148,14 @@ def _bearing(result, native, topo, damage, stored, seed, index, local=False):
     moves = getattr(result, "moves", [])
     nan = float("nan")
     if not moves:
-        return nan, nan, nan, []
+        return nan, nan, nan, [], nan
     links = growth_links(topo)
     damaged = damage_window(
         topo.n_residues, links, damage,
         torch.Generator().manual_seed(seed + index), native.device,
     )
     if not bool(damaged.any()):
-        return nan, nan, nan, []
+        return nan, nan, nan, [], nan
     ca_native = backbone_atoms(native, topo)[:, 1]
 
     cosines, lengths, series = [], [], []
@@ -198,14 +208,27 @@ def _bearing(result, native, topo, damage, stored, seed, index, local=False):
         lengths.append(emitted.norm(dim=-1).mean())
 
     if not cosines:
-        return nan, nan, nan, []
+        return nan, nan, nan, [], nan
     net = (previous - first).norm(dim=-1)[damaged].mean()
     walked = path[damaged].mean()
+    # **The need: the window's RMSD before any step is taken.** The same
+    # superposition as `rmsd_dmg` -- fit on the surviving context, read on the
+    # damaged window -- but on `first`, the start state, so it is derived
+    # independently of how the rollout turns out.
+    from aanca.fape import ca_rmsd_on
+    intact = ~damaged
+    need = nan
+    if int(intact.sum()) >= 3:
+        need = float(ca_rmsd_on(
+            first[intact], ca_native[intact],
+            first[damaged], ca_native[damaged],
+        ))
     return (
         float(torch.stack(cosines).mean()),
         float(torch.stack(lengths).mean()),
         float(net / walked.clamp_min(1e-9)),
         series,
+        need,
     )
 
 
@@ -350,7 +373,7 @@ def main() -> int:
             )
         if terms.rmsd_damaged is None:
             continue
-        align, step, ratio, series = _bearing(
+        align, step, ratio, series, need = _bearing(
             result, native, topo, damage, stored, seed, index,
             local=bool(stored.get("equivariant_move")),
         )
@@ -363,6 +386,7 @@ def main() -> int:
             step,
             ratio,
             series,
+            need,
         ))
 
     if not rows:
@@ -394,14 +418,21 @@ def main() -> int:
         print(f"{label}, {len(rows)} held-out crops of {pool_size}, "
               f"{damage}-residue window, {config.steps} steps")
     print(f"{frame_note}\n")
-    print(f"{'crop':>6} {'move':>8} {'clash':>9} {'rmsd_dmg':>9} "
-          f"{'align':>7} {'step':>7} {'net/path':>9}")
-    for index, move, clash, dmg, align, step, ratio, _s in rows:
-        print(f"{index:>6} {move:>8.4f} {clash:>9.5f} {dmg:>9.2f} "
-              f"{align:>7.3f} {step:>7.4f} {ratio:>9.3f}")
+    # `need` is the window's distance from native at the START state and
+    # `rmsd_dmg` is where it ends, so `need - rmsd_dmg` is what the rollout
+    # actually bought. Printing them side by side because a good `rmsd_dmg` on
+    # a crop that started close is not the same result as the same number on a
+    # crop that started far, and the two were conflated once already.
+    print(f"{'crop':>6} {'move':>8} {'clash':>9} {'need':>7} {'rmsd_dmg':>9} "
+          f"{'gained':>7} {'align':>7} {'step':>7} {'net/path':>9}")
+    for index, move, clash, dmg, align, step, ratio, _s, need in rows:
+        print(f"{index:>6} {move:>8.4f} {clash:>9.5f} {need:>7.2f} {dmg:>9.2f} "
+              f"{need - dmg:>7.2f} {align:>7.3f} {step:>7.4f} {ratio:>9.3f}")
     n = len(rows)
     print(f"\n{'mean':>6} {sum(r[1] for r in rows)/n:>8.4f} "
-          f"{sum(r[2] for r in rows)/n:>9.5f} {sum(r[3] for r in rows)/n:>9.2f} "
+          f"{sum(r[2] for r in rows)/n:>9.5f} {sum(r[8] for r in rows)/n:>7.2f} "
+          f"{sum(r[3] for r in rows)/n:>9.2f} "
+          f"{sum(r[8] - r[3] for r in rows)/n:>7.2f} "
           f"{sum(r[4] for r in rows)/n:>7.3f} {sum(r[5] for r in rows)/n:>7.4f} "
           f"{sum(r[6] for r in rows)/n:>9.3f}")
     cap = 0.3
@@ -490,10 +521,21 @@ def main() -> int:
         print("  *** SATURATED: the rule asks for the whole cap every step.")
 
     window = config.truncate * cap
-    beyond = sum(1 for r in rows if r[3] > window)
+    # **`r[8]` is the START distance, not `r[3]` the final `rmsd_dmg`.** Using
+    # the outcome here made this test a relabelling of the outcome
+    # distribution, and made the crop said to sit inside the window the crop
+    # that merely *ended* closest -- true by construction. See
+    # docs/RETRACTIONS.md.
+    needs = sorted(r[8] for r in rows if r[8] == r[8])
+    beyond = sum(1 for v in needs if v > window)
     print(f"\n  gradient window = truncate {config.truncate} x {cap:g} A "
           f"= {window:.1f} A")
-    print(f"  crops needing more than that: {beyond}/{n}")
+    if needs:
+        print(f"  the damaged window STARTS {needs[len(needs) // 2]:.2f} A from "
+              f"native (median of {len(needs)}), range {needs[0]:.2f} to "
+              f"{needs[-1]:.2f}")
+    print(f"  crops whose START distance exceeds the window: "
+          f"{beyond}/{len(needs)}")
     print("  *** the window is what the gradient can see. A crop whose damaged")
     print("  *** region sits further from native than this cannot be taught to")
     print("  *** arrive, however good the bearing is, because arriving happens")

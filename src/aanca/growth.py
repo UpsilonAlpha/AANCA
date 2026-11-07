@@ -904,14 +904,20 @@ def rigid_relax(
         shift = (frame @ shift.unsqueeze(-1)).squeeze(-1)
         if not lab_rotation:
             rot = frame @ rot @ frame.transpose(-1, -2)
-        # **``lab_rotation`` isolates the two halves of the fix**, which
-        # `g10_equiv_ceil` showed is necessary. Making both halves local at
-        # once produced a phase transition at ~1000 updates: twist jumped from
-        # 10 to 52 degrees and stayed, `move` tripled, and `rmsd_dmg` dipped
-        # once to 11.82 before settling worse than it began (12.42-12.67).
-        # Something qualitative happens and the conjugated rotation is the
-        # suspect, because a conjugation is the half that changes what an
-        # emitted rotation *does* rather than merely where it points.
+        # **``lab_rotation`` isolates the two halves of the fix**, and running
+        # it settled a question differently from how it was posed. The phase
+        # transition at ~1000 updates that motivated this flag -- twist 10 to
+        # 52 degrees on `g10_equiv_ceil` -- happens in **`g8_ceiling` too**,
+        # which has neither half local, so it is not the fix's and the
+        # conjugated rotation was never the suspect it was written up as. The
+        # four-arm table and the identity-floor mechanism are in
+        # `docs/claims/the-twist-jump-at-update-1000-is-the-identity-head-leaving-its-floor.md`.
+        #
+        # What the flag did establish: the transition's **amplitude** trebles
+        # when the rotation is local -- 16.6 deg (g8) and 17.6 (g11) against
+        # 50.2 (g10) and 53.9 (g12), two arms either side of one variable. So
+        # the conjugation does not cause the break but it makes the rule about
+        # three times more sensitive to it.
         #
         # With this set, the translation is read in the residue's frame and the
         # rotation is left exactly as g1-g9 had it, so an arm differs from

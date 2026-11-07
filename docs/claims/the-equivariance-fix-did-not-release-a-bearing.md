@@ -91,6 +91,22 @@ the rule's behaviour substantially and
 [[the-move-heads-magnitude-gradient-is-attenuated-three-thousandfold]] is what
 that change cost.
 
+## The twist explosion attributed here to the fix was never the fix's
+
+~~The arm's twist jumped from 10 to 52 degrees at ~1000 updates and the
+conjugated rotation is the suspect, because a conjugation is the half that
+changes what an emitted rotation *does* rather than merely where it points.~~
+
+**Struck out.** `g8_ceiling`, which has neither half of the fix, jumps at the
+same update, and so do both split arms. The transition is not the fix's;
+[[the-twist-jump-at-update-1000-is-the-identity-head-leaving-its-floor]] has the
+four-arm table and the mechanism. What survives is that the *amplitude* trebles
+when the rotation is local (50-54 deg against 16-18), which is a weaker claim
+than the one struck here and the one the split arm was actually built to make.
+
+This is the second thing this node published about a trained checkpoint that a
+control later took back, and the control was on disk both times.
+
 ## The agreement check passed at k = 97, so the bearing instrument is now two-sided on both questions
 
 Job **32449993** raised k with `--extra-crops 88`:

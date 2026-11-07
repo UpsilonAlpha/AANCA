@@ -378,11 +378,14 @@ def main() -> int:
         "--lab-rotation", action="store_true",
         help=(
             "with --equivariant-move, make only the TRANSLATION local and "
-            "leave the rotation exactly as g1-g9 had it. Isolates the two "
-            "halves of the fix, which g10_equiv_ceil showed is needed: doing "
-            "both at once produced a phase transition at ~1000 updates, twist "
-            "jumping 10 to 52 degrees and rmsd_dmg settling worse than it "
-            "started. The conjugated rotation is the suspect"
+            "leave the rotation exactly as g1-g9 had it. Built to find which "
+            "half caused the ~1000-update phase transition on g10_equiv_ceil "
+            "(twist 10 to 52 deg), and the answer is NEITHER: g8_ceiling has "
+            "no local frame at all and breaks at the same update. What this "
+            "flag did establish is that the transition's AMPLITUDE trebles "
+            "with a local rotation -- 16.6/17.6 deg without it, 50.2/53.9 "
+            "with -- so the conjugation makes the rule three times more "
+            "sensitive to a break it does not cause"
         ),
     )
     parser.add_argument(
