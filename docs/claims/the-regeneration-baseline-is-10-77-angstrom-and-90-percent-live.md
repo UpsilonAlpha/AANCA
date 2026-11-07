@@ -1,11 +1,20 @@
 ---
 type: observation
-status: supported
+status: void
 evidence: experimental
 sources: [baseline_probe.py]
 ---
 
 # A damaged window starts 10.77 Angstrom out with 90 % of FAPE's pairs live, against 17.45 and 26 % for whole-structure growth
+
+> **VOID as the baseline for any Bunya run.** 10.77 A was measured on a laptop
+> checkout holding 1,903 structures; Bunya, where every arm trained, holds
+> 24,709 and the same script gives **12.23 A**. Both take `available[:412]`, so
+> the crop indices matched while the proteins behind them did not. The live
+> fraction and the whole-structure comparison below are unaffected by the pool
+> in kind, but the 10.77 figure must not be used as an arm's comparator.
+> Superseded by
+> [[the-regeneration-baseline-is-12-23-angstrom-and-every-arm-sits-on-it]].
 
 `scripts/baseline_probe.py --damage 12`, no model at all, on the same twelve
 held-out crops a run sees. Classed `experimental`: the quantity is the distance
@@ -37,6 +46,13 @@ broken peptide bond by design, and `twist` is 9.6 deg rather than 64.4 because
 most bonded pairs are two intact residues. Neither is comparable with a
 reconstruction run's, which is why the banner on a damaged run says so.
 
-## Supports
-- [[whole-structure-growth-is-a-harder-and-different-task-than-regeneration]]
-- [[a-local-rule-can-regenerate-a-damaged-region-from-its-surviving-context]]
+## Superseded by
+- [[the-regeneration-baseline-is-12-23-angstrom-and-every-arm-sits-on-it]]
+
+Both `## Supports` edges are removed rather than kept, because a void
+observation must not carry anything: they ran to
+[[whole-structure-growth-is-a-harder-and-different-task-than-regeneration]] and
+[[a-local-rule-can-regenerate-a-damaged-region-from-its-surviving-context]], and
+[[the-regeneration-baseline-is-12-23-angstrom-and-every-arm-sits-on-it]] now
+carries both. Leaving them in place was what check 2b flagged, and it is the
+failure the map exists to catch.

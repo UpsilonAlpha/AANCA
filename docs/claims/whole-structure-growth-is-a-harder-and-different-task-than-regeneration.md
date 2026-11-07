@@ -44,9 +44,26 @@ the same thing.
 ## Supports
 - [[a-local-per-residue-rule-can-build-a-protein-backbone]]
 
+## A note on pools, since one of this node's premises went void
+
+[[the-regeneration-baseline-is-10-77-angstrom-and-90-percent-live]] is void:
+10.77 A was a laptop-pool figure and the training pool gives **12.23 A**
+([[the-regeneration-baseline-is-12-23-angstrom-and-every-arm-sits-on-it]]).
+**The argument above does not use it.** It rests on the FAPE ratio (0.836
+against 0.283) and on the error outside the window being exactly zero by
+construction, neither of which is a pool statement.
+
+What does need saying: the 17.45 A whole-structure figure has **not** been
+re-measured on Bunya's pool, so a regeneration-against-reconstruction
+comparison in Angstrom is now mixed-pool and should not be quoted. The live
+fraction — 90.1 % against 26.5 % — is a ratio of scored pairs inside the clamp
+and is the robust half of the comparison. Re-running `baseline_probe --damage 0`
+on Bunya closes this and costs one CPU job.
+
 ## Supported by
 - [[the-rule-keeps-whatever-conformation-it-is-given]]
 - [[the-baselines-are-17-45-and-36-73-angstrom-from-native]]
+- [[the-regeneration-baseline-is-12-23-angstrom-and-every-arm-sits-on-it]]
 
 ## Refutes
 - [[the-four-arms-measured-the-architectures-ceiling]]

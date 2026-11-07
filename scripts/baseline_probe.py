@@ -125,8 +125,20 @@ def main() -> int:
     order = list(range(len(pool)))
     random.Random(args.seed).shuffle(order)
     indices = order[: args.eval_structures][: args.structures]
+    # **Print WHICH structures, not just how many.** This line used to report
+    # only the count, which is 412 on every machine while the 412 differ: a
+    # laptop checkout with 1,903 files in data/pdb and Bunya with 24,709 both
+    # take `available[:412]` and get different proteins. That invisible
+    # difference put the helix baseline at 10.77 A locally and 12.23 A on
+    # Bunya, and the 10.77 was quoted for months as the line every arm was
+    # judged against. A diagnostic that reports its sample size and not its
+    # sample cannot show this. See
+    # docs/claims/the-regeneration-baseline-is-12-23-angstrom-and-every-arm-sits-on-it.md
     print(f"{len(pool)} structures on disk, {len(indices)} held out at "
           f"crop {args.crop_size}")
+    print(f"pool: {len(available)} available, first {pool[0].pdb_id}, "
+          f"last {pool[-1].pdb_id}; held-out ids "
+          f"{[pool[i].pdb_id for i in indices]}")
 
     rows: dict[str, list[tuple[float, float, float, float, float]]] = {
         mode: [] for mode in BASELINE_MODES

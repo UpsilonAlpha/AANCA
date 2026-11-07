@@ -8941,3 +8941,77 @@ written into the node rather than exempted: check 1's rationale is about claims
 concerning the world, and the subject here is our own trainer, so a measurement
 of the trainer is direct evidence. That is an argument for reading the flag, not
 for deleting it.
+
+### 15. The baseline is 12.23, not 10.77, and every arm has been sitting on it
+
+Chasing the last 1.45 A of the start-state gap settled it completely and the
+answer is bigger than the gap.
+
+Everything inside the code checked out and matched: both paths call the **same**
+`baseline_coords` with `anchors = ~damaged`, both seed `damage_window` with
+`manual_seed(seed + index)` in the same order, both read CA through
+`frame_idx[:, 1]`, the recorded `moves` entry holds the **pre**-move state so
+`first` really is the start, and the twelve crop indices are identical
+(`random.Random(0).shuffle(range(412))[:12]` = 180, 167, 393, 264, 330, 193,
+348, 297, 6, 319, 225, 129 on both). So the difference was not in the code.
+
+**It was the structure pool.** `data/pdb` holds **1,903** files on the laptop
+and **24,709** on Bunya. Both scripts take `available[:412]`, so a different set
+of files on disk means a different 412 structures -- the crop *indices* match
+while the proteins behind them do not. Running the probe on Bunya, the machine
+every arm trained on:
+
+    baseline     fit_all  fit_intact    diff   crops
+    helix          12.23       13.26    1.02      12
+    extended       23.55       25.71    2.16      12
+    random         12.45       13.51    1.06      12
+
+The readout's `need` is **13.28** and the probe's intact fit is **13.26**: the
+two instruments agree to 0.02 A and never disagreed at all. The 2.5 A was 1.06 A
+of fit mask and 1.46 A of pool, both of them mine.
+
+#### What this does to nine arms
+
+**The helix baseline on the training pool is 12.23 A. Every arm this project has
+run scores 12.18 to 12.85.** An untrained rule with a perturbed head reads
+12.26.
+
+So the "learned nothing" line that nine arms were judged against was computed on
+structures no arm has ever seen, and **the arms are not worse than doing
+nothing -- they are doing nothing**, to three significant figures. The 10.77 A
+node is `void`, retraction #10.
+
+It also closes an eight-day-old puzzle. `both-arms-park-at-12-23-angstrom-by-update-250`
+asked why two objectives sharing no placement term both land on 12.23 and hold
+it, and suspected a measurement fault because two unrelated things landing on
+one number usually is one. **12.23 is the baseline.** Not an attractor of
+training, not a fault: the arms never left their start state, and the number
+they all park at is the start state's value.
+
+Four independent routes now say one thing -- `rmsd_dmg` at the baseline, `gained`
+about zero on a matched mask, an untrained rule scoring the same, and `align`
+saying no arm aims. That makes **the rule does not move the window** the
+best-supported statement in the map, and the previous framing gave the arms a
+property ("worse than doing nothing") they do not have.
+
+#### Why it took three steps to find
+
+The pool is invisible in every output either script produces. Both print
+"412 structures on disk", which is true and identical on both machines while the
+412 differ. **A diagnostic that reports its sample size and not its sample
+cannot show this**, so `baseline_probe` now prints the pool's first and last
+structure id and every held-out id.
+
+Fourth fault of the week of the same family -- a number labelled by what it was
+supposed to be rather than by what produced it -- and the only one that changes
+a headline. All four were caught by computing the same quantity two ways; none
+of them was visible by reading either the name or the code.
+
+#### One thing left open, deliberately
+
+The 17.45 A whole-structure baseline has **not** been re-measured on Bunya's
+pool, so any regeneration-against-reconstruction comparison in Angstrom is now
+mixed-pool and should not be quoted. The live fraction (90.1 % against 26.5 %)
+is a ratio and is the robust half. `baseline_probe --damage 0` on Bunya closes
+it for one CPU job, and the node that depends on it says so rather than
+assuming.
