@@ -20,6 +20,13 @@ structures**, and the two bounds are arithmetic on top of it.
     budget / need                   3.6x    not binding
     gradient window / need          0.36x   BINDING
 
+**The 10.10 A need is one of the two numbers in dispute.** Measuring the start
+state directly inside a rollout gives **13.28 A** on the same crops, which
+would make the ratio 0.27x rather than 0.36x --
+[[two-instruments-disagree-by-2-5-angstrom-about-where-the-window-starts]] is
+the open question. The conclusion below is unaffected: the window binds on
+either figure, and the cap binds on neither.
+
 **So on the regeneration task the truncation window binds and the per-step cap
 does not**, which is the opposite of the whole-structure case where
 [[the-per-step-translation-cap-is-0-3-angstrom]] disqualified `g6_ext`
