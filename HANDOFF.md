@@ -8267,3 +8267,157 @@ the same window reads between two depositions of one protein. That is the scale
 at which "different but real" lives. Not built -- it needs deposition pairs in
 the 412-structure pool, which requires sequence comparison to find and may come
 up empty -- and recorded as the concrete next step rather than as a shrug.
+
+---
+
+## 7 Nov, reconnected: the decisive number, and what it turned up underneath
+
+Session came back on `bun147/52687`. Both GPU jobs from the night had finished
+on their own -- SLURM is unaffected by the OnDemand session expiring, which is
+the whole reason the logs were waiting.
+
+### 1. The bearing, corrected, on the equivariant arm (32423296)
+
+    crop     move     clash  rmsd_dmg   align    step  net/path
+     180   2.1693   0.23421      9.75   0.182  0.3000     1.000
+     167   2.1282   0.17926      8.84   0.064  0.3000     1.000
+     393   2.2709   0.15589     20.36  -0.288  0.3000     1.000
+     264   2.2131   0.16115     20.66  -0.213  0.3000     1.000
+     330   2.0767   0.25155     16.56  -0.017  0.3000     1.000
+     193   2.1466   0.16231     12.75  -0.045  0.3000     1.000
+     348   2.0774   0.29052      9.33   0.114  0.3000     1.000
+     297   1.9690   0.15686      1.75   0.268  0.3000     1.000
+       6   2.0734   0.21522     12.62   0.457  0.3000     1.000
+     319   2.2214   0.13926     23.92  -0.092  0.3000     1.000
+     225   2.0476   0.13962      3.23  -0.534  0.3000     1.000
+     129   2.1707   0.21963     10.48   0.195  0.3000     1.000
+    mean   2.1304   0.19212     12.52   0.008  0.3000     1.000
+
+**`align` +0.008 against a convention-matched null of +0.206 and a threshold of
+0.5. The equivariance fix did not release a bearing.** The threshold was
+written down before the number was read, which is the only reason it can be
+trusted; the comparison is against +0.206 (an untrained *equivariant* head
+through the *corrected* readout) and not against `g8_ceiling`'s -0.355, because
+a null is only a null for the convention and architecture it was measured in.
+
+**The pre-registered distinction resolves to "inside the band", not "flat".**
+Per-crop values span -0.534 to +0.457 and the per-step series moves (0.131,
+0.181, 0.02, -0.088, 0.335, 0.299, 0.306, 0.426, 0.235, 0.041, 0.017, 0.282).
+The head responds to geometry and responds uninformatively. One crop reads
++0.457, above the random-head band and below half-aimed's 0.644; it is one crop
+in twelve and is recorded as one, since the 11.82 A dip in this same arm was
+over-read once already.
+
+`net/path` 1.000 everywhere is **not** a tell. Panel B settled that a
+near-constant local vector gives a straight walk by construction, so treating
+uniformity as a signature was wrong and is already corrected above.
+
+### 2. What `step 0.3000` actually means, which I nearly filed as a formatting detail
+
+`_bounded` is a **tanh**, not a clamp. So saturating it does not mean "hit the
+limit", it means the head is asking for far more, and the curve is invertible:
+
+    bounded = L * tanh(raw / L)        ->        raw = L * atanh(bounded / L)
+
+    g10_equiv_ceil   step 0.3000  ->  raw >= 1.41 A  = >= 4.7x the cap
+    g8_ceiling       step 0.0309  ->  raw    0.031 A =    0.1x the cap
+
+The mean cannot have been dragged up by outliers, which is why one number
+carries this: no single norm can exceed the cap, so a mean of 0.29995 requires
+nearly every residue on nearly every step to be saturated.
+
+**`_bounded`'s own docstring documents this failure at the ORIGIN** -- a
+zero-initialised head gets `0/eps = 0` and no gradient "for every update,
+forever" -- and calls the branch guarding it load-bearing, with a measured
+`0.000e+00` behind it. The same docstring says tanh was chosen so that "the
+gradient does not vanish for a head that is asking for too much." **That half
+was an assumption, and the far end fails the same way.**
+
+### 3. The test found something the algebra had hidden
+
+Wrote `tests/test_bounded_saturation.py` to pin the arithmetic, asserting the
+obvious: a tanh is asymptotic, so the bounded norm is always below the cap. **It
+failed.** Measured in float32:
+
+    request    bounded norm    d|out|/d|in|
+    0.031 A     0.0308901       9.9e-01     g8_ceiling -- healthy
+    1.41  A     0.2999504       3.3e-04     g10's conservative lower bound
+    2.0   A     0.2999991       6.4e-06     recovery already 0.2% off
+    3.0   A     0.3000000      -7.5e-09     SIGN IS WRONG
+    5.0   A     0.3000000       0.0         EXACTLY zero
+
+So past about ten times the cap the magnitude gradient is **not attenuated but
+dead** -- the identical total loss of gradient the docstring documents at the
+origin -- arriving two orders of magnitude earlier than `1 - tanh^2` predicts
+(about 8e-9 there) because float32 rounds the whole scaling factor to 1.0, after
+passing through an interval where the gradient's *sign* is wrong.
+
+Two consequences:
+
+  * **g10's request has a lower bound and no upper one.** 0.3000 is consistent
+    with 4.7x the cap and equally with a hundred times it. Job 32449992
+    re-reads it on full-precision norms and can only return a figure or a
+    declaration that it is unresolvable from a finished run.
+  * Over 120 steps at the cap a window travels **36 A** against a 10.10 A mean
+    need, so **overshoot is forced rather than chosen**, and the rule cannot be
+    taught to ask for less because the gradient that would teach it is gone.
+    That connects to the bearing: the -0.36 null was explained by a
+    near-constant vector overshooting and reversing its own cosine, and a
+    saturated magnitude head is a near-constant vector by force.
+
+What is **not** claimed: the bearing half is not attenuated this way (direction
+passes through scaled, not flattened), so this does not explain `align` on its
+own; and nothing here says the dead gradient is *why* `rmsd_dmg` is 12.5 A.
+Whether saturation is cause or consequence is open -- a rule with an
+uninformative bearing has no reason to prefer a small step.
+
+### 4. Why the node is `open` when half of it is arithmetic
+
+Check 1 flagged the new claim as `supported` resting on nothing but our own
+calculation. **The flag is accepted rather than exempted**, although a case
+exists: the hierarchy putting `experimental` above `ours` is about claims
+concerning *proteins*, and the invertibility of tanh is mathematics. Writing an
+exemption for my own node on the day I wrote it is how a check stops being
+load-bearing, and four measurements here have already turned out to be
+defaults. The arithmetic half is pinned by tests instead.
+
+### 5. Three arms now running, and the agreement check
+
+    32449660  g11_split   local translation, LAB rotation      isolates the twist
+    32449661  g12_trunc   --truncate 60, else identical to g10 widens the window
+    32449992  readout at full precision on g10
+    32449993  readout at k=100 for the align/rmsd_dmg agreement
+
+`g12_trunc` is the pre-registered branch: `align` came back ~0, and the
+recorded ablation for that outcome is the truncation window, because the
+gradient sees 3.6 A of a 10.10 A journey. It is also the test of whether the
+saturation is upstream or downstream -- a wider window is the one change that
+lets a residue be differentiated through its own arrival.
+
+**The agreement check, and it is underpowered rather than negative.** `align`
+comes from emitted moves against ideal directions; `rmsd_dmg` from final
+coordinates against the native. Two independently derived quantities that must
+agree if both read the same reality -- the only question that tests an
+instrument's *convention* rather than its sensitivity. On the twelve crops:
+
+    Pearson  r = -0.223   95% CI [-0.707, +0.402]
+    Spearman rho = -0.399
+
+Sign right, interval crosses zero. The held-out set is twelve by the split, so
+`--extra-crops` adds training crops: agreement is a property of the instruments
+rather than of the split, which makes seen crops legitimate for this one
+question, and the readout labels any `rmsd_dmg` printed that way as not held
+out on every run rather than trusting the reader to remember. **Until 32449993
+lands, `align` and `rmsd_dmg` have not been shown to agree**, and that is a
+stated limitation of the bearing instrument.
+
+### 6. Two jobs wasted, nine seconds each
+
+Submitted the readouts through `bunya_submit.sh cpu`, which is the *training*
+path: `bunya_train.slurm` injects `--device cpu --max-seconds N`, the readout
+does not take them, argparse exited 2. Diagnostics go through
+`sbatch --constraint=$(cat .venv_bunya/arch.txt) scripts/bunya_cpu.slurm
+<script> <args>`, which is what 32423296 used and what the resubmission used.
+The constraint is not optional there -- `bunya_submit.sh` adds it for you and a
+bare `sbatch` does not, and without it the venv dies with SIGILL on an epyc3
+node.

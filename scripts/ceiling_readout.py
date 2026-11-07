@@ -397,10 +397,24 @@ def main() -> int:
     # anyway is an empirical question about how much too much, and this is the
     # number that answers it.
     #
-    # **Precision ceiling, stated because the inversion has one.** atanh of a
-    # ratio within float32's last digits of 1.0 is unresolvable, so beyond
-    # roughly 8x the cap the recovered value is a LOWER BOUND and is printed as
-    # one. Do not quote a saturated figure as a measurement of the request.
+    # **Precision ceiling, stated because the inversion has one, and it is
+    # tighter than the algebra suggests.** Measured in float32 (and pinned in
+    # ``tests/test_bounded_saturation.py``):
+    #
+    #     request    bounded norm    d|out|/d|in|
+    #     0.031 A     0.0308901       9.9e-01     healthy
+    #     1.41  A     0.2999504       3.3e-04
+    #     2.0   A     0.2999991       6.4e-06     recovery already 0.2% off
+    #     3.0   A     0.3000000       -7.5e-09    SIGN IS WRONG
+    #     5.0   A     0.3000000        0.0        EXACTLY zero
+    #
+    # So in exact arithmetic tanh is asymptotic and the request is recoverable,
+    # but float32 **reaches and slightly exceeds** the cap at around ten times
+    # it, where the gradient is not merely attenuated but exactly zero -- the
+    # same total loss of gradient ``_bounded``'s docstring documents at the
+    # origin, two orders of magnitude earlier than ``1 - tanh^2`` predicts,
+    # with a wrong-signed interval on the way. A saturated figure is therefore
+    # a LOWER BOUND with no upper one, and is printed as such.
     import math as _math
     ratios = [min(r[5] / cap, 1.0 - 1e-7) for r in rows]
     raws = [cap * _math.atanh(v) for v in ratios]
@@ -414,7 +428,11 @@ def main() -> int:
           f"of its value near the origin")
     if saturated:
         print(f"  *** {saturated}/{n} crops saturate the float32 inversion, so")
-        print("  *** the request is a LOWER bound rather than a measurement.")
+        print("  *** the request is a LOWER bound with NO upper one -- it may")
+        print("  *** be ten or a hundred times the cap and this cannot say.")
+        print("  *** At that point the magnitude gradient is EXACTLY zero in")
+        print("  *** float32, not merely small: the same total loss of")
+        print("  *** gradient _bounded's docstring documents at the origin.")
     if raw_mean / cap > 3.0:
         print("  *** The magnitude head is in tanh's flat tail. This is the")
         print("  *** failure _bounded's docstring guards against at the ORIGIN,")
