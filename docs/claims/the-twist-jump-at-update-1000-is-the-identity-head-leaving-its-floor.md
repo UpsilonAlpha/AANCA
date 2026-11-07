@@ -1,7 +1,7 @@
 ---
 type: claim
-status: open
-sources: [32405172, 32420154, 32449660, 32449661]
+status: supported
+sources: [32405172, 32420154, 32449660, 32449661, 32457571]
 checked: [32405172]
 ---
 
@@ -59,6 +59,53 @@ trunk, and geometry pays for it in the same evaluation. That is
 rather than as a static ratio, and it is the same phenomenon as
 [[the-identity-term-perturbs-geometry-rather-than-helping-it]] seen from the
 time axis.
+
+## Confirmed: the arm with no identity gradient does not break
+
+Job **32457571**, `--identity-weight 0 --identity-track on`, head and blind
+perception kept, resumed from the cancelled run's update-310 checkpoint:
+
+    update   twist   fape    rmsd_dmg
+      500     9.2    0.164     12.23
+      750     9.1    0.151     12.24
+     1000     9.1    0.153     12.23   <- where all four others jumped
+     1250     9.1    0.145     12.23
+     1500     9.2    0.150     12.23
+     1750     9.1    0.149     12.23
+     2000     9.2    0.161     12.23
+
+**Flat for the whole run.** Twist never leaves 9.1-9.2 and `fape` never leaves
+0.145-0.164, against 16-54 deg and 0.73-0.84 in every arm that has an identity
+gradient. This is the prediction written down before the job was submitted --
+"no jump at 1000 confirms this; the same jump puts the cause elsewhere in the
+trainer" -- and it is the clean branch.
+
+So the ~1000-update transition is **the identity term's**, in all four of the
+arms that have one, whatever their move frame. Five arms now: four break, the
+one without identity does not.
+
+Worth stating plainly because it is the first pre-registered prediction in this
+project to come back *confirmed* rather than falsified or void, and it arrived in
+the same hours as three faults of my own.
+
+**Note what it does not buy.** `rmsd_dmg` is 12.23 across the whole run, so
+removing identity does not make the rule place residues -- it only stops the
+geometry being disturbed. [[the-identity-term-perturbs-geometry-rather-than-helping-it]]
+predicted exactly that, and
+[[g6-noid-never-left-the-helix-baseline]] already showed an identity-free arm
+sitting perfectly still. Identity is what *breaks* the geometry; its absence is
+not what fixes it.
+
+**Status `supported`, and the check-1 flag is accepted rather than argued
+away.** The checker objects that every observation beneath this is our own
+calculation. Its rationale -- a calculation performed on an input is evidence
+about the calculation, not about the input -- is about claims concerning the
+world, and the subject of this claim is *our own trainer*, so a measurement of
+the trainer is direct evidence rather than indirect. Recording the reasoning
+instead of silently exempting it, and leaving the flag standing, which is how
+the two other deliberate check-1 findings are handled.
+
+### The earlier status note, kept because the conclusion preceded the evidence
 
 **Status `open`, and the checker is right to insist.** The only evidence under
 this is our own calculation, which is evidence about the calculation and not

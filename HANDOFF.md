@@ -8900,3 +8900,44 @@ against 13.28 it is below.
 Three faults of this shape in two days, all three caught by computing the same
 quantity two ways. Reading either the name or the code alone cannot catch any of
 them, which is the only part of this that generalises.
+
+### 14. g9 answers, and it is the first pre-registered prediction here to come back confirmed
+
+`g9_ceil_noid` (32457571) finished within the hour, resuming from the cancelled
+run's update-310 checkpoint:
+
+    update   twist   fape    rmsd_dmg
+      500     9.2    0.164     12.23
+      750     9.1    0.151     12.24
+     1000     9.1    0.153     12.23   <- where all four others jumped
+     1250     9.1    0.145     12.23
+     1500     9.2    0.150     12.23
+     1750     9.1    0.149     12.23
+     2000     9.2    0.161     12.23
+
+**Flat for the whole run.** Twist never leaves 9.1-9.2 and `fape` never leaves
+0.145-0.164, against 16-54 deg and 0.73-0.84 in every arm that has an identity
+gradient. The prediction written down before submission was "no jump at 1000
+confirms this; the same jump puts the cause elsewhere in the trainer", and this
+is the clean branch.
+
+So **the ~1000-update transition is the identity term's**, in all four arms that
+have one, whatever their move frame. Five arms: four break, the one without
+identity does not. The onset belongs to identity and the amplitude to the frame
+(16-18 deg with a lab rotation, 50-54 with a local one) -- two separate things,
+which is why no single comparison could resolve it and why the original two-arm
+reading went wrong.
+
+**Note what it does not buy.** `rmsd_dmg` is 12.23 across the whole run, so
+removing identity does not make the rule place residues; it only stops the
+geometry being disturbed. `the-identity-term-perturbs-geometry-rather-than-helping-it`
+predicted that and `g6-noid-never-left-the-helix-baseline` already showed an
+identity-free arm sitting perfectly still. **Identity is what breaks the
+geometry, and its absence is not what fixes it.**
+
+The node is `supported`, and the argmap's check 1 flags it because everything
+beneath it is our own calculation. The flag is left standing with the reasoning
+written into the node rather than exempted: check 1's rationale is about claims
+concerning the world, and the subject here is our own trainer, so a measurement
+of the trainer is direct evidence. That is an argument for reading the flag, not
+for deleting it.

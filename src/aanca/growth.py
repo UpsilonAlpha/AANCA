@@ -909,8 +909,11 @@ def rigid_relax(
         # transition at ~1000 updates that motivated this flag -- twist 10 to
         # 52 degrees on `g10_equiv_ceil` -- happens in **`g8_ceiling` too**,
         # which has neither half local, so it is not the fix's and the
-        # conjugated rotation was never the suspect it was written up as. The
-        # four-arm table and the identity-floor mechanism are in
+        # conjugated rotation was never the suspect it was written up as.
+        # **It is the identity term**: `g9_ceil_noid` (--identity-weight 0)
+        # holds twist 9.1-9.2 for all 2,000 updates while every arm that has an
+        # identity gradient breaks. The onset belongs to identity and the
+        # amplitude to the frame. The five-arm table and the mechanism are in
         # `docs/claims/the-twist-jump-at-update-1000-is-the-identity-head-leaving-its-floor.md`.
         #
         # What the flag did establish: the transition's **amplitude** trebles

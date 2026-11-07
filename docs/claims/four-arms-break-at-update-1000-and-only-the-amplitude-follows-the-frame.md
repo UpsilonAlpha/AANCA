@@ -39,6 +39,12 @@ Threefold, two arms either side of one variable. The conjugated rotation does
 not cause the transition; it makes the rule about three times more sensitive to
 it.
 
+**And a fifth arm with no identity gradient does not break at all**:
+`g9_ceil_noid` (32457571) holds twist 9.1-9.2 and `fape` 0.145-0.164 for the
+whole 2,000 updates. So the onset belongs to the identity term and the
+amplitude to the move frame -- two separate things, which is why no single-arm
+comparison could have resolved it.
+
 **Nothing in the code is keyed to update 1000.** There is no learning-rate
 schedule in the growth trainer (`src/aanca/schedule.py` exists but
 `train_growth.py` never calls it, and Adam runs at a constant 3e-4),
