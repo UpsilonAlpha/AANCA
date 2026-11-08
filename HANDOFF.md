@@ -9341,3 +9341,79 @@ last: the local scale (40 to 100 A^2) is not the cluster's.
 **The arm not run is both flags at once**, which is the most informative one and
 needs a third slot. Worth it only once these two say whether either lever moves
 anything on its own.
+
+
+### First readings, and the baseline these are against
+
+`baseline_probe.py --damage 12` on **Bunya's** pool, 12 crops (`.cc/baseline-1108.log`):
+
+    baseline      anchor    window   rmsd_dmg (fit_all)
+    helix          64.49     16.88   12.23
+    extended      307.71     94.51   23.55
+    random         73.30     22.00   12.45
+
+The cluster's helix anchor is **64.49 A^2** against the laptop's 53.24 — higher,
+in the same direction and by a similar margin as 12.23 against 10.77, which is
+the pool difference behaving consistently across two unrelated quantities.
+
+**32489939 g13_natedge** (`--native-edges`, no placement term):
+
+    update   rmsd_dmg   anchor   window
+       250      10.48    40.89    33.29
+       500      11.06    49.10    26.49
+       750      11.15    51.30    24.12
+
+**32489940 g14_pairwise** (`--pairwise-weight 0.01`, live edges):
+
+    update   rmsd_dmg   anchor   window
+       250      11.70    55.46    22.03
+
+### Two things are true and the second undoes most of the first
+
+**Both arms are below the 12.23 A baseline at update 250.** 10.48 and 11.70
+against a line nine arms sat on at 12.18-12.85. The anchor term agrees
+independently: 40.89 and 55.46 against 64.49. Two quantities, one of them new
+and unclamped, both say the window moved closer than the walk put it. That has
+not happened before in this project.
+
+**But g13 is walking back.** 10.48 to 11.06 to 11.15, and anchor 40.89 to 49.10
+to 51.30. Both are heading toward the baseline, so the best reading of that arm
+was its *first* one and training is undoing it.
+
+**Why, and it is not mysterious.** g13 carries `--pairwise-weight 0`, so
+nothing in its objective charges for placement: FAPE is clamped flat over this
+range ([[clamped-fape-is-flat-over-the-half-of-the-journey-the-window-must-travel]]),
+and bond, clash and completion are all indifferent to where the window sits.
+So the placement that appeared at update 250 has **no term defending it**, and
+the optimiser trades it away for quantities that are in the objective. The
+window-to-window column is the trade made visible: it falls 33.29 to 24.12 over
+the same stretch the anchor column rises. The rule is buying internal shape
+with placement, which is exactly what the objective asks of it.
+
+This also says the native edge set did something real: g13 at 250 reads 1.2 A
+better than g14 at 250 on the same baseline, and the only difference between
+them is the edge set and the weight. It is one evaluation each, so the size is
+not yet a number worth quoting.
+
+### Pre-registered, before g14's second evaluation exists
+
+Written now so it cannot be fitted afterwards. **If the pairwise term does what
+it was added to do, g14's `rmsd_dmg` holds or falls across 500, 750 and 1000
+while g13's keeps rising.** g14 is the arm with a term that charges for
+placement; g13 is the arm without one.
+
+  * **g14 holds or falls while g13 rises** -- the unclamped anchor restraint is
+    what defends a placement gain, and the two levers are complementary rather
+    than alternatives: the edge set finds the position, the restraint keeps it.
+    The arm to run next is both flags together.
+  * **Both rise** -- the gain at 250 is a transient of early training in both
+    arms and neither lever holds it. The 0.01 weight is then the first suspect,
+    since the cluster's anchor scale (64.49) is above the laptop figure the
+    weight was chosen against.
+  * **g14 rises faster than g13** -- the restraint is actively harmful at this
+    weight, most likely by pulling the window apart before it arrives, and the
+    window-to-window column should show it.
+
+A fourth outcome worth naming: if g13's curve flattens above the baseline
+rather than reaching it, the native edge set holds *some* of the gain without
+any placement term, which would be the stronger result of the two.
