@@ -10064,3 +10064,28 @@ rather than claimed as clean.
   * The matched-displacement walk has been run on 1UBQ only, not on the 12
     held-out Bunya crops. CPU-only and cheap; it is what would make the
     retraction above quantitative rather than indicative.
+
+### Both slots used, 9 Nov 09:00
+
+  * **32505354 `g17_long`** -- `bun159`, 8 h wall, 0.82 s/update, so ~2.3 h to
+    10,000 updates.
+  * **32507434 `g18_seed1`** -- `bun159`, 2 h wall, ~27 min expected. The first
+    replicate of any growth arm in this project.
+
+Both carry pre-registered exclusive buckets written before their deciding
+evaluations (`question-is-two-thousand-updates-enough-...` and
+`question-has-any-arm-been-replicated-...`). g18's quantity is
+`spread = |g18 settled - g15 settled|` with the **sign deliberately excluded**:
+a replicate measures the size of the run-to-run term, not which seed is better.
+Its worst bucket, `spread > 0.67`, would put the entire lever table inside the
+noise and revert g13/g14/g15 to `open`.
+
+Three per-update rates are now on record for the same configuration -- 2.0-2.4
+(g13/g14), 1.12 (g15), 0.82 (g17) -- and still nothing records which card, how
+many threads or which torch build produced any of them. That is the second
+item left for its own commit, and it is no longer a footnote.
+
+**The code-server session's hour ends about 09:15.** Neither job depends on it:
+both are ordinary SLURM jobs, both checkpoint at every evaluation, and
+`--resume` picks either up. Nothing further can be read from the cluster until
+a new OnDemand session is started.

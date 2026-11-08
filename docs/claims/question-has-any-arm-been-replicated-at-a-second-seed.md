@@ -24,10 +24,41 @@ hand-chosen threshold:
 The per-crop spread exists in the Slurm logs and has never been reduced to a
 number in this map.
 
-**What settles it:** `g18_seed1` -- `g15_both` at `seed = 1`, one setting, 37
-minutes. One replicate does not give a confidence interval, but it bounds the
-run-to-run term against the 0.46-0.67 A differences the record is reading, and
-it is the cheapest arm available.
+## Pre-registration: `g18_seed1`, submitted as 32507434
+
+`g15_both` at `seed = 1`, one setting, 2,000 updates. Running on `bun159` from
+2026-11-09 09:00 AEST. Written before any of its evaluations were read.
+
+**The quantity is `spread` = |g18 settled - g15 settled|**, where `settled` is
+the mean of `rmsd_dmg` at updates 1750 and 2000 and g15's value is **10.24**.
+The *sign* is deliberately not part of the prediction: a replicate at one extra
+seed says how big the run-to-run term is, not which seed is better. Four
+exclusive buckets, each named for the claim it would cost:
+
+  * **`spread <= 0.15`** -- the run-to-run term is no larger than the
+    adjacent-evaluation wobble the two-point rule was written to smooth. Every
+    difference in the lever table is then bigger than the noise, and the record
+    stands as read.
+  * **`0.15 < spread <= 0.46`** -- noise eats into the margin by which g15
+    landed inside its pre-registered bucket (10.24 against a 10.70 boundary)
+    but not into the g14-to-g15 gap. **Bucket assignments become marginal;
+    the ordering of the arms survives.**
+  * **`0.46 < spread <= 0.67`** -- g15's "superadditive" bucket is **not
+    resolvable by a single run**. The claim then needs replicates rather than
+    another lever, and the four-bucket rule that produced it has to be rewritten
+    with a stated error term.
+  * **`spread > 0.67`** -- the whole lever table sits inside the run-to-run
+    term. g13, g14 and g15 are then unordered, and all three "this lever moves
+    the metric" readings revert to `open` pending replicates.
+
+**What one replicate cannot do.** Two runs bound a spread; they do not estimate
+a standard error, and nothing here licenses a confidence interval or a p-value.
+The buckets are deliberately about which *existing* claims survive, not about
+establishing a new number.
+
+**Void condition.** If the run does not complete 2,000 updates -- Bunya goes
+into maintenance today with no SLURM reservation registered -- `spread` is not
+read and the arm is resubmitted with `--resume`.
 
 ## Required by
 - [[the-two-levers-together-beat-either-alone-and-never-give-the-gain-back]]
