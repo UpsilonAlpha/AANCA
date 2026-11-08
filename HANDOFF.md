@@ -9691,3 +9691,18 @@ back by 2000 -- then `settled` is measuring the drift and not the arm, and the
 comparison above should be redone on each arm's *best* instead. Noted now so
 that switching metric afterwards is visibly a change of plan rather than a
 choice of the flattering number.
+
+### Submitted: 32494313 g15_both
+
+From scratch commit `ec0ce82`, one slot, zero others held by me (the single
+job on the gpu QOS is the stale `30599368 mm_h3_6b_092_po2`, which has been
+PENDING DependencyNeverSatisfied for weeks and is not mine to cancel).
+
+    bash scripts/bunya_submit.sh gpu --tag g15_both --split train \
+      --updates 2000 --eval-every 250 --seeds 16 --steps 120 --resume \
+      --birth none --initial helix --damage 12 --fape-weight 0.1 \
+      --clash-weight 1.0 --move-weight 1.0 --identity-weight 0 \
+      --equivariant-move --lab-rotation --native-edges --pairwise-weight 0.01
+
+The prediction above was committed at `ec0ce82` **before** this was submitted,
+which is the point of it.
