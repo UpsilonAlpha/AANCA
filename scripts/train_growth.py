@@ -207,6 +207,12 @@ def score(rule, dataset, indices, args, config, seed: int = 0) -> dict[str, floa
         # opposite fixes. g8_ceiling ran its first 1,250 updates unreadable
         # for exactly this reason.
         "move", "clash",
+        # The unclamped distance restraint across the hole, both halves, in
+        # A^2. Reported whether or not it is weighted -- `growth_objective`
+        # computes it unconditionally for the reason given in its own comment
+        # citing job 32405172, and passing the weight here is what makes the
+        # eval `total` the weighted sum training optimises.
+        "pair_anchor", "pair_window",
     )
     sums = {key: 0.0 for key in keys}
     n = 0
@@ -246,6 +252,7 @@ def score(rule, dataset, indices, args, config, seed: int = 0) -> dict[str, floa
                 # perception the run trains with, or the flag would improve a
                 # training curve and be absent from every number reported.
                 native_edges=args.native_edges,
+                pairwise_weight=args.pairwise_weight,
             )
             sums["total"] += float(terms.total)
             sums["fape"] += float(terms.fape)
@@ -268,6 +275,14 @@ def score(rule, dataset, indices, args, config, seed: int = 0) -> dict[str, floa
                 sums["move"] += float(terms.move)
             if terms.clash is not None:
                 sums["clash"] += float(terms.clash)
+            # No `is not None` guard needed on these two -- unlike `move` and
+            # `clash` they are computed on every run -- but kept symmetric
+            # because a probe may still hand `score()` a hand-built
+            # `GrowthTerms`.
+            if terms.pairwise_anchor is not None:
+                sums["pair_anchor"] += float(terms.pairwise_anchor)
+            if terms.pairwise_window is not None:
+                sums["pair_window"] += float(terms.pairwise_window)
             sums["alive"] += float(terms.alive_fraction)
             sums["closures"] += float(terms.closures)
             sums["frontier"] += float(terms.frontier)
@@ -318,6 +333,21 @@ def report(scores: dict[str, float], identity: bool) -> str:
         lines.append(
             f"\n  move {scores['move']:>7.4f}   clash {scores['clash']:>8.5f}"
             "   (both unweighted; clash reads 0.00002 on a crystal)"
+        )
+    if scores.get("dmg_n", 0):
+        # **Printed on every regeneration run, weighted or not.** The anchor
+        # half is the one `--pairwise-weight` charges and the one that carries
+        # placement; the window half is its control. Both unweighted and in
+        # A^2, so they are comparable against the displacement they describe
+        # and against an arm that did not use the term -- which is the whole
+        # reason the objective computes them unconditionally (job 32405172).
+        lines.append(
+            f"\n  pairwise (A^2, unclamped): anchor "
+            f"{scores['pair_anchor']:>8.2f}   window "
+            f"{scores['pair_window']:>7.2f}   (both 0 on a crystal; only "
+            "anchor is weighted.\n  The ideal-helix start reads 53/17 on the "
+            "LAPTOP's 412 and the cluster's\n  are a different 412, so read "
+            "it against this run's own first evaluation)"
         )
     if scores.get("dmg_n", 0):
         lines.append(
@@ -446,6 +476,23 @@ def main() -> int:
             "something; if it cannot, the constraint was never the objective "
             "but the 0.3 A step cap, the 12-step truncation window or one-hop "
             "perception. Run it short, read rmsd_dmg, and do not ship it"
+        ),
+    )
+    parser.add_argument(
+        "--pairwise-weight", type=float, default=0.0,
+        help=(
+            "weight on the UNCLAMPED CA-CA distance restraint between the "
+            "damaged window and the intact context, in A^2. **The term the "
+            "clamp leaves missing.** FAPE clamps at 10 A and clamp_max is flat "
+            "above it, so a window starting 13.3 A out of place contributes a "
+            "constant and no bearing -- which is consistent with every arm "
+            "reporting exactly its own 12.23 A baseline. The published "
+            "equivariant graph NCA trains on an all-pairs distance MSE and its "
+            "authors call that loss necessary to uniquely identify the target "
+            "state, because the nodes do not know their global location. This "
+            "is that loss on the pairs that carry placement. Off by default, "
+            "but measured and printed on every regeneration run regardless, so "
+            "a weighted arm and an unweighted one are comparable"
         ),
     )
     parser.add_argument(
@@ -874,6 +921,11 @@ def main() -> int:
             if args.clash_weight
             else ""
         )
+        + (
+            f", pairwise {args.pairwise_weight:g} (unclamped, A^2)"
+            if args.pairwise_weight
+            else ""
+        )
     )
     if args.fape_clamp != 10.0 or args.fape_clamp_prob != 1.0:
         # Only when it is not AF2's, so every earlier run's banner is unchanged
@@ -966,6 +1018,7 @@ def main() -> int:
             move_weight=args.move_weight,
             clash_weight=args.clash_weight,
             clash_tolerance=args.clash_tolerance,
+            pairwise_weight=args.pairwise_weight,
             # **Training only.** The held-out evaluation above keeps the clamp
             # unconditionally, because a reported `fape` has to mean the same
             # thing across arms -- an unclamped held-out score is a different

@@ -37,6 +37,18 @@ max over structures, so a single flipped terminal chi in one structure sets it
 and it swings by a factor of two between evaluations that agree on everything
 else. An identity-initialised untrained rule scores a perfect zero on both, so
 these numbers only mean something after training.
+
+**This is the packing evaluation, and growth does not come through here.**
+``evaluate`` rolls out from a chi-damaged native and scores chis; it never
+builds a backbone, never calls ``growth.growth_objective``, and has no mask for
+a damaged window, so a growth term added to it would be dead code. A growth
+arm's held-out numbers come from ``score()`` in ``scripts/train_growth.py``,
+which calls ``growth_objective`` directly, and that is where a new growth term
+has to be wired -- including the weight itself, because a weight that does not
+reach the evaluation can make a term *structurally absent* rather than merely
+unprinted. Job 32405172 lost its held-out ``move`` column exactly that way.
+Written down here because the two files have confusingly similar names and the
+wrong one is the obvious guess.
 """
 
 from __future__ import annotations
