@@ -9319,3 +9319,25 @@ At `--pairwise-weight 1.0` the term is roughly 100x the rest of the objective
 50 to 100 A^2). Parity with FAPE is near **0.002 to 0.01**. Untuned, and the
 absolute A^2 figures are from the laptop pool, so set the weight against a run's
 own first evaluation rather than against a number measured here.
+
+### Submitted 8 Nov: 32489939 and 32489940
+
+Both on g11_split's base, two slots, which is the cap. Scratch at `8110189`.
+
+    32489939  g13_natedge   ... --identity-weight 0 --equivariant-move --lab-rotation --native-edges
+    32489940  g14_pairwise  ... --identity-weight 0 --equivariant-move --lab-rotation --pairwise-weight 0.01
+
+`--identity-weight 0` is a deliberate change from the 93.7 every earlier arm
+carried. g9 (32457571) showed identity at 93.7 breaking twist and fape at update
+1000 in every arm that has it, and 1000 is the middle of the window these arms
+exist to read; weight 0 held through 2000. So the break is removed rather than
+measured around.
+
+`--pairwise-weight 0.01` puts the anchor term near 20 per cent of `total` on the
+smoke numbers, which is a clear contribution without swamping bond and clash.
+Untuned. If the arm is flat, the weight is the first thing to sweep, not the
+last: the local scale (40 to 100 A^2) is not the cluster's.
+
+**The arm not run is both flags at once**, which is the most informative one and
+needs a third slot. Worth it only once these two say whether either lever moves
+anything on its own.
