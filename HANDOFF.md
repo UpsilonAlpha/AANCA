@@ -9503,3 +9503,87 @@ The frame head is zero-initialised on purpose, so **an untrained rule emits
 exactly zero rotation and translation and every model is identical to the
 first**. Pass `--perturb 0.05` for a rule that moves, and expect it to move
 randomly. Same fact that made g6_noid "perfectly static" (32241722).
+
+
+## 8 Nov, the result: both levers move the window, and both stay off the baseline
+
+Full curves and the scope caveats are in
+`docs/claims/both-levers-move-the-window-and-the-placement-term-holds-more-of-it.md`.
+Short version, against a baseline of `rmsd_dmg` 12.23 / anchor 64.49 / window
+16.88 that nine arms sat on at 12.18-12.85:
+
+    arm             best    settled   lever worth
+    g13_natedge    10.48      11.39       0.8 A   native edge set, no placement term
+    g14_pairwise   10.70   ~10.7-10.8     1.5 A   unclamped window-to-anchor restraint
+
+**This is the first movement off the regeneration baseline in the project.**
+Both arms are below it at every evaluation, and the unclamped anchor term
+agrees with `rmsd_dmg` independently on both.
+
+### The pre-registration took two branches at once, and that is a fault in it
+
+The prediction at `b447f7b` was *"g14's rmsd_dmg holds or falls across 500, 750
+and 1000 while g13's keeps rising"*, and that is what the data did -- g14 to
+10.97, 10.97, then 10.70-10.77, g13 to 11.06, 11.15, 11.21. Branch one:
+**the levers are complementary; the edge set finds the position, the restraint
+keeps it.**
+
+But branch four is **also** true: g13 flattened at 11.39-11.44 and held for a
+thousand updates, which is 0.8 A below baseline with nothing in its objective
+charging for placement. I wrote the four outcomes as if one could occur and two
+did; they are not exclusive, one being about g14's direction and the other
+about where g13 settles. Said plainly rather than reported as a clean hit,
+because a pre-registration satisfiable two ways is weaker than it looked, and
+the next one should name what would *falsify* each branch.
+
+Against the prediction taken strictly: g14's 1000 reading rose to 11.18 before
+falling again. One point against the wording; the curve is not.
+
+### Each arm trades the window's internal shape, in opposite directions
+
+g13: window 33.29 -> 20.39 while anchor 40.89 -> 56.77. **Buying internal shape
+with placement.**
+g14: window 22.03 -> 29.00 while anchor 55.46 -> 41.63. **Buying placement with
+internal shape.**
+
+Both end worse than the baseline's 16.88 on the internal half, so neither arm
+improves both at once and whichever half is charged for is paid for in the
+other. This is the contracted-intermediate geometry turning up in training
+rather than in an interpolation, and it is the argument for the next arm
+carrying a weight on the window-to-window half as well, or a stronger internal
+restraint beside it. Lumped into one number it would have been invisible, which
+retroactively justifies reporting the halves separately.
+
+### Identity's attribution confirmed again
+
+`twist` holds 9.7-11.0 across all fourteen evaluations in both arms with **no
+jump at update 1000**. g9 was one arm; this is two more at
+`--identity-weight 0` running flat straight through the onset that breaks every
+identity-bearing arm. Same prediction confirmed again, not a new one. `bond`
+does not climb -- g13 wobbles 3.96-4.95, g14 falls 5.195 to 3.879.
+
+### What `the-rule-keeps-whatever-conformation-it-is-given` means now
+
+Narrowed, not voided. Its title read generally is now false; what its evidence
+actually measured is three **whole-structure** arms over 8,000 updates under
+clamped FAPE and a perception graph rebuilt from the rule's own wrong
+coordinates, and none of that has been re-measured. The freeze was real and
+thirteen nodes rest on it. What the new arms show is that it was a property of
+the objective and the perception rather than of the architecture -- which is
+what `in-regeneration-the-surviving-context-is-the-grid` argued before either
+arm ran. Citing it for "the rule cannot move a residue" is citing it past its
+scope, and the node now says so in its own body.
+
+### The next arm, which is Ulban's call
+
+**Both flags together**, and it needs a third GPU slot, which is over the cap
+of two. The case for it: g13's best single reading (10.48 at update 250) is
+better than anything g14 has reached, and g14 is the arm that holds what it
+gains -- so the combination is the one configuration where the position is
+found quickly *and* defended. The case against: the window-to-window trade
+above suggests the objective is not yet balanced, and a third arm at an
+unbalanced weight would measure the imbalance rather than the combination.
+
+A cheaper alternative that fits in two slots once these finish: the same two
+arms with a weight on the window-to-window half, which tests the trade
+directly.
