@@ -1529,6 +1529,7 @@ def growth_objective(
     move_weight: float = 0.0,
     clash_weight: float = 0.0,
     clash_tolerance: float = 0.5,
+    native_edges: bool = False,
 ) -> tuple[GrowthTerms, object]:
     """Supervised regrowth: from a seed, rebuild the native backbone.
 
@@ -1576,6 +1577,17 @@ def growth_objective(
     marginal**, not the joint label, for the reason given at
     :attr:`GrowthTerms.identity`.
 
+    **``native_edges`` is a diagnostic and changes what the rule can see.** It
+    holds the neighbour selection at the edge set of the native coordinates for
+    the whole rollout, so a residue 13 A from where it belongs still reads its
+    true neighbours -- at their current separations, because only the selection
+    is frozen. It isolates "can the rule place a residue from local
+    information" from "can it find its neighbours", which is the question the
+    four 12.23 A arms left open, and it is how the published automaton
+    (E(n)-equivariant Graph NCA, TMLR 2024) is wired. It is **not** a design
+    method: no de novo run has a native graph, so a result under this flag
+    reports a ceiling and not a capability.
+
     What remains unbuilt, and deliberately: nothing materialises a side chain
     from a committed label. The output is a backbone and a sequence, which is
     what RFdiffusion plus ProteinMPNN produce between them and what
@@ -1584,7 +1596,12 @@ def growth_objective(
     """
     from .fape import backbone_rmsd, backbone_rmsd_on, fape as fape_loss
     from .identity import library_index, type_index, type_loss, type_marginal
-    from .rollout import initial_identity, initial_state, rollout
+    from .rollout import (
+        fixed_neighbours_at,
+        initial_identity,
+        initial_state,
+        rollout,
+    )
     from .torch_geometry import measure_chis
 
     growth = config.growth
@@ -1662,6 +1679,39 @@ def growth_objective(
         identity_start_state = initial_identity(
             topo, native_coords, identity_start, generator, alive=alive
         )
+    fixed_neighbours = None
+    if native_edges:
+        if not self_placing:
+            # **Refused, and deliberately not handled.** ``damage`` above is
+            # gated on ``self_placing`` and is therefore *silently dropped*
+            # under any other birth mode -- a run that measures
+            # whole-structure reconstruction under a REGENERATION banner -- and
+            # job 32241769 was retracted for a diagnostic that reported the
+            # wrong mode while announcing nothing. This flag does not join
+            # them. Under a growing rollout the alive set
+            # changes every step, so a selection taken once from the native
+            # coordinates is neither fixed nor native -- it would hand every
+            # dormant slot the finished structure's neighbourhood, which is the
+            # target leaking into perception rather than the diagnostic asked
+            # for.
+            raise ValueError(
+                f"native_edges needs birth='none' (self-placing), got "
+                f"{growth.birth!r}. The alive set changes under growth, so a "
+                "selection taken once from the native coordinates would both "
+                "stop being the live topology's and leak the finished "
+                "structure into a newborn's perception"
+            )
+        fixed_neighbours = fixed_neighbours_at(
+            native_coords,
+            topo,
+            config,
+            alive=alive,
+            # Perception is blinded only when the rollout carries an identity
+            # state, which is the condition ``step_once`` itself uses; a fixed
+            # list built from unblinded coordinates while the live path blinds
+            # them would be a different edge set, not the native one.
+            blind=config.blind and identity_start_state is not None,
+        )
     result = rollout(
         rule,
         initial_state(
@@ -1671,6 +1721,7 @@ def growth_objective(
         config,
         generator=generator,
         record=False,
+        fixed_neighbours=fixed_neighbours,
     )
     final = result.state
     # **Two scoring sets, because the crop mask exists for a reason that does

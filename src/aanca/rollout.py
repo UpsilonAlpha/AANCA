@@ -81,7 +81,13 @@ from .torch_geometry import (
     measure_chis,
     wrap_to_pi,
 )
-from .torch_graph import FeatureTopology, build_graph
+from .torch_graph import (
+    FeatureTopology,
+    FixedNeighbours,
+    build_graph,
+    select_neighbours,
+    select_neighbours_device,
+)
 
 
 @dataclass(frozen=True)
@@ -385,6 +391,41 @@ def update_mask(
     return (draws < probability).to(device)
 
 
+def fixed_neighbours_at(
+    coords: Tensor,
+    topo: FeatureTopology,
+    config: RolloutConfig,
+    alive: Tensor | None = None,
+    blind: bool = False,
+) -> FixedNeighbours:
+    """The selection ``step_once`` would make at ``coords``, to hold it there.
+
+    Written so a caller that *has* a reference structure can hand the rollout
+    an edge set without the rollout ever being given the structure: the caller
+    computes this once and passes the result as ``fixed_neighbours``, which
+    keeps native coordinates out of :func:`rollout`'s arguments. That
+    separation is the existing one and worth keeping -- a rollout that could
+    see the target would be one function away from scoring against it.
+
+    Every transformation ``step_once`` applies before selecting is applied here
+    too, and getting any of them wrong would freeze a *different* edge set than
+    the one the live path would have produced at these coordinates: the alive
+    topology (dormant residues hold no atoms, so they are not candidates),
+    ``blind`` (side chains collapsed onto CB changes the minimum heavy-atom
+    distance, hence the order), and the feature dtype.
+    """
+    if alive is not None:
+        topo = alive_topology(topo, alive)
+    seen = blind_coords(coords, topo) if blind else coords
+    select = (
+        select_neighbours_device if config.device_neighbours else select_neighbours
+    )
+    neighbours, edge_mask = select(
+        seen.to(config.feature_dtype), topo, config.k, config.cutoff
+    )
+    return FixedNeighbours(neighbours=neighbours, edge_mask=edge_mask)
+
+
 def step_once(
     rule: AANCARule,
     state: RolloutState,
@@ -394,6 +435,7 @@ def step_once(
     frozen: Tensor | None = None,
     generator: torch.Generator | None = None,
     moves: list | None = None,
+    fixed_neighbours: FixedNeighbours | None = None,
 ) -> tuple[RolloutState, Tensor, Tensor]:
     """One application of the rule. Returns ``(new_state, mu, log_kappa)``.
 
@@ -412,6 +454,10 @@ def step_once(
     all-zero hidden vector at step 50, which never occurs in training. Pinning
     the coordinates alone leaves every input on-distribution except the one
     under test.
+
+    ``fixed_neighbours`` replaces this step's neighbour *selection* with one
+    the caller computed, and replaces nothing else: every edge feature is still
+    built from ``coords_seen``. See :class:`torch_graph.FixedNeighbours`.
     """
     alive = state.alive
     age = state.age
@@ -470,6 +516,10 @@ def step_once(
         # independently without risking exactly that.
         density=bool(getattr(rule, "density", False)),
         morphogen=field_block,
+        # The selection only. Every feature below is still built from
+        # ``coords_seen``, which is this step's live geometry -- see
+        # ``torch_graph.FixedNeighbours``.
+        fixed_neighbours=fixed_neighbours,
     )
     node = graph.node_features.to(torch.float32)
 
@@ -702,6 +752,7 @@ def rollout(
     supervise_step: int | None = None,
     record: bool = True,
     frozen: Tensor | None = None,
+    fixed_neighbours: FixedNeighbours | None = None,
 ) -> RolloutResult:
     """Unroll ``config.steps`` times, detaching every ``config.truncate`` steps.
 
@@ -712,6 +763,13 @@ def rollout(
     ``frozen`` pins those residues' geometry for the whole rollout; see
     :func:`step_once`. It does not touch the mask stream, so a frozen and an
     unfrozen rollout from the same seed differ only in which atoms moved.
+
+    ``fixed_neighbours`` holds the neighbour selection at an edge set the
+    caller computed, for every step, while the features stay live. Build it
+    with :func:`fixed_neighbours_at`; :class:`torch_graph.FixedNeighbours` says
+    what the diagnostic is. It does not touch the mask stream either, so the
+    only difference from an ordinary rollout is which neighbours each residue
+    is talking to.
     """
     result = RolloutResult(state=state)
     # Cleared at every truncation boundary, so it only ever holds the live
@@ -746,7 +804,8 @@ def rollout(
             None if state.identity is None else state.identity.argmax(dim=-1)
         )
         state, mu, log_kappa = step_once(
-            rule, state, topo, config, mask, frozen, generator, live_moves
+            rule, state, topo, config, mask, frozen, generator, live_moves,
+            fixed_neighbours,
         )
 
         if record:

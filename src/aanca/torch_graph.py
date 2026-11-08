@@ -316,6 +316,96 @@ def select_neighbours(
     )
 
 
+@dataclass(frozen=True)
+class FixedNeighbours:
+    """A neighbour **selection** to reuse instead of choosing one per step.
+
+    The diagnostic of 8 Nov, and the one piece of the published automaton this
+    project does not have. ``build_graph`` is called inside ``step_once`` on the
+    live coordinates, so a residue sitting 13 A from where it belongs gets the
+    neighbourhood of the *wrong* location: the regeneration task asks it to
+    place itself from local information while the information it reads is
+    local to somewhere else. E(n)-equivariant Graph Neural Cellular Automata
+    (TMLR 2024) message-passes over the **target** graph, so a node at a wrong
+    position still talks to its true neighbours. Holding the selection at the
+    native edge set separates "can the rule place a residue from local
+    information" from "can it find its neighbours", which no arm has told apart
+    -- every one of them scored 12.23 A, exactly its own baseline.
+
+    **Only the selection is frozen.** Distances, directions and the envelope
+    weight are recomputed from the live coordinates every step, because the
+    point is that the residue measures its *true* neighbours at their *current*
+    separations. Frozen features would be a constant input and the rollout
+    would be measuring nothing at all; ``tests/test_native_edges.py`` asserts
+    the distinction in both directions.
+
+    ``edge_mask`` travels with ``neighbours`` and is part of the selection, not
+    a feature: a padded slot carries index 0, and the two tensors only mean
+    anything together.
+
+    It is a diagnostic and not a design method -- in real design there is no
+    native graph to read -- so nothing defaults to it.
+    """
+
+    neighbours: Tensor
+    edge_mask: Tensor
+
+    def checked(
+        self, topo: FeatureTopology, k: int, device_neighbours: bool, device
+    ) -> tuple[Tensor, Tensor]:
+        """The two tensors, or a ``ValueError`` naming what was expected.
+
+        **Loud rather than recomputed.** Twice now a flag in this project has
+        been silently dropped and the run reported as though it had been
+        honoured -- ``--damage`` under any ``--birth`` but ``none``, and job
+        32241769's diagnostic announcing ``birth free`` for a ``--birth none``
+        run, which is the dangerous one because it announced nothing. A fixed
+        selection that cannot be applied has to stop the rollout, since the
+        fallback is exactly the behaviour under test.
+        """
+        n_res = topo.n_residues
+        # The two selectors disagree on width when the structure is smaller
+        # than k: the NumPy path always pads to k, the device path slices an
+        # argsort of n_res candidates. Whichever one this rollout uses is also
+        # what built the fixed list, so the exact width is checkable.
+        width = min(k, n_res) if device_neighbours else k
+        for name, tensor, dtype in (
+            ("neighbours", self.neighbours, torch.long),
+            ("edge_mask", self.edge_mask, torch.bool),
+        ):
+            if not isinstance(tensor, Tensor):
+                raise ValueError(
+                    f"fixed_neighbours.{name} must be a Tensor, got "
+                    f"{type(tensor).__name__} -- a fixed selection that cannot "
+                    "be applied must not fall back to recomputing one"
+                )
+            if tuple(tensor.shape) != (n_res, width):
+                raise ValueError(
+                    f"fixed_neighbours.{name} must be ({n_res}, {width}) for "
+                    f"k={k} and "
+                    + ("device" if device_neighbours else "NumPy")
+                    + f" selection, got {tuple(tensor.shape)}. It was built for "
+                    "a different structure, a different k or the other "
+                    "selector"
+                )
+            if tensor.dtype != dtype:
+                raise ValueError(
+                    f"fixed_neighbours.{name} must be {dtype}, got "
+                    f"{tensor.dtype}"
+                )
+            if tensor.device != device:
+                raise ValueError(
+                    f"fixed_neighbours.{name} is on {tensor.device} but the "
+                    f"coordinates are on {device}"
+                )
+        if bool(((self.neighbours < 0) | (self.neighbours >= n_res)).any()):
+            raise ValueError(
+                f"fixed_neighbours.neighbours holds an index outside "
+                f"[0, {n_res}) -- it was built for a larger structure"
+            )
+        return self.neighbours, self.edge_mask
+
+
 def sequence_links(topo: FeatureTopology, device) -> Tensor:
     """``(n_res,)`` -- is residue ``i`` covalently bonded to ``i + 1``?
 
@@ -690,6 +780,7 @@ def build_graph(
     closure: Tensor | None = None,
     density: bool = False,
     morphogen: Tensor | None = None,
+    fixed_neighbours: "FixedNeighbours | None" = None,
 ) -> TorchGraph:
     """Select neighbours and featurise. Differentiable except for the selection.
 
@@ -701,11 +792,20 @@ def build_graph(
     Pass ``backbone_block`` from a previous call with the *same* neighbour list
     to skip recomputing it. Note the neighbour list changes most steps, so this
     helps less than it looks -- ``fixed_backbone`` is the saving that matters.
+
+    ``fixed_neighbours`` replaces the selection with one computed elsewhere and
+    leaves every feature built from ``coords`` as it is; see
+    :class:`FixedNeighbours` for what that is for and why it never falls back.
     """
-    select = select_neighbours_device if device_neighbours else select_neighbours
-    neighbours, edge_mask = select(
-        coords, topo, k, cutoff, include_sequence_neighbours
-    )
+    if fixed_neighbours is not None:
+        neighbours, edge_mask = fixed_neighbours.checked(
+            topo, k, device_neighbours, coords.device
+        )
+    else:
+        select = select_neighbours_device if device_neighbours else select_neighbours
+        neighbours, edge_mask = select(
+            coords, topo, k, cutoff, include_sequence_neighbours
+        )
     features, envelope, slices = edge_features(
         coords, topo, neighbours, edge_mask, cutoff, backbone_block, fixed_backbone
     )
