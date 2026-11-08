@@ -142,6 +142,17 @@ holding flat through the onset, which is the same prediction confirmed again
 rather than a new one. `bond` does not climb: g13 wobbles 3.96-4.95, g14 falls
 5.195 to 3.879.
 
+## Superseded as the best arm, 8 Nov
+
+Running both flags together
+([[the-two-levers-together-beat-either-alone-and-never-give-the-gain-back]])
+settles at **10.24** with a best of **9.94**, below the best either arm here
+ever reached, and -- unlike either -- never retreats from what it finds. The
+reading that the edge set *finds* the position and the restraint *keeps* it,
+offered in this node as an interpretation, is what the combination arm shows
+directly. Nothing in the two curves below is retracted; they are no longer the
+best numbers.
+
 ## Scope
 
   * Both arms are complete at 2000 updates. An **earlier version of this node

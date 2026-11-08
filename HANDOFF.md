@@ -9706,3 +9706,60 @@ PENDING DependencyNeverSatisfied for weeks and is not mine to cancel).
 
 The prediction above was committed at `ec0ce82` **before** this was submitted,
 which is the point of it.
+
+
+## 8 Nov, the g15 result: the pre-registration's first bucket, and a flat curve
+
+`32494313 g15_both`, both flags at 0.01, complete at 2000 updates, 37.4 min,
+exit 0. Full curve and the scope caveats are in
+`docs/claims/the-two-levers-together-beat-either-alone-and-never-give-the-gain-back.md`.
+
+    arm             best   settled   worst   held at 2000
+    g13_natedge    10.48     11.42   11.63      0.84 A
+    g14_pairwise   10.70     10.91   11.70      1.25 A
+    g15_both        9.94     10.24   10.54      1.69 A
+
+`settled` = mean of `rmsd_dmg` at 1750 and 2000, as pre-registered at `ec0ce82`
+= **10.24**. That is the first of the four exclusive buckets: **superadditive --
+below the best either arm ever reached. The next arm is a weight sweep, not
+another lever.** 9.94 A at update 1750 is the lowest `rmsd_dmg` in the project.
+
+**The bucket does not rest on the averaging.** Its two points are 0.60 A apart,
+four times the wobble the two-point rule was written to smooth, so the rule was
+used outside what it was designed for. It survives: the worse point, 10.54, is
+below the 10.70 boundary on its own. Flagged rather than glossed, because an
+unexamined two-point mean over a 0.6 A gap is the same instrument fault as the
+g14 reading corrected at `aa99aec`.
+
+**The void condition did not fire.** g15's minimum is at 1750, not 1250, and
+its first 1250 updates are flat at 10.43-10.54, so `settled` reads the arm and
+not a drift. The comparison stays where it was pre-registered.
+
+### The unpredicted part: no retreat
+
+Both single arms found a position better than they kept -- g13 gave back 0.9 A
+of its best, g14 0.28 A. **g15 gives back nothing.** Its worst reading over
+2000 updates is better than either single arm's settled value, and it is
+already at 10.43 at update 250 where g14 was at 11.70. That is a change in the
+shape of the curve, not only in its level, and it is the mechanism the
+pre-registration named for this bucket: the edge set finds the position early
+and the restraint defends it.
+
+### The second prediction held, and sharpens the next arm
+
+Window-to-window ends at **31.15** against the baseline's 16.88 -- the worst of
+the three arms, never below 26.84. So the half-for-half trade is a property of
+the objective, not of either lever, and the combination buys the best placement
+of the three by paying the most for internal shape. **The window-to-window
+weight is the indicated next arm.**
+
+### What this does and does not establish
+
+`--native-edges` reads the native edge set and `--move-weight 1` supervises
+every move, so g15 is a **double ceiling**: *the architecture can place a
+12-residue window to 9.9 A given the target graph and the ideal move.* It
+bounds what a learned version could reach; it is not a method. Only g14's
+placement term is available to a real run. Identity's attribution survives a
+third arm (`twist` 9.7-12.1, no jump at 1000; the 12.1 at 1500 is the highest
+single reading across the three and is not at the onset). `bond` falls 3.815 to
+3.434.
