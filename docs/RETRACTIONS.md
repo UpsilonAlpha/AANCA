@@ -37,6 +37,7 @@ agree.
 | the orientation term buys ~22 degrees of twist | crop-matched probing — the 90.2 deg comparator came from g4, a different crop sample, and the arm was the *worst* of three |
 | the identity gradient starves the geometry | g6_noid (32241722), perfectly static with geometry as the entire objective |
 | FAPE's clamp is what gates the geometry | g6_open (32359791), 17.53 A and twist nine degrees worse than its baseline |
+| placement and internal shape are being traded against each other, so the window-to-window weight is the indicated next arm | the transit geometry this project had already measured and pinned (`tests/test_pairwise_restraint.py`, 3 Nov): 16.88 is the window's value at **zero** displacement, and a window walking straight from baseline to native rises to **4.95x** its baseline before falling. The three arms sit at 1.47-1.85x at matched displacement -- below the shortest path, not above it -- and the ordering that looked like a trade is the ordering of how far each arm travelled. `window` is also an unsigned MSE, so it cannot separate collapse from stretch. The counter-measurement was never a node, so no `refutes` edge existed for check 2 to fire on; it is now `a-straight-line-between-two-poses-passes-through-a-contracted-intermediate`. Replaced by `placement-and-internal-shape-are-traded-against-each-other` (void). |
 | the four frozen arms measured the architecture's ceiling | they measured whole-structure reconstruction, which is not the project's task |
 
 ## Already marked

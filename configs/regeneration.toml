@@ -108,13 +108,16 @@ pairwise_weight = 0.01
 native_edges = true
 pairwise_weight = 0.01
 
-# The indicated next arm, not yet run: charge for the window's internal shape.
-# Every arm above ends WORSE than the baseline's 16.88 on the window-to-window
-# half (24.81, 29.14, 31.15), monotonically worse the harder placement is
-# pushed, so some of the rmsd_dmg gain is a window in the right place with the
-# wrong shape. Weight unset on purpose -- the sign of the error is unmeasured,
-# and a symmetric distance restraint is the wrong term for a collapsed window.
-# Fill it in when the signed-bias readout says which way it is wrong.
+# WITHDRAWN 9 Nov, before it was ever run: the window-weight arm.
+# It was motivated by every arm above ending worse than the baseline's 16.88 on
+# the window-to-window half (24.81, 29.14, 31.15), read as placement bought by
+# spending internal shape. That reading is retracted -- see
+# docs/claims/placement-and-internal-shape-are-traded-against-each-other.md.
+# 16.88 is the window's value at ZERO displacement, and a window in transit
+# contracts: on a straight-line walk to native the internal half rises to 4.95x
+# its baseline before falling, so at matched displacement these arms (1.47-1.85x)
+# sit BELOW the straight line rather than above it. The arm may still be worth
+# running; nothing above indicates it.
 
 # NOT YET RUN. g15 with the rotation read in the residue's own frame too, which
 # no arm at identity-weight 0 has ever done. See
@@ -128,3 +131,57 @@ inherits = "g15_both"
 
 [g16_localrot.inputs]
 lab_rotation = false
+
+# ======================================================================
+# The budget arm. SUBMITTED 9 Nov.
+#
+# Every arm above ran 2000 updates at a CONSTANT learning rate, with no sample
+# pool and a fixed 120-step rollout. None of those three is an accident of this
+# config -- they are absent from scripts/train_growth.py, whose own docstring
+# says so ("the cheapest thing that can: one structure, one rollout, one
+# backward pass per update, no sample pool"), while scripts/train.py has had an
+# LR decay and a pool since the packing runs.
+#
+# The closest prior art available is Ulban's own 3D NCA project, and its
+# recorded lesson (docs/PLAN_V1.md, the neural-cubes section) is that "it will
+# not stay put" is answered by longer rollouts, a working pool and a learning-
+# rate decay -- NOT by a stronger penalty term. g13 peaks at update 250 and
+# gives 0.84 A back; g14 peaks at 1250 and gives 1.25 A back; "it finds a
+# position it cannot keep" is this file's own description of g13. And g15's best
+# reading is at update 1750, its SECOND-TO-LAST evaluation, in 37 min of a 24 h
+# slot.
+#
+# So before another lever: is any number in the lever table a converged number?
+# One setting against its parent. ~3-6 h, one slot.
+#   settles near 10.2 -> 2000 updates was enough, the table stands as read.
+#   reaches 8         -> three unconverged curves were compared and
+#                        "superadditive" is a statement about which arm
+#                        converges fastest, not which converges lowest.
+# docs/claims/question-is-two-thousand-updates-enough-for-any-arm-to-have-converged.md
+#
+# A NEW SECTION, not `updates` raised on g15_both: editing a section a chain is
+# resuming used to splice two experiments onto one curve, and the resume check
+# added today would now refuse it outright.
+[g17_long]
+inherits = "g15_both"
+
+# ONE setting. eval_every stays at 250 deliberately: `settled` is the mean of
+# the last two evaluations, so changing the cadence would change the instrument
+# the comparison is read with, and this arm exists to compare. 40 evaluations
+# instead of 8 also means the convergence shape is visible rather than inferred.
+[g17_long.inputs]
+updates = 10000
+
+# NOT YET RUN. The cheapest arm available, and the quietest gap in the record:
+# no growth arm has ever been run twice. Every comparison the project rests on
+# is one run at seed 0 on 12 crops, judged against a hand-chosen threshold --
+# g14 settled 10.91 against g15 settled 10.24 is a 0.67 A gap with no error bar
+# on either, and g15's pre-registered boundary was 10.70, a 0.46 A margin.
+# One replicate is not a confidence interval; it bounds the run-to-run term
+# against the differences being read. 37 min.
+# docs/claims/question-has-any-arm-been-replicated-at-a-second-seed.md
+[g18_seed1]
+inherits = "g15_both"
+
+[g18_seed1.inputs]
+seed = 1

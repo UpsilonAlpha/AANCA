@@ -287,6 +287,30 @@ def _toml_value(value: Any) -> str:
     return repr(value)
 
 
+def resume_drift(stored: dict, args, allow=("updates",)) -> dict:
+    """Which settings the checkpoint disagrees with the config about.
+
+    ``{key: (what the checkpoint says, what the config says)}``, empty when a
+    resume is safe. Pure, so it is testable without a checkpoint and without a
+    GPU -- the growth trainer went fifteen arms with no resume check at all,
+    and a check that can only be exercised by a real two-segment run on a
+    cluster is a check nobody exercises.
+
+    ``updates`` is allowed to differ by default because extending a run is the
+    legitimate reason to touch a section mid-chain. Runtime keys are never
+    compared: ``max_seconds`` is derived from the allocation and differs on
+    every segment by design.
+    """
+    return {
+        key: (was, getattr(args, key))
+        for key, was in sorted(stored.items())
+        if key not in RUNTIME_ONLY
+        and key not in allow
+        and hasattr(args, key)
+        and was != getattr(args, key)
+    }
+
+
 def snapshot(args: argparse.Namespace, section: str, source: str | Path) -> str:
     """The run's fully resolved settings as a TOML section, for the run directory.
 
@@ -298,11 +322,29 @@ def snapshot(args: argparse.Namespace, section: str, source: str | Path) -> str:
     lines = [
         "# Resolved settings for one run. Written by the trainer; not an input.",
         f"# section {section} of {Path(source).name}",
+        "#",
+        "# **Readable back by the trainer that wrote it:**",
+        "#",
+        f"#     python scripts/train_growth.py <this file> --section {section}",
+        "#",
+        "# which is why the settings sit under [base.inputs] and the run's own",
+        "# section is empty. The first version of this function emitted them",
+        "# under [<section>.inputs] with no base: complete as a record and",
+        "# unloadable as a config, because check_base_is_complete refuses it",
+        "# before resolve ever runs. A snapshot you cannot feed back is a",
+        "# transcript, not a configuration.",
         "",
-        f"[{section}.inputs]",
+        "[base.inputs]",
     ]
     for dest in sorted(vars(args)):
         if dest in RUNTIME_ONLY or dest in DERIVED:
             continue
         lines.append(f"{dest} = {_toml_value(getattr(args, dest))}")
+    lines += [
+        "",
+        "# The run's own section. Empty because the base above is already fully",
+        "# resolved; the tag is the section name, so this header is what makes",
+        f"# --section {section} name this run and not another.",
+        f"[{section}.inputs]",
+    ]
     return "\n".join(lines) + "\n"

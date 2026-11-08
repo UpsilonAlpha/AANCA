@@ -1,7 +1,12 @@
 """Train growth: from a seed, can the rule rebuild the backbone and sequence?
 
-    python scripts/train_growth.py --tag g1 --updates 4000
-    python scripts/train_growth.py --tag g1_id --identity-weight 93.7 --updates 8000
+    python scripts/train_growth.py configs/regeneration.toml --section g15_both
+    python scripts/train_growth.py configs/regeneration.toml --list-sections
+    python scripts/train_growth.py configs/regeneration.toml --diff g16_localrot
+
+Settings are a named section of a config file, never a flag: see ``aanca.config``
+and the header of ``configs/regeneration.toml``. An option may only address the
+config or name a resource.
 
 ``aanca.growth`` has had a complete objective with measured weights since the
 growth stack landed, and nothing trained it: ``scripts/train.py`` has no growth
@@ -49,6 +54,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
 import random
 import time
 from pathlib import Path
@@ -79,6 +85,37 @@ RUNS = ROOT / "runs"
 #: settings that decide which structures exist and how they are split, so a
 #: warm start that changed one would restore a split describing another pool.
 #: ``steps`` is deliberately absent -- changing it is the whole point.
+def recorded_args(args: argparse.Namespace) -> dict:
+    """What the run *is*, for the checkpoint: settings, without the resources.
+
+    ``max_seconds`` differs on every segment of a chain and ``device`` differs
+    between a laptop probe and Bunya, so a checkpoint that stores them inside
+    ``args`` cannot be compared against a config without those four keys
+    reading as experimental drift. Kept separate rather than filtered at the
+    comparison, so the next person to write a whole-namespace check gets the
+    right answer by default.
+    """
+    return {
+        key: value
+        for key, value in vars(args).items()
+        if key not in run_config.RUNTIME_ONLY
+    }
+
+
+def runtime_args(args: argparse.Namespace) -> dict:
+    """The resources the run happened to get. Recorded, never compared."""
+    return {
+        key: getattr(args, key)
+        for key in run_config.RUNTIME_ONLY
+        if hasattr(args, key)
+    }
+
+
+def chain_segment() -> str:
+    """Which segment of a restart chain this is, for naming a snapshot."""
+    return os.environ.get("AANCA_CHAIN", "x")
+
+
 WARM_START_MUST_MATCH = (
     "split", "structures", "eval_structures", "seed", "crop_size", "k",
     # Architecture, not data. ``morphogen`` widens the node dimension and
@@ -950,13 +987,22 @@ def main() -> int:
     out_dir = RUNS / args.tag
     out_dir.mkdir(parents=True, exist_ok=True)
     # The run carries its own settings, fully resolved, so a finished run does
-    # not depend on a config file that has since moved on. Written every time
-    # rather than once: under --resume the second segment must agree with the
-    # first, and a snapshot that changed between them is the thing worth
-    # seeing in a diff.
-    (out_dir / "config.toml").write_text(
-        run_config.snapshot(args, args.tag, runtime.config), encoding="utf-8"
-    )
+    # not depend on a config file that has since moved on.
+    #
+    # **Segment 1 writes config.toml and later segments write their own file.**
+    # Overwriting it was the original behaviour and it was wrong in the one
+    # case it mattered: the comment used to say a snapshot that changed
+    # between segments "is the thing worth seeing in a diff", and then erased
+    # the only copy to diff against. runs/ is gitignored, so there was no other
+    # record. The resume check below now refuses a changed setting outright,
+    # and these files are the evidence for what it refused.
+    snapshot_text = run_config.snapshot(args, args.tag, runtime.config)
+    snapshot_path = out_dir / "config.toml"
+    if snapshot_path.exists() and snapshot_path.read_text(
+        encoding="utf-8"
+    ) != snapshot_text:
+        snapshot_path = out_dir / f"config.segment{chain_segment()}.toml"
+    snapshot_path.write_text(snapshot_text, encoding="utf-8")
     last_path = out_dir / "last.pt"
     stop_file = Path(args.stop_file) if args.stop_file else out_dir / "STOP"
 
@@ -996,6 +1042,33 @@ def main() -> int:
         )
     if args.resume and last_path.exists():
         state = ckpt.load(last_path, map_location=device)
+        # **The check this script spent fifteen arms without.** ``scripts/train.py``
+        # has had ``ckpt.check_fingerprint`` since the packing runs; this
+        # trainer never called it, so a resume restored weights, optimiser,
+        # update counter and RNG while asking nothing about whether the
+        # settings were the ones that produced them. With a 24 h chain that is
+        # not a theoretical hole: edit a section while segment 1 is in flight
+        # and segment 2 continues a different experiment on segment 1's
+        # weights, silently, on the same curve.
+        #
+        # ``updates`` is excluded because extending a run is the legitimate
+        # reason to change a section mid-chain, and the runtime keys are
+        # excluded because they are a resource and differ every segment by
+        # design (``max_seconds`` comes from the allocation).
+        drifted = run_config.resume_drift(state.get("args") or {}, args)
+        if drifted:
+            detail = "\n".join(
+                f"    {key}: checkpoint {was!r}, config now {now!r}"
+                for key, (was, now) in drifted.items()
+            )
+            print(
+                f"refusing to resume {last_path}: the config no longer "
+                f"describes the run in it.\n{detail}\n"
+                "Resuming would splice two experiments into one curve. Either "
+                "restore those settings, or give the variant its own section "
+                "and run it as a new arm."
+            )
+            return 1
         rule.load_state_dict(state["rule"])
         optimiser.load_state_dict(state["optimiser"])
         start_update = int(state["update"])
@@ -1235,7 +1308,8 @@ def main() -> int:
                     out_dir / "best.pt",
                     {
                         "state_dict": rule.state_dict(),
-                        "args": vars(args),
+                        "args": recorded_args(args),
+                        "runtime": runtime_args(args),
                         "eval_indices": eval_indices,
                         "update": update,
                     },
@@ -1250,7 +1324,8 @@ def main() -> int:
                     "best": best,
                     "rng": ckpt.rng_state(),
                     "python_rng": rng.getstate(),
-                    "args": vars(args),
+                    "args": recorded_args(args),
+                    "runtime": runtime_args(args),
                     "eval_indices": eval_indices,
                 },
             )

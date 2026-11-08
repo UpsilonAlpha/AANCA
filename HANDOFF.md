@@ -9888,3 +9888,156 @@ expired. One arm settles it:
 
 It is a better next arm than weighting the window's internal half, because it
 removes an inexpressibility rather than adding a term.
+
+## 9 Nov, independent review: one finding retracted, three config defects, and the budget was never tested
+
+An independent agent was asked to review the config port and the next-arm
+decision, briefed on both prior-art sections of this file (§11 and the 8 Nov
+search) and on the neural-cubes section of `docs/PLAN_V1.md`. Every load-bearing
+finding below was re-verified against the files before being acted on.
+
+### The finding that was mine and was wrong
+
+I reported that all three lever arms end worse than the untrained helix's 16.88
+on the window-to-window half, and read it as placement being bought by spending
+internal shape. **Withdrawn.** 16.88 is the window's value at *zero*
+displacement, and `tests/test_pairwise_restraint.py` has pinned since 3 Nov that
+a window walking straight from baseline to native *contracts* on the way:
+
+      t  rmsd_dmg    anchor   window
+    0.0     21.24    101.49     8.72
+    0.4     12.75     27.18    44.70     <- 5.1x its baseline, in transit
+    0.5     10.62     18.62    43.16
+    1.0      0.00      0.00     0.00
+
+Read at matched displacement rather than against the baseline, the arms sit at
+1.47-1.85x baseline against the straight line's 4.95x -- **below** the shortest
+path, not above it. The ordering that looked like a trade is the ordering of how
+far each arm travelled. And `window` is an unsigned MSE, so it cannot
+distinguish collapse from stretch in the first place.
+
+Consequence for the record: the g15 node's "second prediction" was guaranteed by
+the transit geometry whether or not the objective had anything to do with it, so
+its causal half is withdrawn and the decision rule it supported ("the next arm
+is a weight sweep") is released. The window-weight arm has no measured
+motivation and is marked withdrawn in `configs/regeneration.toml`.
+
+**Why the argmap did not catch it.** The counter-measurement existed, in a test
+docstring, and was never a node -- so there was no `refutes` edge for check 2 to
+fire on. That is precisely the linkage failure the format exists for. It is now
+`a-straight-line-between-two-poses-passes-through-a-contracted-intermediate`,
+with the retraction kept as a `void` node rather than deleted. The config
+defects below are *correctly* outside the map: `docs/argmap/SPEC.md`'s Scope
+section puts "job ids, config bugs, queue rates, resume wiring" in the journal,
+which is here.
+
+### Three defects in yesterday's config port
+
+  * **`--resume` checked nothing at all.** `scripts/train.py` has called
+    `ckpt.check_fingerprint` since the packing runs; the growth trainer never
+    did, so a resume restored weights, optimiser, update counter and RNG without
+    asking whether the settings were the ones that produced them. Edit a section
+    while a 24 h chain is in flight and segment 2 continues a different
+    experiment on segment 1's weights, silently, on one curve. Fixed:
+    `aanca.config.resume_drift` (pure, so it is testable without a cluster) plus
+    a refusal that names every drifted key. `updates` may differ, because
+    extending a run is the legitimate reason to touch a section.
+  * **The run's own snapshot could not be read back by the trainer that wrote
+    it.** `snapshot()` emitted `[<section>.inputs]` with no `[base]`, and
+    `main()` calls `check_base_is_complete` first, so
+    `train_growth.py runs/g15_both/config.toml --section g15_both` raised
+    `ConfigError`. It now emits `[base.inputs]` plus an empty section header and
+    goes back in through the trainer's own door. It was also overwritten every
+    segment -- the comment said a changed snapshot "is the thing worth seeing in
+    a diff" and then erased the only copy to diff against, with `runs/`
+    gitignored. Later segments now write `config.segment<N>.toml`.
+  * **The restart chain missed `--section=g15_both`.** argparse accepts the `=`
+    form; the chain matched only the space-separated one, so `TAG` kept its
+    `"run"` fallback, `runs/run/STOP` never existed, and a deliberately stopped
+    run was resubmitted. Four lines under the comment warning about exactly that
+    drift. Both spellings now match, and there is **no fallback**: an
+    unrecognised argument list refuses to resubmit, because a guessed tag fails
+    *open*.
+
+Also: checkpoints stored `max_seconds`, `device`, `stop_file` and `resume` inside
+`args`, which differ every segment by design -- split into `args` and `runtime`
+so the next whole-namespace comparison gets the right answer by default.
+
+### The test that was load-bearing and self-referential
+
+`test_section_reproduces_the_run_that_happened` compares the recorded command
+line against the resolved section -- but the recorded lines carry ~12 settings
+and the schema has 45. For the other 33, **both sides were reading
+`action.default` off the same live schema object**, and the config's base had
+itself been transcribed from those defaults. A default that moved between g13
+and today would pass with both sides wrong together, and `bunya_train.slurm`
+echoes `args : $*` (explicit flags only), so there is no other record of what
+was in force.
+
+`HISTORICAL_DEFAULTS` now pins all 49, read out of
+`git show 3b97972^:scripts/train_growth.py` with `ast` rather than from memory,
+and two tests assert against it: that no schema default has drifted, and that
+each arm's unstated settings resolve to what was in force when it ran. Both
+pass, so nothing had drifted -- but that is now a measurement instead of an
+assumption.
+
+### The next arm is budget, and it is pre-registered
+
+Every growth arm ran 2,000 updates at a **constant learning rate, no sample
+pool, fixed 120-step rollout**. All three are absent from
+`scripts/train_growth.py` while `scripts/train.py` has an LR decay and a pool.
+The neural-cubes lesson in `docs/PLAN_V1.md` is that "it will not stay put" is
+answered by longer rollouts, a pool and a decay -- not a stronger term -- and
+that document already warned once that a plateau measured under these conditions
+is not evidence about the objective. Against that: g13 peaks at update 250 and
+gives 0.84 A back, g14 peaks at 1250 and gives 1.25 A back, and **g15's best
+reading is at update 1750, its second-to-last evaluation**, in 37 min of a 24 h
+slot.
+
+So before another lever: is any number in the lever table converged?
+
+  * **`g17_long`** = `g15_both` with `updates = 10000`. One setting;
+    `eval_every` stays 250 so `settled` is read with the same instrument.
+    Settles near 10.2 -> 2,000 updates was enough and the table stands.
+    Reaches 8 -> three unconverged curves were compared and "superadditive" is a
+    statement about which arm converges fastest, not which converges lowest.
+  * **`g18_seed1`** = `g15_both` at `seed = 1`, 37 min. **No growth arm has ever
+    been run twice.** g14 settled 10.91 against g15 settled 10.24 is a 0.67 A
+    gap with no error bar on either, and g15's pre-registered boundary was
+    10.70 -- a 0.46 A margin. The cheapest arm available, and it retroactively
+    prices every claim already made.
+
+Both are new sections, never `updates` raised on `g15_both`: the resume check
+added today would refuse that outright. Both gaps are in the map as question
+nodes gating the two lever observations.
+
+`g16_localrot` keeps its argument but loses its place in the queue, and it has
+been given the pre-registration it lacked: `settled` against g15's 10.24, four
+exclusive buckets with a +-0.34 A null band, a void condition, and an overriding
+twist bucket that refutes the claim whatever `rmsd_dmg` does. As written before
+today it predicted only "improves or holds" -- no threshold, no falsifier, so it
+could only confirm. It is also a third **double-ceiling** arm (`--native-edges`
+on top of `--move-weight 1`), so whatever it returns bounds the architecture and
+does not move the method.
+
+**Not submitted.** The Bunya OnDemand session has expired (every
+`vscode-remote-resource` fetch redirects to `iam.rcc.uq.edu.au`), so `g17_long`
+is queued in git and not on the cluster.
+
+### Still open from this review, not acted on
+
+  * **The structure pool is still unrecorded.** `available[:wanted]` resolves to
+    different proteins on a 1,903-structure laptop than on a 24,709-structure
+    Bunya, which is the entire cause of the voided 10.77 A baseline in
+    `RETRACTIONS.md`, and the config records `split`/`structures`/`seed` but not
+    *which* proteins. A sha256 over the resolved id list belongs in
+    `snapshot()`.
+  * **Nothing records the code or the machine.** No git SHA, torch/ROCm version,
+    GPU model or `OMP_NUM_THREADS` -- and `bunya_submit.sh` pins the card via an
+    overridable `AANCA_GRES` while `bunya_train.slurm` derives thread count from
+    the allocation, both result-affecting. This is not hypothetical: g15 ran at
+    1.12 s/update against the single-lever arms' 2.0-2.4 s/update on the same
+    configuration, undiagnosed, on the arm the project rests on.
+  * The matched-displacement walk has been run on 1UBQ only, not on the 12
+    held-out Bunya crops. CPU-only and cheap; it is what would make the
+    retraction above quantitative rather than indicative.

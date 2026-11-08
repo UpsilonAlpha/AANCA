@@ -75,25 +75,56 @@ it"* -- is exactly what the numbers show, and it is visible in the first
 evaluation: g15 is already at 10.43 at update 250, where g14 was at 11.70.
 Neither lever alone produced a run with no retreat in it.
 
-## The second prediction held: the internal half is still paid for
+## The second prediction: it came true and it proved nothing
 
 Pre-registered independently: *"g15's window-to-window half ends above the
 baseline's 16.88, because nothing in either flag charges for internal shape."*
 It ends at **31.15**, against g13's 24.81 and g14's 29.14 -- the worst of the
-three. It is above 16.88 at every evaluation and never falls below 26.84.
+three. It is above 16.88 at every evaluation and never falls below 26.84. So
+the stated outcome held.
 
-So the trade in
-[[both-levers-move-the-window-and-the-placement-term-holds-more-of-it]] is a
-property of the objective rather than of either lever, and combining the levers
-does not relieve it: g15 buys the best placement of the three and pays the most
-for it on internal shape. **The window-to-window weight is now the indicated
-next arm**, not an alternative to this one.
+**The causal half is withdrawn, 9 Nov.** 16.88 is the window's value at *zero*
+displacement, and a window in transit contracts: on a straight-line walk from
+baseline to native the internal half rises to 4.95x its baseline before it
+falls
+([[a-straight-line-between-two-poses-passes-through-a-contracted-intermediate]]).
+Ending above 16.88 was therefore guaranteed by the geometry of being partway
+there, whether or not the objective had anything to do with it -- and read at
+matched displacement the three arms sit at 1.47-1.85x, i.e. **below** the
+straight line rather than above it. A prediction that the mechanism's absence
+would also produce is not a test of the mechanism, and it should not have been
+written as one.
+
+What this node claimed on the strength of it --- that placement and internal
+shape are being traded, and that the window-to-window weight is the indicated
+next arm --- is retracted in
+[[placement-and-internal-shape-are-traded-against-each-other]]. The `window`
+column is an unsigned MSE, so it cannot distinguish collapse from stretch
+either. **Nothing is currently known about the sign or the cause of the arms'
+internal-shape number.**
 
 A caveat on the anchor column: it does not move monotonically with `rmsd_dmg`
 here (41.54 at 1000 against 36.98 at 1750 against 44.69 at 2000), so on this
 arm the unclamped anchor term tracks the metric less tightly than it did on the
 two single-lever arms. Not diagnosed; recorded so a later arm is not read as if
 it did.
+
+## The bucket's decision rule, and what is left of it
+
+The bucket g15 landed in reads *"the next arm is a weight sweep, not another
+lever"*, and the body of this node then named the window-to-window weight as
+the indicated arm. That reading rested on the second prediction, which is
+withdrawn above, so **the rule no longer points at a specific weight** -- and
+with [[question-is-two-thousand-updates-enough-for-any-arm-to-have-converged]]
+and [[question-has-any-arm-been-replicated-at-a-second-seed]] both open, a
+sweep over a boundary with no error bar on either side would be measuring the
+wrong thing first.
+
+Recorded here rather than acted on silently: the decision rule is released
+because its premise was withdrawn, not because a different arm looked more
+interesting after the fact. The next arm is budget
+(`g17_long`), which is what both open questions gate on, and it is a new
+section rather than an edit to this one.
 
 ## Identity and bond
 
@@ -118,6 +149,13 @@ and does not climb.
   * 37.4 min at 1.12 s/update, roughly half the 2.0-2.4 s/update the two
     single-lever arms took on the same configuration. Not investigated.
   * 12 held-out crops. Per-crop spread is in the log, not in this node.
+
+## Requires
+- [[question-is-two-thousand-updates-enough-for-any-arm-to-have-converged]]
+- [[question-has-any-arm-been-replicated-at-a-second-seed]]
+
+## Refutes
+- [[placement-and-internal-shape-are-traded-against-each-other]]
 
 ## Supports
 - [[both-levers-move-the-window-and-the-placement-term-holds-more-of-it]]

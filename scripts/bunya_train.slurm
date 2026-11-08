@@ -165,11 +165,29 @@ if (( RC == 64 )); then
     # entry points; a chain that looked for the wrong one would resubmit with
     # TAG="run" and then fail to find the stop file for the real run, which is
     # the quiet kind of drift this file's other comments are about.
-    TAG="run"
+    TAG=""
     args=("$@")
     for ((i = 0; i < ${#args[@]}; i++)); do
-        [[ "${args[i]}" == "--tag" || "${args[i]}" == "--section" ]]             && TAG="${args[i + 1]}"
+        case "${args[i]}" in
+            # Both spellings, because argparse accepts both and the chain used
+            # to read only the space-separated one: with --section=g15_both the
+            # tag stayed at its fallback, runs/<fallback>/STOP never existed,
+            # and a deliberately stopped run was resubmitted. That is the
+            # quiet kind of drift this file's other comments are about, and it
+            # was sitting four lines under the comment warning about it.
+            --tag | --section) TAG="${args[i + 1]}" ;;
+            --tag=* | --section=*) TAG="${args[i]#*=}" ;;
+        esac
     done
+    if [[ -z "${TAG}" ]]; then
+        # No fallback. A guessed tag looks in the wrong directory for the stop
+        # file, so it fails open -- it resubmits -- which is the one failure
+        # mode this block exists to prevent. Refusing to resubmit is the safe
+        # direction: a chain that stops early is noticed, one that will not
+        # stop is not.
+        echo "no --tag or --section in the arguments; not resubmitting" >&2
+        exit 0
+    fi
     if [[ -e "${ROOT}/runs/${TAG}/STOP" ]]; then
         echo "stop file present for tag ${TAG}; chain ends here"
         exit 0
