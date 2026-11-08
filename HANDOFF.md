@@ -9587,3 +9587,35 @@ unbalanced weight would measure the imbalance rather than the combination.
 A cheaper alternative that fits in two slots once these finish: the same two
 arms with a weight on the window-to-window half, which tests the trade
 directly.
+
+### Corrected once g14 finished
+
+The section above was written at g14 update 1500 and said it was "still
+falling". It was not: it bottomed at 10.70 (1250) and drifted to 10.98 by 2000.
+Complete figures against the 12.23 baseline:
+
+    arm             best   settled   held
+    g13_natedge    10.48     11.39   0.84 A
+    g14_pairwise   10.70     10.98   1.25 A
+
+So the restraint holds **1.5x** what the edge set does, not the 2x quoted from
+the in-flight number, and **both** arms rise from their best and flatten --
+g14 by 0.28 A, g13 by 0.9 A.
+
+**On the complete curves the pre-registration took none of its four branches.**
+Branch 1 wanted g14 to hold or fall while g13 rose; over the full run both
+rise. Branch 2 said neither lever would hold the gain; both hold it
+permanently. Branch 3 wanted g14 worse than g13; it is better from 500 on.
+Branch 4 described g13 flattening above baseline, which happened -- and
+happened to g14 too, which no branch anticipated. The honest statement is
+branch 4 generalised to both arms: both find a position better than they keep,
+both settle above their best and below the baseline, and the one with a
+placement term settles 0.4 A lower.
+
+On the pre-registered window alone (500 to 1000) branch 1 does hold, with the
+1000 wobble against it. That is what the prediction addressed, and it is a
+narrower claim than the one I reported an hour ago.
+
+The lesson is cheap and worth keeping: **a curve read before it is finished is
+a direction guessed, not measured.** g14 had already turned at 1250 when I
+called it falling at 1500.
