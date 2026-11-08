@@ -9417,3 +9417,89 @@ placement; g13 is the arm without one.
 A fourth outcome worth naming: if g13's curve flattens above the baseline
 rather than reaching it, the native edge set holds *some* of the gain without
 any placement term, which would be the stronger result of the two.
+
+
+## 8 Nov: watching a rollout in PyMOL — `scripts/growth_traj.py`
+
+    python scripts/growth_traj.py --run g13_natedge
+    python scripts/growth_traj.py --run g13_natedge --crop 3 --out viz/g13
+    pymol viz/g13_natedge/view.pml
+
+Writes `traj.pdb` (one MODEL per step), `native.pdb` as a reference object, and
+`view.pml` which sets the animation up. `viz/` is gitignored.
+
+### The format question, settled
+
+**No fixed-topology trajectory format can represent growth.** DCD and XTC both
+assume one atom set for every frame, and a growth rollout's atom count changes
+as residues wake. The answer is a multi-model PDB loaded with PyMOL's
+**`discrete=1`**, which gives each state its own atoms — so a residue dormant
+at step 0 and alive at step 40 is simply *absent* from the first forty models
+and appears on the fortieth. That is birth, with no parking tricks and no
+occupancy games. Verified on a real growth rollout: atoms per model climb 36 to
+84 across 24 models. **Without the flag PyMOL reconciles the frames against
+each other and the animation is meaningless**, so `view.pml` passes it.
+
+### Two channels
+
+`B-factor` is churn: how far this residue's CA moved on this step, in A. The
+per-step cap is 0.3 A, so `spectrum b, minimum=0, maximum=0.3` has a
+principled top of scale and a rule at its fixed point is blue everywhere. This
+is the quantity the project has talked about for weeks and never drawn.
+
+`occupancy` depends on the run. A regeneration run writes 1.0 for intact and
+0.25 for the damaged window, since everything is alive from step 0 and the
+useful distinction is which residues are the task (`select window, q < 0.5`). A
+growth run writes **freshness** — steps since this residue woke, over 20 —
+which draws the growth front.
+
+Freshness rather than the activation alpha because **`RolloutState` carries no
+alpha**: `alive` is already a boolean by the time the state exists, so there is
+nothing to read, and a channel that merely looked like confidence would be
+worse than none.
+
+### Two faults found while building it, both of the usual family
+
+1. **A newborn's displacement is birth, not churn, and it is 6e4 times the
+    cap.** `park_coords` translates dormant residues out of reach, so on the
+    step a residue wakes its CA moves from the parked position to a real one —
+    measured at up to 2e4 A. Left in, the B-factor scale saturates and *every*
+    residue in that frame reads maximum red, so one artefact would repaint the
+    movie on exactly the frames growth is happening. Churn is now zero on a
+    residue's birth step, which is the honest value because the atom appearing
+    already shows it.
+2. **The PDB columns were off by one.** `resName` landed at 17 instead of 18
+    because `altLoc` was omitted, shifting every later field. It would have
+    loaded as a structure with no residue names. Caught by extracting the
+    fields back out by column index rather than reading the f-string, which is
+    the only way this is checkable; all 2304 lines now validate.
+
+### The hook it needed
+
+`rollout(..., trace=fn)` calls `fn(step, state, previous_coords, mask)` under
+`no_grad` after every step. `None` by default and that is every call in the
+project except this script.
+
+A trajectory cannot be recovered from a finished rollout: `RolloutResult` keeps
+no coordinates and `moves` is cleared at every truncation boundary. The
+alternative to a hook was driving `step_once` from the script, which would mean
+a second copy of the mask stream and the truncation logic, free to drift from
+the thing it claims to show — and this project has retracted four measurements
+for smaller gaps than that. Three tests in `tests/test_rollout.py` pin that
+every step is traced including those `moves` discards, that `previous` is the
+pre-step state, and that a traced rollout is bit-identical to an untraced one.
+
+**A note on `_trained_ish` in the test file.** It seeds the global RNG *after*
+constructing `AANCARule()`, so the rule's own initialisation comes from
+wherever the stream happens to be and two calls give two different rules. The
+first version of the determinism test failed against an untraced control and
+the hook looked guilty; two untraced runs differ by the same 2.23 A. Left
+alone, since no other test compares two runs — but it is a trap for the next
+one that does.
+
+### Read this before concluding the exporter is broken
+
+The frame head is zero-initialised on purpose, so **an untrained rule emits
+exactly zero rotation and translation and every model is identical to the
+first**. Pass `--perturb 0.05` for a rule that moves, and expect it to move
+randomly. Same fact that made g6_noid "perfectly static" (32241722).

@@ -19,3 +19,4 @@ data/*
 runs/
 runs_hole_v1.log
 runs_hole_*.log
+viz/

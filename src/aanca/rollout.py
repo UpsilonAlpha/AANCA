@@ -753,6 +753,7 @@ def rollout(
     record: bool = True,
     frozen: Tensor | None = None,
     fixed_neighbours: FixedNeighbours | None = None,
+    trace=None,
 ) -> RolloutResult:
     """Unroll ``config.steps`` times, detaching every ``config.truncate`` steps.
 
@@ -770,6 +771,24 @@ def rollout(
     what the diagnostic is. It does not touch the mask stream either, so the
     only difference from an ordinary rollout is which neighbours each residue
     is talking to.
+
+    ``trace(step, state, previous_coords, mask)`` is called under
+    ``no_grad`` after every step, for writing a trajectory out as it goes.
+
+    **Why a callback rather than another field on the result.** ``moves`` is
+    cleared at every truncation boundary and ``RolloutResult`` keeps no
+    coordinates, so a trajectory cannot be recovered from a finished rollout --
+    and the alternative, a list of all 120 frames on the result, would be a
+    standing invitation to leave it on during training, where it is 120 copies
+    of the structure per sample. A callback costs exactly nothing when it is
+    ``None``, which is every call the project makes except
+    ``scripts/growth_traj.py``.
+
+    It is handed the real rollout rather than a reimplementation of the loop on
+    purpose: a visualisation that drives ``step_once`` itself would be a second
+    copy of the mask stream and the truncation logic, free to drift from the
+    thing it claims to show. This project has retracted four measurements for
+    smaller gaps than that.
     """
     result = RolloutResult(state=state)
     # Cleared at every truncation boundary, so it only ever holds the live
@@ -826,6 +845,10 @@ def rollout(
                             )
                         )
                     )
+
+        if trace is not None:
+            with torch.no_grad():
+                trace(step, state, seen, mask)
 
         if supervise_step is not None and step == supervise_step:
             result.supervised = (mu, log_kappa, seen)

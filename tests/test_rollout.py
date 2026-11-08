@@ -367,3 +367,90 @@ def test_pool_evicts_at_capacity(setup):
 def test_pool_rejects_zero_capacity():
     with pytest.raises(ValueError):
         SamplePool(capacity=0)
+
+
+# -- the trace hook --------------------------------------------------------
+
+
+def test_trace_is_called_once_per_step_with_the_pre_step_coordinates(setup):
+    """``trace`` sees every step, and ``previous`` is the state going in.
+
+    The second half is what a trajectory depends on: ``scripts/growth_traj.py``
+    reads churn as the distance between ``previous`` and the new state, so a
+    ``previous`` that was actually the post-step coordinates would report zero
+    movement everywhere and look like a converged rule.
+    """
+    _protein, topo, _coords, damaged = setup
+    rule = _trained_ish()
+    config = _config(steps=5)
+    seen = []
+
+    def trace(step, state, previous, mask):
+        seen.append((step, previous.clone(), state.coords.clone(), mask.clone()))
+
+    result = rollout(
+        rule, initial_state(damaged, rule), topo, config, trace=trace
+    )
+
+    assert [row[0] for row in seen] == [0, 1, 2, 3, 4]
+    # The first step's input is the state the rollout was handed.
+    assert torch.allclose(seen[0][1], damaged)
+    # Each step's input is the previous step's output, so the chain is intact
+    # across truncation boundaries as well as within a segment.
+    for earlier, later in zip(seen, seen[1:]):
+        assert torch.allclose(earlier[2], later[1])
+    assert torch.allclose(seen[-1][2], result.state.coords)
+    # Something actually moved, or the test above would hold vacuously.
+    assert not torch.allclose(seen[0][1], seen[-1][2])
+
+
+def test_trace_does_not_change_the_rollout(setup):
+    """A traced rollout is bit-identical to an untraced one.
+
+    The hook runs under ``no_grad`` and must not perturb the RNG stream, or
+    turning a visualisation on would quietly change the dynamics it is meant
+    to be showing.
+    """
+    _protein, topo, _coords, damaged = setup
+    config = _config(steps=5)
+
+    def run(trace):
+        # Seeded **before** the rule is constructed, not after. ``_trained_ish``
+        # seeds only once it has built the rule, so ``AANCARule()``'s own
+        # initialisation comes from wherever the global stream happens to be and
+        # two calls give two different rules -- which made the first version of
+        # this test fail against an untraced control, blaming the hook for
+        # ordinary nondeterminism. The helper is left alone because no other
+        # test compares two runs to each other.
+        torch.manual_seed(11)
+        rule = AANCARule()
+        with torch.no_grad():
+            for layer in (rule.delta_head[-1], rule.kappa_head[-1]):
+                layer.weight.normal_(0.0, 0.1)
+        return rollout(
+            rule, initial_state(damaged, rule), topo, config,
+            generator=torch.Generator().manual_seed(7), trace=trace,
+        ).state.coords
+
+    plain = run(None)
+    traced = run(lambda *a: None)
+    assert torch.equal(plain, traced)
+
+
+def test_trace_sees_steps_a_truncation_boundary_would_have_cleared(setup):
+    """Every step is traced, including those ``moves`` throws away.
+
+    ``RolloutResult.moves`` is cleared at each truncation boundary, which is
+    why the trajectory cannot be rebuilt from a finished rollout and why this
+    hook exists at all.
+    """
+    _protein, topo, _coords, damaged = setup
+    rule = _trained_ish()
+    config = _config(steps=6, truncate=2)
+    steps = []
+    result = rollout(
+        rule, initial_state(damaged, rule), topo, config,
+        trace=lambda step, *a: steps.append(step),
+    )
+    assert steps == [0, 1, 2, 3, 4, 5]
+    assert len(result.moves) < len(steps)
