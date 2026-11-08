@@ -9763,3 +9763,128 @@ placement term is available to a real run. Identity's attribution survives a
 third arm (`twist` 9.7-12.1, no jump at 1000; the 12.1 at 1500 is the highest
 single reading across the three and is not at the onset). `bond` falls 3.815 to
 3.434.
+
+
+## 8 Nov: runs are configs now, not shell lines
+
+    python scripts/train_growth.py configs/regeneration.toml --section g15_both
+    python scripts/train_growth.py configs/regeneration.toml --list-sections
+    AANCA_ENTRY=scripts/train_growth.py \
+      bash scripts/bunya_submit.sh gpu configs/regeneration.toml --section g15_both --resume
+
+Layout and rule copied from `mcube` (`config_examples/*.yaml`, and the comment
+above `build_parser` in `src/mcube/cli.py`): **nothing that changes a result is
+a command-line option.** A setting that moves a number lives in a named section;
+an option may only address the config (`--section`, `--list-sections`) or name a
+resource (`--device`, `--max-seconds`, `--stop-file`, `--resume`).
+
+### Why, specifically
+
+Fifteen growth arms were launched as twenty-token shell lines, and the only
+record of what any of them was is the `args :` line in a Slurm log. That is not
+diffable, not reviewable before submission, and not attached to the checkpoint.
+g13, g14 and g15 are the comparison the project now rests on, and the evidence
+that they were single-variable arms was three log headers read by eye.
+
+Now `[g13_natedge.inputs]` is one line long and the claim is readable.
+
+### Four decisions and their reasons
+
+  * **TOML via stdlib `tomllib`, not YAML.** The one place mcube's layout is not
+    copied. The package declares two dependencies and adding `pyyaml` would have
+    to hold on the laptop *and* in `.venv_bunya` mid-experiment. Checked rather
+    than assumed: Bunya's venv is Python **3.12.3** (`pyvenv.cfg`) and the
+    laptop's is 3.12.14, so `tomllib` is present on both and nothing is added.
+  * **`[base.inputs]` states all 49 settings explicitly**, enforced by
+    `check_base_is_complete`. A config that leans on parser defaults is a config
+    whose meaning changes when a default changes, which would silently
+    reinterpret a recorded run.
+  * **The argparse parser became `build_schema()`** and is never asked to parse
+    anything. `aanca.config` reads names, types, defaults and choices off it, so
+    a setting is declared once and a config key cannot drift from what it sets.
+    It stayed an `ArgumentParser` rather than becoming a dataclass because the
+    fifty-odd comments on those `add_argument` calls are the record of why each
+    setting exists.
+  * **The tag is the section name.** A run directory can no longer disagree with
+    the settings that produced it. Setting `tag` in a section is an error.
+
+Unknown keys, mistyped keys, a key that names a resource, an `inherits` cycle and
+an unknown section are all errors naming the nearest valid alternative. The
+reason is mcube's own recorded fault: `md` read its structure from the config and
+*silently ignored* `--pdb`, so a run equilibrated the wrong file and looked
+entirely normal. A config key that silently does nothing is the same fault.
+
+### What makes the port safe
+
+`tests/test_config.py` holds the three arms' command lines **transcribed from
+their own Slurm logs**, parses them with the same schema the trainer uses, and
+asserts the config section resolves to a byte-identical namespace. So a config
+that would have changed an arm fails a test rather than quietly producing a
+fourth curve on the same axis. 18 tests.
+
+Each run also writes `runs/<tag>/config.toml` — fully resolved, explicit, and
+complete enough to be read back on its own — so a finished run carries its own
+settings instead of pointing at a config file that has since moved on.
+
+### Two things left as they are, on purpose
+
+  * `scripts/train.py` (packing) still takes flags. It was not touched; the
+    restart chain in `bunya_train.slurm` now reads **either** `--tag` or
+    `--section` so one chain serves both entry points.
+  * `configs/regeneration.toml` sets `lab_rotation = true`, which is wrong on
+    the argument in `rigid_relax` — see the next section. It stays because g13,
+    g14 and g15 ran that way and this file has to reproduce them. The arm that
+    turns it off is a new section, not an edit to the base.
+
+## 8 Nov: CA as the point, and rotation as a chi -- the answer, and what it found
+
+Ulban's question: can CA be "our point" so the translation takes E(n)-GNCA's
+structural form, and can the rotation then be trained the way chis are?
+
+**On CA as the point: yes, and it is strictly better than what we do.** Their
+update is `x_i + mean_j (x_i - x_j) phi_x(m_ij)` -- the network emits only
+scalars and the direction comes from the geometry, so equivariance is
+structural. Ours emits a 6-vector from an invariant state and applies it
+through `rigid_relax`, which means the network has to *learn* the map from
+invariant features to frame coordinates -- and that map is where the 7 Nov bug
+lived. Under the neighbour-vector form the bug is not merely absent, it is
+**unrepresentable**.
+
+Two details for whoever builds it. The move is confined to `span{x_i - x_j}`,
+which at a measured degree of 28-33 is all of R^3, so nothing is lost where it
+matters -- and where the span *is* degenerate (a residue with one or two
+neighbours) the architecture becomes structurally unable to move confidently,
+which is
+`placing-a-node-from-local-distances-needs-a-globally-rigid-neighbourhood`
+expressed in the architecture instead of in a loss. And their update is
+unbounded, so cap the resultant after the sum rather than per term: direction is
+preserved and the 0.3 A per-step budget stays comparable with all fifteen prior
+arms.
+
+**On rotation as a chi: the representation transfers, the coordinate does not.**
+The chi path never had this bug because a torsion is *invariant* -- rotate the
+whole protein and chi1 is unchanged -- so predicting it from invariant features
+with a (cos, sin) pair is well posed. A rotation expressed in the residue's own
+frame has the same property, and that is `lab_rotation = false`.
+
+The literal chi analogy -- predict delta-phi/psi -- breaks, and the reason is
+already in `growth.py`: a chi is a **leaf** (chi1 moves only that side chain),
+while phi/psi are **internal to the chain**, so a change at residue i rotates
+everything C-ward of it. The lever arm reaches 29 A over 75 residues and the
+coalescence probe measured r = 0.970 between junction gaps and accumulated
+drift. That non-locality is why the frame head exists at all.
+
+### What the question turned up: the rotation half is still switched off
+
+Every arm in the record, g15 included, runs `--lab-rotation`, so the rotation
+is predicted from invariant features and applied in the **lab frame** -- the
+same category error as the translation half, unfixed. The reason it was kept is
+that making the rotation local trebles the twist transition's amplitude
+(16.6/17.6 against 50.2/53.9) -- **but all four of those arms have an identity
+gradient, and the transition belongs to identity.** At `--identity-weight 0`
+there is no transition for the conjugation to amplify, so the justification has
+expired. One arm settles it:
+`docs/claims/the-rotation-half-of-the-equivariance-fix-is-still-switched-off.md`.
+
+It is a better next arm than weighting the window's internal half, because it
+removes an inexpressibility rather than adding a term.

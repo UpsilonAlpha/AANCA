@@ -1,13 +1,17 @@
 #!/bin/bash
 # Submit a resumable AANCA training run on Bunya, and chain it past the walltime.
 #
-#   bash scripts/bunya_submit.sh gpu --tag gpu_a --updates 100000
-#   bash scripts/bunya_submit.sh cpu --tag cpu_a --updates 100000
-#   bash scripts/bunya_submit.sh gpu --tag gpu_a --updates 100000 --dry-run
+#   AANCA_ENTRY=scripts/train_growth.py \
+#     bash scripts/bunya_submit.sh gpu configs/regeneration.toml --section g15_both --resume
+#   bash scripts/bunya_submit.sh cpu --tag cpu_a --updates 100000     # packing trainer
+#   bash scripts/bunya_submit.sh gpu configs/regeneration.toml --section g15_both --dry-run
 #
-# Everything after the profile is passed through to ``scripts/train.py``, so the
-# scientific settings live in the command line you typed and the resource
-# settings live here. The job script derives the device, the thread count and
+# Everything after the profile is passed through to the trainer, and the
+# resource settings live here. **For the growth trainer the scientific settings
+# are NOT on the command line**: they are a named section of a config file, so
+# what a run was is a file in git rather than a shell line in somebody's
+# scratch history. See ``aanca.config``. The packing trainer
+# (``scripts/train.py``, the default entry) still takes flags. The job script derives the device, the thread count and
 # the time budget from the allocation it gets, so a resubmission carries only
 # the arguments below.
 #

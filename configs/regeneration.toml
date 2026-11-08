@@ -1,0 +1,130 @@
+# Regeneration: a window of residues destroyed, every other residue at its
+# crystal pose, the rule asked to put the window back. The metric is `rmsd_dmg`
+# -- the damaged window superposed on the intact context, read on the window --
+# and the number to beat is the 12.23 A an ideal helix parked in the window's
+# place already scores. Nine arms before g13 sat at 12.18-12.85, i.e. did
+# nothing.
+#
+#   python scripts/train_growth.py configs/regeneration.toml --section g15_both
+#   python scripts/train_growth.py configs/regeneration.toml --list-sections
+#   bash scripts/bunya_submit.sh gpu configs/regeneration.toml --section g15_both
+#
+# Nothing that changes a result is a command-line option: see `aanca.config`.
+# [base.inputs] states every setting explicitly so that a later change to a
+# parser default cannot reinterpret a run recorded here. An arm states only its
+# difference from the base, which is what makes its claim to be a
+# single-variable comparison readable instead of a diff of two log headers.
+#
+# ONE THING THE BASE GETS WRONG, LEFT AS IT IS DELIBERATELY. `lab_rotation`
+# is true, so every arm here applies the emitted *rotation* in the lab frame
+# while applying the translation in the residue's own frame. By the argument in
+# `growth.rigid_relax` that is exactly the half of the 7 Nov bug that has not
+# been fixed: an invariant encoder cannot represent a lab-frame rotation either.
+# It stays true in the base because g13, g14 and g15 ran that way and this file
+# has to reproduce them. The arm that turns it off belongs in a new section, not
+# in an edit to this one.
+
+[base.inputs]
+activation = "sample"
+activation_init = -2.0
+birth = "none"  # "none": every slot alive from step 0, so nothing is grown and the window places itself
+bond_weight = 0.122
+clash_tolerance = 0.5
+clash_weight = 1.0
+clip = 1.0
+completion_weight = 5.23
+coupling_radius = 5.0
+crop_size = 128
+cward_only = false
+damage = 12  # the task: destroy this many consecutive residues, keep the rest at crystal pose
+equivariant_move = true  # read the emitted move in the residue's own N-CA-C frame (7 Nov; see rigid_relax)
+eval_activation = "sample"
+eval_every = 250
+eval_structures = 12  # the 12 held-out crops every regeneration number in the record is measured on
+fape_clamp = 10.0
+fape_clamp_prob = 1.0
+fape_weight = 0.1  # low because FAPE is clamped and so flat over the window's journey (clamped-fape node)
+identity_keep = 2.0
+identity_sampling = "sample"
+identity_start = "masked"
+identity_track = "auto"
+identity_weight = 0.0
+init_from = ""
+initial = "helix"  # where the damaged window starts; its rmsd_dmg against native is the 12.23 A baseline
+k = 32
+lab_rotation = true  # ...TRANSLATION ONLY: the rotation is still applied in the lab frame. See the note below.
+lr = 0.0003
+max_births = 8
+max_rotation = 0.1
+max_translation = 0.3
+morphogen = false
+move_weight = 1.0  # teacher forcing: supervises every emitted move against the ideal one. CEILING, not a result.
+native_edges = false  # off in base; the g13/g15 arms turn it on. CEILING: it reads the target graph.
+orientation_weight = 0.0
+pairwise_weight = 0.0  # off in base; the g14/g15 arms turn it on. Ordinary supervision, available to a real run.
+placement_rotation = 3.14159265
+placement_steps = 0
+placement_translation = 4.0
+reach_weight = 0.086
+seed = 0
+seeds = 16  # ignored under birth = none; kept at the recorded value so the arms stay byte-comparable
+split = "train"
+steps = 120
+structures = 400
+truncate = 12
+update_schedule = "bernoulli"
+updates = 2000
+
+# ---------------------------------------------------------------------------
+# The arms, newest last. Each is a diff against the base and nothing else.
+# ---------------------------------------------------------------------------
+
+# 32489939. Hold neighbour selection at the native edge set for the whole
+# rollout; edge features are still measured from live coordinates. Attacks the
+# fact that `build_graph` runs inside `step_once` on live coordinates, so a
+# displaced residue reads the neighbourhood of where it wrongly is.
+# Result: best 10.48 @250, settled 11.42, holds 0.84 A. Gives up 0.9 A of its
+# best -- it finds a position it cannot keep.
+[g13_natedge.inputs]
+native_edges = true
+
+# 32489940. An unclamped window-to-anchor distance restraint, in A^2. Attacks
+# the other problem: clamped FAPE is flat over the first half of the window's
+# ~13 A journey (7.5 % of its fall there, against 81.7 % for this term).
+# Result: best 10.70 @1250, settled 10.91, holds 1.25 A.
+[g14_pairwise.inputs]
+pairwise_weight = 0.01
+
+# 32494313. Both levers. Pre-registered at ec0ce82 before submission; settled
+# 10.24 landed in the first of four exclusive buckets (superadditive, below the
+# best either arm reached), and the curve never retreats -- its worst reading
+# over 2000 updates beats either single arm's settled value. Best 9.94 @1750 is
+# the lowest rmsd_dmg in the project.
+#
+# Both keys are stated here rather than inheriting from g14_pairwise. The arm's
+# whole claim is "both levers at once", so both should be visible in one place;
+# an `inherits` would save a line and hide the comparison.
+[g15_both.inputs]
+native_edges = true
+pairwise_weight = 0.01
+
+# The indicated next arm, not yet run: charge for the window's internal shape.
+# Every arm above ends WORSE than the baseline's 16.88 on the window-to-window
+# half (24.81, 29.14, 31.15), monotonically worse the harder placement is
+# pushed, so some of the rmsd_dmg gain is a window in the right place with the
+# wrong shape. Weight unset on purpose -- the sign of the error is unmeasured,
+# and a symmetric distance restraint is the wrong term for a collapsed window.
+# Fill it in when the signed-bias readout says which way it is wrong.
+
+# NOT YET RUN. g15 with the rotation read in the residue's own frame too, which
+# no arm at identity-weight 0 has ever done. See
+# docs/claims/the-rotation-half-of-the-equivariance-fix-is-still-switched-off.md
+# for why the reason `lab_rotation = true` was kept has expired, and for what
+# this arm predicts (twist stays in the 9-12 band; rmsd_dmg improves or holds).
+# It removes an inexpressibility rather than adding a term, which is why it is
+# a cheaper test than weighting the window's internal half.
+[g16_localrot]
+inherits = "g15_both"
+
+[g16_localrot.inputs]
+lab_rotation = false

@@ -56,6 +56,7 @@ from pathlib import Path
 import torch
 
 from aanca import checkpoint as ckpt
+from aanca import config as run_config
 from aanca.data import RepackingDataset, read_manifest
 from aanca.growth import (
     BOND_WEIGHT,
@@ -380,8 +381,20 @@ def report(scores: dict[str, float], identity: bool) -> str:
     return "\n".join(lines)
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
+def build_schema() -> argparse.ArgumentParser:
+    """Every setting a run has, as an argparse parser used as a *schema*.
+
+    It is never asked to parse a command line. ``aanca.config`` reads names,
+    types, defaults and choices off it, so a setting is declared exactly once
+    and a config key cannot drift from the thing it sets. The reason it is an
+    ``ArgumentParser`` rather than a dataclass or a dict is the fifty-odd
+    comments below: they are the record of why each setting exists and what
+    measurement forced it, and moving them would have meant rewriting them.
+
+    Added when the project moved from command-line flags to named config
+    sections; see ``aanca.config`` for why.
+    """
+    parser = argparse.ArgumentParser(description=__doc__, add_help=False)
     parser.add_argument("--split", default="train")
     parser.add_argument("--structures", type=int, default=400)
     parser.add_argument("--eval-structures", type=int, default=12)
@@ -681,7 +694,90 @@ def main() -> int:
         "different pool would renumber it and score structures the source run "
         "trained on.",
     )
-    args = parser.parse_args()
+    return parser
+
+
+def build_parser() -> argparse.ArgumentParser:
+    """The actual command line: a config, a section, and resources.
+
+    Nothing here changes a result. See ``aanca.config``.
+    """
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("config", help="TOML config, e.g. configs/regeneration.toml")
+    parser.add_argument(
+        "--section",
+        help="Which arm in the config to run. It is also the run tag, so the "
+        "run directory cannot disagree with the settings that produced it.",
+    )
+    parser.add_argument("--device", default="auto", help="auto, cpu or cuda")
+    parser.add_argument(
+        "--max-seconds",
+        type=float,
+        default=0.0,
+        help="Stop cleanly before a walltime; the restart chain sets it.",
+    )
+    parser.add_argument("--stop-file", default=None, help="Stop when this path appears")
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="Continue THIS run after a walltime. It changes nothing about "
+        "what the run is, which is why it is not in the config; starting a "
+        "new run from another run's weights is `init_from`, which is.",
+    )
+    parser.add_argument(
+        "--list-sections",
+        action="store_true",
+        help="Print the arms this config defines and exit",
+    )
+    parser.add_argument(
+        "--diff",
+        metavar="SECTION",
+        help="Print how --section differs from SECTION and exit. An arm's claim "
+        "to be a single-variable comparison is checkable with this instead of "
+        "by diffing two log headers by eye, which is how it was checked for "
+        "the first fifteen arms.",
+    )
+    return parser
+
+
+def main() -> int:
+    runtime = build_parser().parse_args()
+    schema = build_schema()
+
+    data = run_config.load(runtime.config)
+    if runtime.list_sections:
+        for name in run_config.sections(data):
+            print(name)
+        return 0
+    if not runtime.section:
+        print(
+            "error: --section is required. This config defines: "
+            + (", ".join(run_config.sections(data)) or "(none)")
+        )
+        return 2
+    run_config.check_base_is_complete(data, schema)
+    inputs = run_config.resolve(data, runtime.section)
+    args = run_config.to_namespace(schema, inputs, runtime.section, runtime)
+
+    if runtime.diff:
+        other = run_config.to_namespace(
+            schema, run_config.resolve(data, runtime.diff), runtime.diff, runtime
+        )
+        rows = [
+            (key, getattr(other, key), getattr(args, key))
+            for key in sorted(vars(args))
+            if key != "tag" and getattr(args, key) != getattr(other, key)
+        ]
+        print(f"{runtime.diff} -> {runtime.section}")
+        if not rows:
+            print("  (identical; these are the same arm under two names)")
+        for key, was, now in rows:
+            print(f"  {key}: {was!r} -> {now!r}")
+        print(f"  {len(rows)} setting(s) differ")
+        return 0
+
+    print(f"config     : {runtime.config} [{runtime.section}]")
+
 
     if args.birth == "free" and args.placement_steps == 0:
         # Free placement with no placement window is the Cartesian birth with
@@ -853,6 +949,14 @@ def main() -> int:
 
     out_dir = RUNS / args.tag
     out_dir.mkdir(parents=True, exist_ok=True)
+    # The run carries its own settings, fully resolved, so a finished run does
+    # not depend on a config file that has since moved on. Written every time
+    # rather than once: under --resume the second segment must agree with the
+    # first, and a snapshot that changed between them is the thing worth
+    # seeing in a diff.
+    (out_dir / "config.toml").write_text(
+        run_config.snapshot(args, args.tag, runtime.config), encoding="utf-8"
+    )
     last_path = out_dir / "last.pt"
     stop_file = Path(args.stop_file) if args.stop_file else out_dir / "STOP"
 

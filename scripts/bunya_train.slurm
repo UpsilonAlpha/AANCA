@@ -159,10 +159,16 @@ echo "finished   : $(date -Is)"
 # a resubmission after a deliberate stop is the one failure that would be hard
 # to notice: the run would simply carry on.
 if (( RC == 64 )); then
+    # The growth trainer takes its settings from a config section and the tag
+    # IS the section name (see aanca.config), so there is no --tag to read.
+    # The packing trainer still has one. Checking both keeps one chain for two
+    # entry points; a chain that looked for the wrong one would resubmit with
+    # TAG="run" and then fail to find the stop file for the real run, which is
+    # the quiet kind of drift this file's other comments are about.
     TAG="run"
     args=("$@")
     for ((i = 0; i < ${#args[@]}; i++)); do
-        [[ "${args[i]}" == "--tag" ]] && TAG="${args[i + 1]}"
+        [[ "${args[i]}" == "--tag" || "${args[i]}" == "--section" ]]             && TAG="${args[i + 1]}"
     done
     if [[ -e "${ROOT}/runs/${TAG}/STOP" ]]; then
         echo "stop file present for tag ${TAG}; chain ends here"
