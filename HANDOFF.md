@@ -9177,3 +9177,49 @@ Nodes added:
 `placing-a-node-from-local-distances-needs-a-globally-rigid-neighbourhood` (claim, open),
 `an-equivariant-graph-nca-morphs-random-coordinates-into-a-target-point-cloud` (observation, literature),
 `the-perception-graph-is-rebuilt-from-where-the-residue-wrongly-is` (observation, ours).
+
+### Arm 1 is wired: `--native-edges`, 2026-11-08
+
+The first of the two cheap arms above exists as a flag on
+`scripts/train_growth.py`. It holds the neighbour **selection** at the edge set
+of the native coordinates for the whole rollout, so a residue that starts
+13.3 A out still message-passes over its true neighbours — which is what
+E(n)-GNCA does by construction.
+
+**Only the selection is frozen.** The distances, the local direction and the
+envelope weight are rebuilt from the live coordinates at every step, so the
+residue measures its true neighbours *at their current separations*. Freezing
+the features too would make the rule's input a constant for 120 steps and any
+number read off it meaningless rather than merely wrong, so
+`tests/test_native_edges.py` asserts both halves: the index tensor identical at
+every step, the distance and envelope blocks different between steps, and the
+sequence-offset block — a property of the topology — identical.
+
+Two deliberate choices, both the opposite of what this project has been burned
+by:
+
+* **It refuses rather than degrades.** `--native-edges` outside `--birth none`
+  exits with a message, in the script *and* in `growth_objective`, because
+  under growth the alive set changes every step: one selection taken from the
+  native coordinates would stop being the live topology's and would hand a
+  dormant slot the finished structure's neighbourhood. `--damage` is still
+  silently dropped in the same position (`growth.py`), and that is the shape
+  being avoided here. A fixed list of the wrong shape, dtype or range raises
+  and is never recomputed.
+* **The whole graph is frozen, not the damaged residues' rows.** A per-residue
+  mix would make an intact residue's perception depend on which of two
+  selections its own row came from, and the native and live selections agree
+  for an intact residue at step 0 anyway. If the damaged-rows-only variant is
+  ever wanted it is one `torch.where` on the neighbour tensor, but it is a
+  different experiment and should be a different flag.
+
+It is a **ceiling diagnostic and not a design method** — it reads the target
+graph, which no de novo run has. It is in `WARM_START_MUST_MATCH` and in the
+checkpoint `args`, so a probe pointed at `best.pt` can tell which arm it is
+reading; `best.pt` carrying no `args` is what retracted 32241768.
+
+Code: `torch_graph.FixedNeighbours` (the validation and the why),
+`rollout.fixed_neighbours_at` (the selection, computed by the caller so
+`rollout` is still never handed a native structure),
+`rollout.rollout`/`step_once` (threaded through),
+`growth.growth_objective(native_edges=...)`, `scripts/train_growth.py`.
