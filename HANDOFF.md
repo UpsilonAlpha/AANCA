@@ -9619,3 +9619,75 @@ narrower claim than the one I reported an hour ago.
 The lesson is cheap and worth keeping: **a curve read before it is finished is
 a direction guessed, not measured.** g14 had already turned at 1250 when I
 called it falling at 1500.
+
+
+## 8 Nov, pre-registered BEFORE g15 is submitted: both flags together
+
+`g15_both` = g13's and g14's arms at once: `--native-edges` **and**
+`--pairwise-weight 0.01`, everything else identical to both
+(`--identity-weight 0`, `--equivariant-move --lab-rotation`, 2000 updates,
+eval every 250, crop 128, 16 seeds, 120 steps, `--damage 12`). The weight stays
+at 0.01 so the arm is comparable with g14; changing two things at once would
+make it uninterpretable.
+
+**Only one slot is needed, not the third I asked for.** g13 and g14 are both
+finished, so this runs inside the standing cap of two with one slot spare.
+
+### The test, on one scalar, defined before the run exists
+
+Last time I wrote four branches as alternatives and two of them came true
+together, because they were about different quantities. So this one is a single
+number with a single partition.
+
+**`settled` = the mean of g15's `rmsd_dmg` at updates 1750 and 2000.** Two
+points rather than one because both previous arms wobbled by ~0.15 A between
+adjacent evaluations, and the last point alone is within that noise.
+
+The numbers it is judged against, all on the same 12 held-out crops and the
+same 12.23 A baseline:
+
+    arm             best   settled
+    g13_natedge    10.48     11.42      (edge set alone)
+    g14_pairwise   10.70     10.91      (restraint alone)
+
+The four outcomes are mutually exclusive and exhaustive by construction:
+
+  * **settled < 10.70** -- below the *best* either arm ever reached.
+    Superadditive: the edge set finds the position early and the restraint
+    defends it, which is what "complementary" would have to mean to be worth
+    the slot. The next arm is a weight sweep, not another lever.
+  * **10.70 <= settled < 10.91** -- better than the restraint alone but not
+    better than either arm's best. Complementary but subadditive: the edge set
+    buys something real on top of the restraint, and the ceiling is set by
+    something neither flag touches.
+  * **10.91 <= settled < 11.42** -- between the two arms' settled values. **The
+    edge set adds nothing once placement is charged for**, and g13's advantage
+    at update 250 was about how fast it found the position, not whether it
+    could be kept. The honest conclusion would then be that only the
+    restraint matters and `--native-edges` is a diagnostic that has served its
+    purpose.
+  * **settled >= 11.42** -- worse than either arm alone. The levers interfere;
+    the likeliest reading is that a frozen native edge set and a distance
+    restraint are two ways of telling the residue the same thing, and
+    double-counting it overshoots.
+
+### A second, independent prediction
+
+Both arms ended **worse than the baseline's 16.88** on the window-to-window
+half -- g13 at 24.81, g14 at 29.14 -- each buying one half with the other.
+**I expect g15's window half to end above 16.88 as well**, because nothing in
+either flag charges for internal shape.
+
+If that holds, the internal-half weight is not an alternative to this arm but
+the necessary next one, and the trade is a property of the objective rather
+than of either lever. If g15's window half comes in *at or below* 16.88, then
+the trade was an artefact of running the levers singly and I have the mechanism
+wrong.
+
+### What would make this round worthless
+
+If g15's curve has the same shape as g14's -- a minimum near 1250 and a drift
+back by 2000 -- then `settled` is measuring the drift and not the arm, and the
+comparison above should be redone on each arm's *best* instead. Noted now so
+that switching metric afterwards is visibly a change of plan rather than a
+choice of the flattering number.
