@@ -61,6 +61,20 @@ no arm aims. **So on this task the grid is already there and the rule is not
 reading it**, which is a different and more tractable problem than the
 whole-structure arms had, and it is the one worth working on.
 
+## Two of the three, not three
+
+Sharpened since: the context supplies *where it is* and *a frame*, and it does
+**not** supply the determinate neighbourhood. The perception graph is a k-NN
+selection rebuilt from the live coordinates every step
+([[the-perception-graph-is-rebuilt-from-where-the-residue-wrongly-is]]), so a
+residue 13 A out reads the neighbours of the wrong place -- the one thing this
+node said a cell gets from the substrate rather than working out. The published
+automaton that does succeed at this task message-passes over the *target* graph
+([[an-equivariant-graph-nca-morphs-random-coordinates-into-a-target-point-cloud]]),
+and the solvability condition for placing a node from local distances at all is
+in
+[[placing-a-node-from-local-distances-needs-a-globally-rigid-neighbourhood]].
+
 **Status `open`.** The Growing-NCA half is literature and the
 protein half is an argument, not a measurement. What would make it a finding: a
 morphogen or positional-encoding channel on the whole-structure task moving an

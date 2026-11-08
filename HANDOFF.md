@@ -9037,3 +9037,143 @@ The probe now prints its pool, which is how this stops recurring:
 
     pool: 23760 available, first 1AZI, last 2OQE; held-out ids
     ['3B82','4CQE','1JNP','2FAZ','8QTF','6HJ6','2QB5','12XX','3N71','1T7V','3VYC','10XL']
+
+
+## 8 Nov, prior-art search: the architecture is published, and so is the condition it needs
+
+Ulban's question: can we look at an MPNN-style distance graph and ask "where
+should these residues go based on local information?", place them, and let the
+backbone connect up afterwards — rather than growing from a terminus, which is
+wrong for an interface and wrong whenever the richest environment is mid-window.
+
+The literature says yes, and names the condition.
+
+### 1. The problem is network localization, and solvability is a rigidity property
+
+Aspnes et al. 2006, *A theory of network localization*. Anchors with known
+positions plus distance edges form a *grounded graph*. A node is **uniquely
+localizable iff that graph is generically globally rigid**; otherwise the
+distances admit a reflection or a continuous family and no local information
+picks one. The general case is NP-hard; the tractable subclass is
+**trilateration graphs**, placed one node at a time off already-placed ones.
+Random geometric graphs become trilateration graphs above a density threshold.
+
+The protein instance is Dong & Wu 2003's **geometric build-up algorithm**: four
+already-placed non-coplanar atoms plus their distances to an undetermined atom
+fix it, in O(n). Sit, Wu & Yuan 2009 added the least-squares form for noisy
+distances.
+
+**This is the rigorous version of Ulban's point about growth direction.** A
+residue extended off a terminus has anchors on one side only, nearly collinear,
+so its position is genuinely under-determined — not hard, under-determined. A
+residue mid-window or across an interface has anchors on several sides and is
+near the trilateration case. Terminal growth is not a worse heuristic; it is
+the one geometry where the question has no unique answer.
+
+### 2. Our own architecture is published and it works — on a different loss and a different graph
+
+Gala, Grattarola & Quaeghebeur, *E(n)-equivariant Graph Neural Cellular
+Automata*, TMLR 2024. One E(n)-equivariant graph convolution per CA step, 5K
+parameters, one hop, no step index, trained for a fixed point with a replay
+pool. Its pattern-formation task is ours: morph random Gaussian coordinates
+into a target point cloud. **8 of 8 geometric graphs, 256 to 2503 nodes,
+stable attractor held 1000 steps past the training horizon, regenerating after
+local and global damage, with no anchors at all.**
+
+Recorded as
+`docs/claims/an-equivariant-graph-nca-morphs-random-coordinates-into-a-target-point-cloud.md`
+— the **first `literature` observation in the map**, which until now held only
+depositions and our own calculations.
+
+Three differences from our runs, all of them ours and all measurable:
+
+| | E(n)-GNCA | us |
+| --- | --- | --- |
+| loss | all-pairs distance MSE, "necessary to uniquely identify the target state" | FAPE, clamped at 10 A |
+| graph | the **target** graph, fixed | k-NN rebuilt from live coordinates every step |
+| step | unbounded MLP scalar | 0.3 A cap, `truncate 12` |
+
+The first is the rigidity condition arriving as a gradient: a residue 13 A out
+is past FAPE's clamp, so it contributes a constant and no signal. The authors
+say outright that nodes "are not aware of their global location, and have
+|V|-1 constraints to satisfy", and that the all-pairs loss is what makes the
+target unique.
+
+`src/aanca/graph.py:22` already cites E(n)-GNCA and chooses *against* its
+coordinate update — "feeding raw displacement vectors is the failure mode".
+That choice was about equivariance and it stands. What was not noticed is that
+the paper's *supervision* and *edge set* are also load-bearing, and we took
+neither.
+
+### 3. The found fault: perception is rebuilt from where the residue wrongly is
+
+`build_graph` is called **inside `step_once`** (`rollout.py:458`, function at
+`rollout.py:388`), on the live coordinates. Neighbour selection is a hard
+argsort over current heavy-atom positions.
+
+In regeneration the window starts ~13.3 A out, so **a damaged residue's
+neighbour list is the neighbourhood of the wrong location.** The rule is asked
+where it belongs while being shown the environment of the place it does not
+belong, and the gradient cannot even flow through the choice of neighbour —
+only through the distance envelope.
+
+This revises the grid argument. `in-regeneration-the-surviving-context-is-the-grid`
+claimed the intact context hands a residue all three things the lattice hands a
+Growing-NCA cell: where it is, a frame, and a determinate neighbourhood —
+whose own words for the third are *"a property of the substrate, not something
+the cell works out"*. **Ours is worked out, every step.** Two of three, and the
+missing one is the one that would tell a residue which native neighbours to
+measure itself against.
+
+It also reorders the constraints. `align` finding no bearing is what a correct
+implementation of a mis-specified perception *should* produce, so the gradient
+window is the second problem, not the first: widening it lets a rule follow a
+bearing further, and there is no bearing while the edges describe the mistake.
+
+Node: `docs/claims/the-perception-graph-is-rebuilt-from-where-the-residue-wrongly-is.md`.
+
+### 4. Chroma is the decoupling Ulban described, at protein scale
+
+Ingraham et al., *Nature* 623:1070, 2023. A random-graph GNN of sub-quadratic
+cost predicts **inter-residue geometry**, and equivariant layers then **solve
+for a global consensus structure** from those predicted pairwise geometries.
+Local prediction, global solve — the build-up algorithm with a learned distance
+predictor in front of it, and exactly "connecting them into a backbone comes
+later". It is the strongest comparable for the staged version of the proposal,
+and it is also the answer to "does anyone do this without diffusing the whole
+backbone at once".
+
+RFdiffusion's authors, separately, report inpainting failing "when insufficient
+starting information is provided" — the rigidity condition arriving a third
+time, as an empirical limit.
+
+### 5. What this changes about what to run
+
+Two cheap arms, in this order, both on the existing `--damage` path:
+
+1. **Hold the perception graph at the native edge set** for damaged residues.
+   This is a diagnostic, not a design method — it isolates "can the rule place
+   from local information" from "can it find its neighbours", which is the
+   split E(n)-GNCA's pattern-formation task makes for free and ours conflates.
+   If an arm moves off 12.23 A with native edges and not with live ones, the
+   edge set was the binding constraint.
+2. **A pairwise-distance term over window-anchor pairs**, unclamped. This cuts
+   against `the-objective-should-restrain-the-output-not-teach-the-placement`,
+   and the tension is real rather than a matter of taste: an under-determined
+   target is not weaker supervision, it is a different target. E(n)-GNCA's
+   authors treat the all-pairs loss as a necessity, not a convenience.
+
+Neither needs a new architecture. Both are testable against a baseline that is
+now known exactly (12.23 A, fit_all, Bunya pool).
+
+Also noted while reading the code: `--damage` is gated on
+`self_placing = growth.birth == "none"` (`growth.py:1595`), so **`--damage` with
+any birth mode silently drops the damage** and measures whole-structure
+reconstruction under a REGENERATION banner. `--birth free` is already the
+self-placing architecture Ulban described, and the combination has never been
+runnable. Same shape as 32241769, in mirror image.
+
+Nodes added:
+`placing-a-node-from-local-distances-needs-a-globally-rigid-neighbourhood` (claim, open),
+`an-equivariant-graph-nca-morphs-random-coordinates-into-a-target-point-cloud` (observation, literature),
+`the-perception-graph-is-rebuilt-from-where-the-residue-wrongly-is` (observation, ours).
