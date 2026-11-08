@@ -44,6 +44,7 @@ from aanca.growth import (  # noqa: E402
     count_runs,
     damage_window,
     growth_links,
+    pairwise_distance_restraint,
     peptide_bond_restraint,
     relative_frame_restraint,
     run_anchors,
@@ -148,6 +149,15 @@ def main() -> int:
     windows_intact: dict[str, list[float]] = {
         mode: [] for mode in BASELINE_MODES
     }
+    # **The unclamped distance restraint's scale, before any training run.**
+    # ``live`` above says what fraction of FAPE's pairs can still move; this
+    # says what the term that has no clamp reads on the same start state, which
+    # is the number a ``--pairwise-weight`` has to be chosen against. Measured
+    # here rather than guessed from the RMSD because the term is in A^2 over
+    # CA-CA pair *differences*, not over displacements, and the two are not
+    # proportional.
+    pair_anchor: dict[str, list[float]] = {mode: [] for mode in BASELINE_MODES}
+    pair_window: dict[str, list[float]] = {mode: [] for mode in BASELINE_MODES}
     rng = random.Random(args.seed)
     with torch.no_grad():
         for index in indices:
@@ -206,6 +216,11 @@ def main() -> int:
                             )
                         )
                     )
+                    to_anchor, to_window = pairwise_distance_restraint(
+                        start, native, topo, damaged, anchors
+                    )
+                    pair_anchor[mode].append(float(to_anchor))
+                    pair_window[mode].append(float(to_window))
                 rows[mode].append((
                     float(backbone_rmsd(start, native, topo, alive)),
                     float(fape_loss(start, native, topo, alive)),
@@ -267,6 +282,27 @@ def main() -> int:
                     f"{mode:<10} {a:>9.2f} {b:>11.2f} {b - a:>7.2f} "
                     f"{len(values):>7d}"
                 )
+        print(
+            "\n"
+            "The unclamped CA-CA distance restraint on the same start state, "
+            "A^2.\n"
+            "anchor is window-to-intact pairs, which is the half that carries\n"
+            "placement and the half --pairwise-weight charges; window is\n"
+            "window-to-window pairs, which fix only the window's internal "
+            "shape.\n"
+            "Both are exactly 0 on a crystal structure. Reported here because "
+            "a\n"
+            "weight has to be chosen against a known scale, and because this "
+            "term\n"
+            "has no clamp -- so unlike `live` above, none of it is dead.\n"
+        )
+        print(f"{'baseline':<10} {'anchor':>9} {'window':>9} {'crops':>7}")
+        for mode in BASELINE_MODES:
+            values = pair_anchor[mode]
+            if values:
+                a = sum(values) / len(values)
+                b = sum(pair_window[mode]) / len(pair_window[mode])
+                print(f"{mode:<10} {a:>9.2f} {b:>9.2f} {len(values):>7d}")
         print(
             "\n"
             "This is what 'learned nothing' looks like on this task, the way "

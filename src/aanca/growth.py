@@ -780,6 +780,114 @@ def placement_loss(
     return torch.stack(terms).mean()
 
 
+def pairwise_distance_restraint(
+    coords: Tensor,
+    native: Tensor,
+    topo: FeatureTopology,
+    damaged: Tensor,
+    intact: Tensor,
+) -> tuple[Tensor, Tensor]:
+    """Unclamped CA-CA distance error across the hole, as two separate halves.
+
+    **This is the term the clamp leaves missing.** FAPE clamps at 10 A and
+    ``clamp_max`` is exactly flat above the clamp, so a residue further out
+    than that contributes a constant and no direction -- and the regeneration
+    start state puts the window ~13.3 A from where it belongs, which is outside
+    the clamp before a single update. The gradient that survives sits on the
+    near-diagonal, which the baseline walk already satisfies to 0.002 on the
+    bond term, so the signal is precisely where there is nothing to fix. That
+    is measured, not suspected: see
+    ``docs/claims/the-fape-clamp-is-what-gates-the-geometry.md`` and
+    ``docs/claims/the-gradient-window-is-a-third-of-the-journey-the-window-must-travel.md``,
+    and it is why every arm scores 12.23 A, which is exactly its own baseline
+    (``docs/claims/both-arms-park-at-12-23-angstrom-by-update-250.md``).
+
+    The published automaton that succeeds at the analogous task trains on an
+    all-pairs distance MSE and its authors call that loss *necessary to
+    uniquely identify the target state*, because the nodes "are not aware of
+    their global location" and each has ``|V| - 1`` constraints to satisfy
+    (E(n)-equivariant Graph Neural Cellular Automata, TMLR 2024; see
+    ``docs/claims/an-equivariant-graph-nca-morphs-random-coordinates-into-a-target-point-cloud.md``).
+    This is that loss restricted to the pairs that carry placement
+    information.
+
+    **Two halves, returned separately rather than summed, because they answer
+    different questions.** Window-to-anchor pairs are the ones that say *where*
+    the window goes: one end of every such pair is a residue sitting at its
+    crystal pose, so the distance to it is a constraint on the window's
+    placement in the structure. Window-to-window pairs constrain only the
+    window's own internal shape, which the ideal helix mostly has already. A
+    single number over both sets could fall because the window's internal
+    geometry tidied up while its placement never moved -- the exact failure the
+    project has spent seven arms unable to see -- so the caller gets both and
+    the weight applies to the first.
+
+    That is not only a reporting argument. Walk the window linearly from the
+    baseline to its native pose on 1UBQ and the internal half *rises* from 8.7
+    to 44.7 A^2 over the first four tenths before falling, because a straight
+    line between two poses passes through a contracted intermediate. Lumped
+    into one number the term still falls monotonically but spends 44 % of its
+    total fall on the first half of the journey against the anchor half's 82 %
+    -- so summing them cancels the placement signal in exactly the far regime
+    the term exists for. Pinned in ``tests/test_pairwise_restraint.py``.
+
+    Unclamped and unscaled on purpose. Unclamped is the whole point: a squared
+    distance error grows with the displacement, so the gradient does not fade
+    over the 13 A the window has to travel. Unscaled so the value stays
+    physical, in A^2, and can be read against the displacement it describes --
+    a window 13 A out of place reads in the hundreds, and the weight is where
+    the unit conversion belongs.
+
+    CA atoms only, on ``ca_rmsd_on``'s convention (``frame_idx[:, 1]``), so
+    this measures the fold rather than the backbone's internal geometry, which
+    ``peptide_bond_restraint`` already has a term for.
+
+    Both halves are **exactly 0.0, never nan**, when there is nothing to score
+    -- an undamaged run, an empty window, an empty context, or a window of one
+    residue. A nan here would propagate into ``total`` and silently kill a run,
+    and the degenerate cases are ordinary rather than exceptional: a crop whose
+    longest covalent run is too short to hold a window is undamaged.
+    """
+    window = torch.nonzero(damaged, as_tuple=False).flatten()
+    anchor = torch.nonzero(intact, as_tuple=False).flatten()
+    zero = torch.zeros((), device=coords.device, dtype=coords.dtype)
+
+    def ca(source: Tensor, index: Tensor) -> Tensor:
+        rows = index.unsqueeze(-1)
+        return source[rows, topo.frame_idx[index, 1:2]][:, 0]
+
+    def spans(a: Tensor, b: Tensor) -> Tensor:
+        # ``clamp_min`` before the square root rather than after: the
+        # derivative of ``norm`` at exactly zero is nan, and a pair of
+        # coincident atoms is reachable -- an untrained rule can emit a move
+        # that lands one residue on another.
+        return ((a.unsqueeze(1) - b.unsqueeze(0)) ** 2).sum(-1).clamp_min(
+            1e-12
+        ).sqrt()
+
+    if window.numel() == 0 or anchor.numel() == 0:
+        to_anchor = zero
+    else:
+        now = spans(ca(coords, window), ca(coords, anchor))
+        want = spans(ca(native, window), ca(native, anchor))
+        to_anchor = ((now - want) ** 2).mean()
+
+    if window.numel() < 2:
+        to_window = zero
+    else:
+        now = spans(ca(coords, window), ca(coords, window))
+        want = spans(ca(native, window), ca(native, window))
+        # The strict upper triangle: the diagonal is zero in both structures
+        # and would dilute the mean by ``1/n`` for nothing, and each off-
+        # diagonal pair appears twice.
+        keep = torch.triu(
+            torch.ones_like(now, dtype=torch.bool), diagonal=1
+        )
+        to_window = ((now - want) ** 2)[keep].mean()
+
+    return to_anchor, to_window
+
+
 def alive_topology(topo: FeatureTopology, alive: Tensor) -> FeatureTopology:
     """``topo`` with dormant residues holding no atoms and no supervision.
 
@@ -1508,6 +1616,32 @@ class GrowthTerms:
     #: uses -- effectively zero, and deliberately so: at tolerance 0 a crystal
     #: reads 0.0258 and all of it is hydrogen bonds.
     clash: Tensor | None = None
+    #: **The unclamped distance restraint across the hole, A^2, before
+    #: ``pairwise_weight``.** ``pairwise_anchor`` is over window-to-intact
+    #: pairs and is the half that carries placement; ``pairwise_window`` is
+    #: over window-to-window pairs and constrains only the window's internal
+    #: shape. Both are reported on **every** run, weighted or not, and summing
+    #: them would hide which half of the term moved -- a window that tidied its
+    #: own geometry without going anywhere would look like progress.
+    #:
+    #: Zero on a crystal structure by construction, and exactly 0.0 rather than
+    #: nan when nothing was damaged. Measured on the ideal-helix regeneration
+    #: start state at crop 128, 12 held-out crops: **53.24 A^2 anchor, 16.62
+    #: window** -- and 287.04/87.43 on ``extended``, 76.99/22.92 on ``random``.
+    #: **Those are the LAPTOP pool's numbers**, where ``data/pdb`` holds 1,903
+    #: files against the cluster's 24,700 and both take ``available[:412]``, so
+    #: they are a different 412 proteins. The same probe's ``fit_all`` reads
+    #: 10.77 A locally where Bunya reads 12.23, so expect this to be low by a
+    #: similar margin and do not quote it against a training log. See
+    #: ``docs/claims/the-regeneration-baseline-is-12-23-angstrom-and-every-arm-sits-on-it.md``
+    #: and ``scripts/baseline_probe.py --damage 12``, which prints it.
+    #:
+    #: Defaulted like ``move`` and ``clash`` so the probes that build a
+    #: ``GrowthTerms`` by hand keep working, but unlike those two these are
+    #: never actually ``None`` out of :func:`growth_objective`. See the
+    #: paragraph there citing job 32405172 on why that distinction matters.
+    pairwise_anchor: Tensor | None = None
+    pairwise_window: Tensor | None = None
 
 
 def growth_objective(
@@ -1529,6 +1663,7 @@ def growth_objective(
     move_weight: float = 0.0,
     clash_weight: float = 0.0,
     clash_tolerance: float = 0.5,
+    pairwise_weight: float = 0.0,
 ) -> tuple[GrowthTerms, object]:
     """Supervised regrowth: from a seed, rebuild the native backbone.
 
@@ -1770,6 +1905,27 @@ def growth_objective(
             getattr(result, "moves", []), native_coords, topo
         ).to(fape.dtype)
 
+    # **The unclamped distance restraint across the hole.** Computed on every
+    # run and added to the loss only when weighted -- and those are two
+    # separate decisions, deliberately made the opposite way round from the
+    # ceiling term.
+    #
+    # Job 32405172 is partially void for making them the same decision. `move`
+    # is computed here only `if move_weight:`, and `score()` in
+    # `scripts/train_growth.py` did not pass `move_weight` at all, so the
+    # held-out `move` column was not merely unprinted -- it was *structurally
+    # absent*, a zero produced by a branch nobody took, and it printed as a
+    # number that looked real. g8_ceiling's first 1,250 updates cannot be read.
+    # A diagnostic whose absence is indistinguishable from its value of zero is
+    # worse than no diagnostic, so this term is always measured: an arm with
+    # `--pairwise-weight 0` reports exactly what an arm with a weight would
+    # have been charged, which is what makes the two comparable.
+    pairwise_anchor, pairwise_window = pairwise_distance_restraint(
+        final.coords, native_coords, topo, damaged, final.alive & ~damaged
+    )
+    pairwise_anchor = pairwise_anchor.to(fape.dtype)
+    pairwise_window = pairwise_window.to(fape.dtype)
+
     rmsd_damaged = None
     if bool(damaged.any()):
         rmsd_damaged = float(
@@ -1880,6 +2036,12 @@ def growth_objective(
         + orientation_weight * orientation.to(fape.dtype)
         + move_weight * move_term
         + clash_weight * clash_term
+        # Only the window-to-anchor half is charged. The window-to-window half
+        # is reported beside it so the two can be read apart, but weighting it
+        # would pay the rule for getting the window's internal shape right
+        # while leaving it where the baseline walk put it, and that is the
+        # result every arm has already produced.
+        + pairwise_weight * pairwise_anchor
     )
     return (
         GrowthTerms(
@@ -1905,6 +2067,8 @@ def growth_objective(
             damaged=int(damaged.sum()),
             move=move_term.detach(),
             clash=clash_term.detach(),
+            pairwise_anchor=pairwise_anchor.detach(),
+            pairwise_window=pairwise_window.detach(),
         ),
         result,
     )
