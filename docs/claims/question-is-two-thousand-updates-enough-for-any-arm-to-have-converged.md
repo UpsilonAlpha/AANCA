@@ -35,10 +35,49 @@ lever table is a comparison of three unconverged curves, and "superadditive"
 could be a statement about which arm converges fastest rather than which
 converges lowest.
 
-**What settles it:** `g17_long` -- `g15_both` with `updates = 10000` and nothing
-else changed. If it settles near 10.2, 2,000 updates was enough and the table
-stands as read. If it reaches 8, the three-arm comparison was taken at a budget
-where none of them had converged.
+## Pre-registration: `g17_long`, submitted as 32505354
+
+`g15_both` with `updates = 10000`, one setting, `eval_every` held at 250 so
+`settled` is read with the same instrument the lever table was read with.
+Running on `bun159` from 2026-11-09 08:20 AEST, 8 h wall.
+
+**Written at 08:24, four minutes in.** The early evaluations had almost
+certainly landed by then -- g15 did 2,000 updates in 37 min, so update 250 is
+about five minutes -- and they have not been read. The quantity being judged is
+`settled` = the mean of `rmsd_dmg` at updates **9750 and 10000**, roughly three
+hours out, so the prediction is blind with respect to the thing it predicts.
+Said plainly rather than claimed as a clean pre-registration.
+
+Judged against **g15's settled 10.24** over four exclusive buckets:
+
+  * **`settled <= 9.57`** -- better than g15 by at least the g14-to-g15 gap
+    (0.67 A). The 2,000-update table was read before any arm had converged, so
+    "superadditive" is a statement about which arm converges *fastest*, and
+    every bucket boundary in the record needs re-reading at this budget.
+    **Budget, not levers, is then the project's live variable.**
+  * **`9.57 < settled <= 9.90`** -- better than g15's best *single* reading
+    (9.94), but by less than one lever's worth. The lever table's ordering
+    stands; its absolute numbers do not, and future arms must be run at 10,000.
+  * **`9.90 < settled <= 10.58`** -- inside g15's +-0.34 A band. **2,000 updates
+    was already enough.** The table stands exactly as read, this question
+    closes, and `g16_localrot` becomes the right next arm with a comparator
+    that has been shown to be converged.
+  * **`settled > 10.58`** -- longer training makes it *worse*. With 400
+    structures, no sample pool and a fixed rollout, that reads as overfitting
+    the pool rather than a budget ceiling, and the indicated next change is the
+    **pool**, not more updates.
+
+**Void condition.** If the run does not complete 10,000 updates -- Bunya goes
+into maintenance today and no SLURM reservation exists, so a drain may kill it
+mid-flight -- or if more than 5 % of updates are skipped for a non-finite
+gradient, `settled` is not read. The curve is reported and the arm is resubmitted
+with `--resume` instead. Without this the metric would otherwise be chosen from
+whatever portion of the run survived.
+
+**What it cannot settle.** `g17_long` is still a double-ceiling arm
+(`--native-edges` on top of `--move-weight 1`), so none of the four buckets
+bears on whether a *learned* rule can do this. It bounds the architecture at a
+budget, which is the only thing the lever table ever did.
 
 ## Required by
 - [[the-two-levers-together-beat-either-alone-and-never-give-the-gain-back]]

@@ -10020,9 +10020,32 @@ could only confirm. It is also a third **double-ceiling** arm (`--native-edges`
 on top of `--move-weight 1`), so whatever it returns bounds the architecture and
 does not move the method.
 
-**Not submitted.** The Bunya OnDemand session has expired (every
-`vscode-remote-resource` fetch redirects to `iam.rcc.uq.edu.au`), so `g17_long`
-is queued in git and not on the cluster.
+**Submitted as 32505354**, 9 Nov 08:20 AEST, running on `bun159` from the
+first seconds with no queue wait. Bunya's checkout was three commits behind at
+`ec0ce82`; fast-forwarded to `9c33efd` and the 27 config tests pass there on
+Python 3.12.3 before submission.
+
+**8 h wall, not the usual 24.** Bunya goes into maintenance today and
+`scontrol show reservation` says *"No reservations in the system"* -- so SLURM
+does not know it is coming, and will start a job it may then kill rather than
+holding it back. An 8 h request fits g17's ~3-6 h in one segment and backfills
+far more readily than a 24 h one. If a drain does kill it, `last.pt` is written
+at every evaluation and `--resume` costs at most 250 updates, which is also the
+run's void condition.
+
+The new code paths were exercised on the cluster rather than assumed: the job
+header now prints `config : configs/regeneration.toml [g17_long]`, and
+`runs/g17_long/config.toml` came out with `[base.inputs]` plus the section
+header, `updates = 10000` and `lab_rotation = true` inherited from g15 -- i.e.
+the snapshot written by this run can be fed straight back to the trainer, which
+yesterday's could not.
+
+g17's four exclusive buckets are pre-registered in
+`question-is-two-thousand-updates-enough-for-any-arm-to-have-converged`, written
+four minutes into the run. The early evaluations had landed by then and were not
+read; `settled` is the mean at updates 9750 and 10000, about three hours out, so
+the prediction is blind with respect to what it predicts. Recorded that way
+rather than claimed as clean.
 
 ### Still open from this review, not acted on
 
