@@ -9223,3 +9223,99 @@ Code: `torch_graph.FixedNeighbours` (the validation and the why),
 `rollout` is still never handed a native structure),
 `rollout.rollout`/`step_once` (threaded through),
 `growth.growth_objective(native_edges=...)`, `scripts/train_growth.py`.
+
+
+## 8 Nov, both arms wired: `--native-edges` and `--pairwise-weight`
+
+Built in two separate worktrees because both touch `growth.py` and
+`train_growth.py`; merged at `5b70b7c` with two additive conflicts (one new
+keyword each in the signature and in `score()`'s call). 143 tests pass on the
+merged tree.
+
+Flag matrix, all off by default:
+
+| flag | what it changes | refuses |
+| --- | --- | --- |
+| `--native-edges` | holds the neighbour **selection** at the native edge set for the whole rollout; distances, directions and the envelope stay live | any `--birth` but `none` |
+| `--pairwise-weight` | adds an unclamped window-to-anchor CA distance restraint; the window-to-window half is reported but not weighted | nothing |
+
+### The result that justifies the second arm
+
+`docs/claims/clamped-fape-is-flat-over-the-half-of-the-journey-the-window-must-travel.md`.
+Interpolating the window from baseline to native: **clamped FAPE spends 7.5 % of
+its total fall on the first half of the journey, the anchor restraint 81.7 %.**
+FAPE moves 0.2621 to 0.2423 while the window closes 21.24 A to 10.62 A, and
+only begins to move near t = 0.6. The clamp releasing is visible at t = 0.8,
+where the clamped and unclamped columns become identical.
+
+Unanticipated, and the reason the term reports two numbers: **the
+window-to-window half is not monotone.** It rises 8.72 to 44.70 before falling,
+because a straight line between two poses passes through a contracted
+intermediate, and lumping the halves drops the first-half share from 81.7 % to
+43.9 %. The internal half cancels the placement signal in exactly the far
+regime the term exists for. Separating them was load-bearing rather than tidy.
+
+### The composition check, and the fault in my own version of it
+
+Neither agent could test the two flags together. Four combinations on seven
+local crops, same rule and seed: `--native-edges` changes `rmsd_dmg` on **every**
+crop (no no-op), `pairwise_anchor` is reported at weight 0 on every crop with a
+non-empty window, the term enters `total` only when weighted, and the two
+compose with no nan. One crop reads nan `rmsd_dmg` in all four combinations with
+an empty damage window and `pairwise_anchor` exactly 0.00, which is requirement
+3 working rather than a fault.
+
+**The first run of that check reported "`--native-edges` is a no-op" and was
+wrong.** The test rule had been perturbed on `frame_head[-1].bias` only, and a
+bias on the last layer is added identically to every residue -- so the rule
+emitted one constant move and its output did not depend on perception at all.
+Perturbing the weights instead made the flag's effect appear on every crop.
+Same family as the four faults of last week: a number labelled by what it was
+supposed to measure rather than by what produced it, caught only by asking why
+a null looked too clean.
+
+### Two traps found by both agents independently
+
+1. **`scripts/train_growth.py` has no `sys.path.insert(0, ROOT / "src")`** --
+   only 6 of 55 scripts do, and `train.py` and `train_hole.py` do not. The venv
+   carries an editable `.pth` pointing at the **main** checkout's `src`, so
+   running that script from a worktree silently exercises main's code. Both
+   agents hit it as a `TypeError` about their own new keyword, which is the
+   lucky version; a run that merely produced slightly wrong numbers would have
+   announced nothing. `PYTHONPATH=<worktree>/src` wins; `pytest` is fine via
+   `pythonpath = ["src"]`. **Anyone measuring a worktree's `train_growth.py`
+   needs that, or the result is main's.**
+2. **The frame head is zero-initialised** (`model._bounded`), so an untrained
+   growth rule emits exactly zero rotation and translation and a rollout returns
+   its own start state unchanged. Any test that needs the geometry to move has
+   to perturb the head, and a test that forgets to will pass for the wrong
+   reason. Consistent with g6_noid (32241722) being "perfectly static".
+
+### Corrections to what I briefed
+
+  * `src/aanca/evaluate.py` is the **side-chain packing** evaluation and never
+    imports `growth`; a growth term added there would be dead code. The held-out
+    growth path is `score()` in `scripts/train_growth.py`. A note now says so in
+    `evaluate.py`'s docstring, since the two names are confusable.
+  * `--native-edges` refuses any birth mode for a better reason than the one I
+    gave: under a growing rollout the alive set changes every step, so a
+    selection taken once from the native coordinates would hand every dormant
+    slot the **finished structure's** neighbourhood. That is target leakage into
+    perception, which would have produced a spuriously good number rather than a
+    crash.
+  * `native_edges` is in `WARM_START_MUST_MATCH` because it changes what the
+    rule can see; `pairwise_weight` is not, matching `clash_weight` and
+    `fape_weight` as an ordinary objective weight. `move_weight` is in the list
+    because it marks a teacher-forced diagnostic, which this is not.
+  * The whole graph is frozen under `--native-edges`, not only the damaged rows.
+    A per-residue mix would make an intact residue's perception depend on which
+    selection its row came from; the alternative is recorded as a separate flag
+    rather than a parameter.
+
+### Weight guidance for the first run
+
+At `--pairwise-weight 1.0` the term is roughly 100x the rest of the objective
+(`fape` runs 0.13 to 0.40 on an untrained damage arm against an anchor term near
+50 to 100 A^2). Parity with FAPE is near **0.002 to 0.01**. Untuned, and the
+absolute A^2 figures are from the laptop pool, so set the weight against a run's
+own first evaluation rather than against a number measured here.
