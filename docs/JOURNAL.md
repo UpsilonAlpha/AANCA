@@ -10439,3 +10439,46 @@ So the queue is two arms, in order, one variable each: g19 asks whether the
 window moves at all without being told the move; g20 asks whether the
 orientation it arrives in can be controlled. Raising `fape_weight` stays
 available as a third, but it is the indirect route to what g20 tests directly.
+
+## 9 Nov, both arms submitted: 32523561 and 32523562, queued behind maintenance
+
+Session live on `bun147/19275` (read from the tab, not from notes; liveness
+confirmed by a `vscode-remote-resource` 200 on HANDOFF.md). Own terminal
+created and probed before use. `git pull --ff-only` fast-forwarded
+`9c33efd..5313c82`, so the Bunya checkout now holds the journal split, the
+`native_edges` removal and both new sections.
+
+Pre-flight: `--dry-run` on both sections, RC=0, correct `--section` on each.
+`rquota` 242/300 GB and 725,301/1,000,000 files, so headroom is fine. Queue held
+only `sys/dashboard` and the stale `30599368`, i.e. **zero GPU slots in use**,
+so two arms stays inside the two-slot rule and crowds nothing.
+
+    32523561   g19_nomove    move_weight 0, updates 10000
+    32523562   g20_orient    the above + orientation_weight 2.5
+
+Both `PD` with `(ReqNodeNotAvail, Reserved for maintenance)` and `START_TIME
+N/A`.
+
+**They are queued, not running.** And the reason is not capacity:
+`sinfo -p gpu_rocm` shows `bun161` **idle** with 8 mi355x, `bun159`/`bun160`
+`mix`, and only `bun001` (mi210) draining for image testing. So the blocker is
+an upcoming maintenance window that a `--time=24:00:00` segment cannot fit in
+front of -- the scheduler will not start a job that would still be running when
+the reservation opens. `scontrol show reservation` prints "No reservations in
+the system" from this account, so the window itself is not visible here.
+
+Left queued deliberately rather than resubmitted with a shorter walltime. The
+window is not readable, so a walltime could not be sized to fit it, and the
+user said this morning that maintenance is today -- a gap shorter than the ~6 h
+each arm needs. The chain (`segment 1 of at most 30`) picks them up when the
+reservation lifts, and nothing is consuming GPU time meanwhile.
+
+**Reading order still holds.** `g20_orient`'s void condition is that
+`g19_nomove` must be read first, and running them concurrently does not breach
+it: both complete before either is read, and g19 is read first. Only g20's
+secondary `rmsd_dmg` bucket depends on g19's number; its primary `twist` buckets
+are stated against g17's 14.3 and the 9-12 band, both already known.
+
+Logs: `logs/aanca-gpu-32523561.{out,err}` and `logs/aanca-gpu-32523562.{out,err}`.
+Both carry `--job-name=aanca-gpu`, so the job id is the only thing telling them
+apart. Diagnostics under `/scratch/user/uquadhik/AANCA/.cc/g19/`.
