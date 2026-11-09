@@ -115,8 +115,17 @@ pairwise_weight = 0.01
 # ======================================================================
 
 # ======================================================================
-# NOT YET RUN. The first arm since g7 with NO ceiling of any kind, and the
-# first in eleven arms that can report a capability rather than a bound.
+# NOT YET RUN. The first arm since g7 with no ceiling INSIDE THE ROLLOUT, and
+# the first in eleven arms that can report a capability rather than a bound.
+#
+# The distinction matters and "no ceiling of any kind" was wrong when first
+# written here. A ceiling is information fed into the rollout that no real run
+# has at inference: `move_weight` supplies the ideal move at every step, and
+# `native_edges` supplied the target contact graph as perception. Both are gone
+# from this arm. Native structure in the LOSS is not a ceiling -- it is ordinary
+# supervised training, which ProteinMPNN, RFdiffusion and Chroma all do -- and
+# this arm still has it, in clamped FAPE and in the native CA-CA target of the
+# pairwise term. Rung 3 of the ladder is where the native target goes away.
 #
 # Two settings off g14_pairwise, which is now the only historical arm this
 # config can express -- and the right parent, because it is the one lever arm
@@ -129,10 +138,20 @@ pairwise_weight = 0.01
 #   updates = 10000   because g17 established that 2000 reads an unconverged
 #                     curve, and this arm must not fail for want of budget.
 #
-# What is left in the objective is FAPE at 0.1 (clamped, so flat past 10 A),
-# clash, bond, reach and the unclamped pairwise restraint at 0.01. That is
-# rung 2 of the information ladder -- loose FAPE plus physical restraints --
-# which has been built since 7 Nov and has never been run.
+# What is left in the objective, and where each term's numbers come from:
+#
+#   fape      0.1   native N/CA/C in every residue's own frame, clamped at
+#                   10 A -- so EXACTLY FLAT over the 13.3 A the window starts
+#                   out, which is why the weight is 0.1 and not 1.0
+#   pairwise  0.01  native CA-CA distances, window-to-intact pairs only,
+#                   squared and UNCLAMPED so the gradient survives 13 A
+#   clash     1.0   Angstrom of van der Waals overlap. No native.
+#   bond            C-N against 1.329 A, omega against planar trans. No native.
+#   reach           relu(CA-CA gap minus what g residues can span). No native.
+#
+# Three of the five need no native structure at all. That is rung 2 of the
+# information ladder -- loose FAPE plus physical restraints -- built since
+# 7 Nov and never run.
 # docs/claims/question-can-the-architecture-place-residues-under-any-supervision.md
 #
 # PRE-REGISTERED. `settled` is the mean of the last two evaluations, against

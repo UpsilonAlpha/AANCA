@@ -72,8 +72,11 @@ still express.
 
 1. **`g19_nomove`** — written and pre-registered, not submitted. Two settings
    off `g14_pairwise`: `move_weight = 0` (no teacher forcing) and
-   `updates = 10000`. First arm since g7 with **no ceiling of any kind**, and
-   the first run of rung 2. One slot, ~6 h.
+   `updates = 10000`. First arm since g7 with **no ceiling inside the
+   rollout**, and the first run of rung 2. It still has native targets in the
+   *loss* — clamped FAPE and native CA–CA distances — which is ordinary
+   supervised training and not a ceiling; a ceiling is native information fed
+   into the rollout, where no real run has it. One slot, ~6 h.
 2. **The dispersion measurement** on `g17_long`'s checkpoint — roll past 120
    steps and report the spread. CPU-only, no queue. Nothing in this project has
    ever measured whether a settled window *stays*.
