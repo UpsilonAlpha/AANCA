@@ -60,15 +60,21 @@ observation counted two ways: the pairs inside the clamp are the pairs with
 nothing to fix, which is what this node said in the first place. A statistic
 over all pairs cannot answer a question about the informative ones.
 
-The quantity that would settle it is the live fraction **restricted to
-window-to-intact pairs**, which nothing has measured. At a 13.3 A displacement
-it should be near zero, and if it is, `fape_clamp_prob` has never been tested on
-a task where FAPE's gradient reaches the residues that need to move --
-`g6_open` tested it where 73.5 % of all pairs were dead, which is a different
-regime from where 90 % are live but the wrong 10 % are dead.
+**Measured the same day**
+([[fapes-ninety-percent-live-is-eighty-two-percent-pairs-with-zero-error]]).
+82.1 % of all scored pairs are intact-against-intact at a mean error of
+**0.00 A**, so the 90 % is four-to-one pairs with nothing to fix and cannot
+support the claim it was used for. But the prediction written here -- that
+window-to-intact live would be "near zero" -- is **wrong**: it is 43.4 %. The
+clamp removes a majority of the placement signal, not all of it.
 
-Cheap: `scripts/baseline_probe.py` already computes the live fraction, and
-splitting it by pair class is a few lines. CPU-only.
+The finding that replaced it is an asymmetry nobody had looked for. Read from
+an anchored frame a window atom is 10.05 A out and 55.7 % live; read from the
+window's own frame the intact context is 21.79 A out and only 31.0 % live,
+because a frame's rotation error multiplies by the distance to the point and the
+context spans the whole crop. **The pairs that would tell the window its
+orientation is wrong are the deadest class in the objective** -- and FAPE is the
+only term that constrains orientation at all, at weight 0.1.
 
 ## Superseded by
 - [[the-reach-probes-split-the-three-frozen-arms]]

@@ -10287,3 +10287,57 @@ be near zero. `g6_open` tested the open clamp where 73.5 % of all pairs were
 dead; it has never been tested where 90 % are live but the informative 10 % are
 dead. `scripts/baseline_probe.py` already computes the live fraction and
 splitting it by pair class is a few lines, CPU-only.
+
+## 9 Nov, measured: the 90 % live fraction is 82 % pairs at exactly zero error
+
+`scripts/live_pairs_by_class.py`, new, no model, 12 held-out laptop crops.
+
+    live, all pairs      90.1 %   (530,216 of 588,300)
+
+    pair class                pairs    share     live   mean err
+    intact -> intact        483,036    82.1%   100.0%      0.00 A
+    intact -> window         50,040     8.5%    55.7%     10.05 A
+    window -> intact         50,040     8.5%    31.0%     21.79 A
+    window -> window          5,184     0.9%    73.0%      6.73 A
+
+    window-to-intact pairs are 17.0 % of the total and 43.4 % live
+
+Reproduces the all-pairs 90.1 % exactly, so this is the same quantity split by
+pair class.
+
+**Settled:** the 90 % cannot support "the clamp does not bite in regeneration".
+82.1 % of pairs are intact-against-intact at a mean error of 0.00 A -- live, and
+live because there is nothing to fix. Four-to-one, the statistic says only that
+the context was not moved.
+
+**My prediction was wrong.** I wrote that window-to-intact live "should be near
+zero at a 13.3 A displacement". It is **43.4 %**. The clamp removes a majority
+of the placement signal, not all of it, and FAPE reaches the window further than
+I claimed when I called it "nearly useless".
+
+**The finding worth keeping is an asymmetry nobody had looked for.** The two
+cross classes are the same pairs with the roles swapped and are nothing alike:
+from an anchored frame a window atom is 10.05 A out and 55.7 % live; from the
+window's own frame the intact context is 21.79 A out and only 31.0 % live. The
+error is frame-local, so a displaced frame's *rotation* error multiplies by the
+distance to the point, and the context spans all 116 residues. Twice the error,
+half the live fraction.
+
+So **the pairs that would tell the window its orientation is wrong are the
+deadest class in the objective** -- and FAPE is the only term that constrains
+orientation at all, since pairwise_anchor, bond and clash are distances and
+blind to twist. The one orientation signal is demoted to weight 0.1 and then
+69 % clamped away. Two multiplications of the same weakness, which is a concrete
+mechanism for g17's twist rising 10.4 -> 14.3 as placement improved, measured
+independently of that arm.
+
+Written up as
+`docs/claims/fapes-ninety-percent-live-is-eighty-two-percent-pairs-with-zero-error.md`,
+which `refutes` the voided 90-percent-live node and `supports` the lab-rotation
+one. Laptop pool: 954 available, ids 2DWZ 1P6F 3H6J 4ZSX 5D2U 3C2X 4J29 2EKN
+4H80 4GJJ 1XHK 1ZL2, and it reproduces the voided 10.77 A rather than Bunya's
+12.23, so the fractions travel and the RMSD does not.
+
+**What this does not say:** that opening the clamp helps. g6_open tested that on
+whole-structure growth and it did not. And the fractions are for the *start
+state*; at 6.69 A they should be much higher, which is unmeasured.
