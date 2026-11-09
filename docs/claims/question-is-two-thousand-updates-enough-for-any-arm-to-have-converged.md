@@ -82,3 +82,18 @@ budget, which is the only thing the lever table ever did.
 ## Required by
 - [[the-two-levers-together-beat-either-alone-and-never-give-the-gain-back]]
 - [[both-levers-move-the-window-and-the-placement-term-holds-more-of-it]]
+
+## Answered, and reopened one order of magnitude up
+
+`g17_long` settled at **6.69** against g15's 10.24 -- the first bucket, by five
+times its boundary ([[the-lever-table-was-read-at-a-fifth-of-the-budget-the-arm-needed]]).
+So **no number in the lever table is a converged number**: g13, g14 and g15
+were three unconverged curves compared at update 2,000, and "superadditive"
+describes which arm fell fastest in its first 2,000 updates.
+
+This does not retract the lever comparison -- g15 really is the best of the
+three at 2,000 updates on the same 12 crops -- but it retires it as a guide to
+what to do next. The question stays `open` rather than closing, because g17 is
+not converged either: still drifting down from 8.44 at update 4250 and reading
+6.62 / 6.75 at its last two evaluations. Budget is the project's live variable
+and its ceiling has not been found.

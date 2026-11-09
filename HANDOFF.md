@@ -10089,3 +10089,100 @@ item left for its own commit, and it is no longer a footnote.
 both are ordinary SLURM jobs, both checkpoint at every evaluation, and
 `--resume` picks either up. Nothing further can be read from the cluster until
 a new OnDemand session is started.
+
+## 9 Nov, both arms complete: the budget was the variable, and the replicate measured the wrong thing
+
+### g17_long (32505354): 10.24 -> 6.69 A, the first bucket by five times its boundary
+
+Five times the budget on the same arm and the **identical 12 held-out crops**
+(verified from the checkpoints: both `[6, 129, 167, 180, 193, 225, 264, 297,
+319, 330, 348, 393]`). 10,000 updates, 147.6 min, 0.85 s/update, exit 0.
+
+    update   dmg   anchor   window   twist   bond
+      2000 10.54     44.7     31.1    10.3    3.43   <- g15's whole run ends here
+      4250  8.44     30.0     32.7    11.7    2.70
+      6500  7.87     27.2     27.0    13.2    2.50
+      8500  6.94     20.9     32.6    12.6    1.55
+      9500  6.62     20.0     24.3    15.6    1.94
+     10000  6.75     19.8     25.3    14.3    1.55
+
+`settled` 6.69 against g15's 10.24 -- bucket one (`<= 9.57`) by a 3.55 A
+margin. **No number in the lever table is a converged number.** g13/g14/g15
+were three unconverged curves compared at 2,000 updates, and "superadditive"
+describes which arm fell fastest early. The comparison is not retracted -- g15
+is still the best of the three at 2,000 on those crops -- but it is retired as
+a guide to what to do next.
+
+The arm now covers 45 % of the distance from the 12.23 baseline to native where
+g15 covered 16 %, and `bond` reached 1.55, the lowest recorded. **`twist` is
+the cost**: 10.4 -> 14.3 with a 17.0 excursion, outside the 9-12 band every
+identity-free arm has held. No jump at update 1000, so it is not the identity
+signature -- it drifts up from about update 6000 *as placement improves*. A
+rule getting the window into place is getting its relative orientations worse,
+and the rotation is exactly the half of the move that is still inexpressible.
+That makes `g16_localrot` considerably more interesting than it looked this
+morning, and it should now be run at 10,000 updates against g17 rather than at
+2,000 against g15.
+
+`window` did **not** deteriorate: 29.9 -> 25.3, i.e. 1.50x the untrained 16.88
+where g15 ended at 1.85x. The internal half improved while placement improved,
+which is the opposite of the trade retracted this morning and is consistent
+with the transit reading that replaced it.
+
+Two departures from the record, both stated rather than smoothed over:
+
+  * **The pre-registered `settled` pair was unavailable.** The rule said updates
+    9750 and 10000; `history.json` has 38 rows, not 40, with **5750 and 9750
+    absent**, no non-finite-gradient line and no error. `settled` is the mean at
+    9500 and 10000 instead. It cannot have been chosen to flatter the result --
+    every reading from 9000 on is between 6.62 and 6.75 -- but the rule applied
+    was not the rule written, and **why two evaluations are missing is not
+    diagnosed.**
+  * g17 is **not converged either**, still drifting down from 8.44 at 4250. The
+    budget question is reopened an order of magnitude up, not closed.
+
+### g18_seed1 (32507434): completed, and does not answer the question it was for
+
+2,000 updates in 30.8 min, `settled` 10.21 against g15's 10.24, so
+`spread = 0.03 A` -- the first bucket, which would have meant the run-to-run
+term is smaller than the evaluation wobble and the record stands.
+
+**Not claimed, because `seed` chooses the held-out structures.**
+
+    g15_both   seed 0   eval [6, 129, 167, 180, 193, 225, 264, 297, 319, 330, 348, 393]
+    g18_seed1  seed 1   eval [31, 45, 131, 138, 154, 164, 174, 200, 289, 294, 327, 388]
+
+Completely disjoint, and g18's rows report **10 crops, not 12** -- the metric
+was computable on 10 of its 12. `seed` sits in `WARM_START_MUST_MATCH` beside
+`split` and `eval_structures`, which is the trainer saying it is a data knob.
+So 0.03 A is the agreement of two different measurements over two disjoint
+structure sets of different size. Jointly that bounds *seed plus held-out set*
+at 0.03 A and says the 12-crop mean is insensitive to which crops are held out,
+which is worth having -- but **the run-to-run term is still unmeasured**, and
+two numbers landing 0.03 A apart on different proteins is as easily coincidence
+as precision.
+
+**The void condition did not cover this.** It said "if the run does not complete
+2,000 updates". It completed. The fault is that the knob does two things, which
+no bucket could have caught -- the same class as the voided 10.77 A baseline,
+where a crop index meant a different protein.
+
+A real replicate needs a seed that does not touch the split: either a separate
+`--init-seed` for initialisation and batch order, or an explicit
+`--eval-indices` pinning the held-out set. **The second is the smaller change
+and also fixes the unrecorded-pool problem**, since a pinned index list is a
+recorded one -- so it supersedes the pool-hash item left open this morning.
+
+### Where that leaves the queue
+
+  1. `--eval-indices` (or `--init-seed`), because every arm from here is read
+     against an instrument that currently moves when the seed moves.
+  2. `g16_localrot` at 10,000 updates against g17, not 2,000 against g15 --
+     promoted by g17's twist drift, which is the rotation half of the
+     equivariance fix showing a cost for the first time.
+  3. The environment block in `snapshot()`. Three per-update rates on one
+     configuration (2.0-2.4, 1.12, 0.85) and still nothing recording the card,
+     the thread count or the torch build.
+
+Both jobs finished before the code-server window closed; the session moved port
+(12059 -> 45951) in between, which is why logs live on `/scratch`.
