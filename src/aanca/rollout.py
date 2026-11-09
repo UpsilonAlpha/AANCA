@@ -391,41 +391,6 @@ def update_mask(
     return (draws < probability).to(device)
 
 
-def fixed_neighbours_at(
-    coords: Tensor,
-    topo: FeatureTopology,
-    config: RolloutConfig,
-    alive: Tensor | None = None,
-    blind: bool = False,
-) -> FixedNeighbours:
-    """The selection ``step_once`` would make at ``coords``, to hold it there.
-
-    Written so a caller that *has* a reference structure can hand the rollout
-    an edge set without the rollout ever being given the structure: the caller
-    computes this once and passes the result as ``fixed_neighbours``, which
-    keeps native coordinates out of :func:`rollout`'s arguments. That
-    separation is the existing one and worth keeping -- a rollout that could
-    see the target would be one function away from scoring against it.
-
-    Every transformation ``step_once`` applies before selecting is applied here
-    too, and getting any of them wrong would freeze a *different* edge set than
-    the one the live path would have produced at these coordinates: the alive
-    topology (dormant residues hold no atoms, so they are not candidates),
-    ``blind`` (side chains collapsed onto CB changes the minimum heavy-atom
-    distance, hence the order), and the feature dtype.
-    """
-    if alive is not None:
-        topo = alive_topology(topo, alive)
-    seen = blind_coords(coords, topo) if blind else coords
-    select = (
-        select_neighbours_device if config.device_neighbours else select_neighbours
-    )
-    neighbours, edge_mask = select(
-        seen.to(config.feature_dtype), topo, config.k, config.cutoff
-    )
-    return FixedNeighbours(neighbours=neighbours, edge_mask=edge_mask)
-
-
 def step_once(
     rule: AANCARule,
     state: RolloutState,
@@ -767,7 +732,7 @@ def rollout(
 
     ``fixed_neighbours`` holds the neighbour selection at an edge set the
     caller computed, for every step, while the features stay live. Build it
-    with :func:`fixed_neighbours_at`; :class:`torch_graph.FixedNeighbours` says
+    by the caller; :class:`torch_graph.FixedNeighbours` says
     what the diagnostic is. It does not touch the mask stream either, so the
     only difference from an ordinary rollout is which neighbours each residue
     is talking to.

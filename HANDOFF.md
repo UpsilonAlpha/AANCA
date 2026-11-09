@@ -10240,3 +10240,73 @@ The arm that bears on the stated problem is the first **joint** one: g17's
 budget and equivariance, `identity_weight` on, `--native-edges` off. That is two
 ceilings removed and one half switched back on, which is more than one variable,
 so it needs splitting -- and the split is the next thing to decide.
+
+## 9 Nov, `native_edges` removed, and the proposal that replaces it
+
+**Removed, not deprecated.** The setting is gone from the schema, the
+construction from native coordinates is gone from `rollout.py`, and the arms
+that used it are deleted from `configs/regeneration.toml` rather than commented
+out: `g13_natedge`, `g15_both`, `g16_localrot` (never run), `g17_long`,
+`g18_seed1`. `g14_pairwise` is the only historical arm the config can still
+express, which is itself the measurement -- every other arm in the lever
+descent was a native-edges arm.
+
+Their results stand as recorded, with job ids and full curves, and the tree
+that can still run them is commit `bd0c7f8`. `tests/test_config.py` keeps their
+recorded command lines in a `RETIRED` dict and
+`test_the_retired_arms_can_no_longer_be_expressed` asserts the schema now
+rejects each one, so the removal is a measurement and not an assumption.
+`tests/test_native_edges.py` is deleted. Eleven tests in `test_config.py` had
+been borrowing live arm names as fixtures and broke; they now build their own
+parent/variant pair, which is where that coupling should have been all along.
+
+**What was kept, deliberately.** `FixedNeighbours` in `torch_graph.py` and the
+`fixed_neighbours` parameter threading `rollout.py` stay. The leak was never
+"the selection comes from outside `step_once`" -- it was "the selection comes
+from the native coordinates". A selection the rule *computes* arrives through
+the same seam, and ripping it out would mean rebuilding it. Its docstring now
+says this instead of justifying itself by the native edge set.
+
+### The config workflow question
+
+It is already done and has been since `3b97972`. `scripts/train_growth.py` takes
+`configs/<file>.toml --section <arm>` and nothing else; `build_parser()` is the
+*runtime* parser (config path, section, `--list-sections`, `--diff`) and
+`build_schema()` is the settings schema that only a config section can fill. The
+docstring states the contract: *"Settings are a named section of a config file,
+never a flag. An option may only address the config or name a resource."*
+
+The `--flag` spellings in this conversation were my habit, not a second
+invocation path -- those argparse entries are the schema keys the config
+resolves into. Nothing to fix; worth saying plainly so the record does not
+suggest otherwise.
+
+### The pruning proposal
+
+Ulban's: start from a ProteinMPNN-style graph, or in the limit an
+**over-complete** one where every residue is connected to every other, and let
+the rule **prune** until what remains supports a realistic placement. Written up
+as `docs/claims/question-can-the-rule-learn-its-own-perception-graph.md`, with
+the three objections that have to be settled first:
+
+  1. **A complete graph is global information, which is the thesis.** One hop
+     over all pairs is what a pairformer does. Mitigation: a hard per-residue
+     edge budget -- score N-1 candidates with a cheap scalar, prune to exactly
+     k -- so message passing is never all-pairs and locality stays structural.
+  2. **Self-certification.** "Realistic" scored against the rule's own learned
+     edges is free: prune away whatever contradicts the current wrong geometry.
+     Needs a term independent of the learned edges, which is clash + bond +
+     reach -- rung 2, built and never run.
+  3. **Pruning everything is the degenerate optimum**, the same identity-map
+     fixed point that froze four arms. The budget in (1) is also the fix.
+
+Cheapest first version: edges already carry a continuous envelope weight
+recomputed every step. Make it *learned* rather than distance-derived and the
+idea is testable with no discrete machinery at all.
+
+**And the one number that cuts against it.** The motivating intuition is that
+given a graph, residues should place themselves approximately correctly. They
+did not -- `g17_long` had the native selection, live distances, teacher-forced
+moves and 10,000 updates and settled at 6.69 A. Pruning can at best recover the
+graph, and the graph was not sufficient. Worth resolving why before building
+this.

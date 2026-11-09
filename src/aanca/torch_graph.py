@@ -318,33 +318,39 @@ def select_neighbours(
 
 @dataclass(frozen=True)
 class FixedNeighbours:
-    """A neighbour **selection** to reuse instead of choosing one per step.
+    """A neighbour **selection** supplied by the caller instead of chosen per step.
 
-    The diagnostic of 8 Nov, and the one piece of the published automaton this
-    project does not have. ``build_graph`` is called inside ``step_once`` on the
-    live coordinates, so a residue sitting 13 A from where it belongs gets the
-    neighbourhood of the *wrong* location: the regeneration task asks it to
-    place itself from local information while the information it reads is
-    local to somewhere else. E(n)-equivariant Graph Neural Cellular Automata
-    (TMLR 2024) message-passes over the **target** graph, so a node at a wrong
-    position still talks to its true neighbours. Holding the selection at the
-    native edge set separates "can the rule place a residue from local
-    information" from "can it find its neighbours", which no arm has told apart
-    -- every one of them scored 12.23 A, exactly its own baseline.
+    ``build_graph`` is called inside ``step_once`` on the live coordinates, so a
+    residue sitting 13 A from where it belongs gets the neighbourhood of the
+    *wrong* location: the regeneration task asks it to place itself from local
+    information while the information it reads is local to somewhere else. This
+    class is the seam where a different selection can be injected.
 
-    **Only the selection is frozen.** Distances, directions and the envelope
-    weight are recomputed from the live coordinates every step, because the
-    point is that the residue measures its *true* neighbours at their *current*
-    separations. Frozen features would be a constant input and the rollout
-    would be measuring nothing at all; ``tests/test_native_edges.py`` asserts
-    the distinction in both directions.
+    **What used to come through here, and why it no longer does.** The 8 Nov
+    diagnostic held the selection at the edge set of the *native* coordinates,
+    copying E(n)-equivariant Graph Neural Cellular Automata (TMLR 2024), which
+    message-passes over the target graph. That is sound where the graph is the
+    problem's input; here it is a leak of the one thing the project exists to
+    recover, since who contacts whom *is* the structural-interaction topology an
+    ablation on the rule would be trying to read out of it. The
+    ``native_edges`` setting was removed on 9 Nov and the arms that used it are
+    retired (``configs/regeneration.toml``).
+
+    **The seam is kept deliberately.** A selection the rule *computes* -- scored
+    candidate edges pruned to a per-residue budget -- arrives the same way, and
+    is the open proposal in
+    ``docs/claims/question-can-the-rule-learn-its-own-perception-graph.md``. The
+    distinction that matters is where the selection comes from, not that it
+    comes from outside ``step_once``.
+
+    **Only the selection is ever frozen.** Distances, directions and the
+    envelope weight are recomputed from the live coordinates every step: frozen
+    features would be a constant input and the rollout would be measuring
+    nothing at all.
 
     ``edge_mask`` travels with ``neighbours`` and is part of the selection, not
     a feature: a padded slot carries index 0, and the two tensors only mean
     anything together.
-
-    It is a diagnostic and not a design method -- in real design there is no
-    native graph to read -- so nothing defaults to it.
     """
 
     neighbours: Tensor

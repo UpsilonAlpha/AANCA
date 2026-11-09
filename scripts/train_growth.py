@@ -141,12 +141,6 @@ WARM_START_MUST_MATCH = (
     # regeneration one would splice two experiments into one curve, and the
     # held-out numbers are not even comparable between them.
     "damage",
-    # ``native_edges`` decides what the rule can *see*, which is the same kind
-    # of difference: an arm that message-passes over the native edge set is
-    # answering a different question from one that finds its own neighbours,
-    # and warm-starting across it would put a ceiling curve and a real one on
-    # the same axis.
-    "native_edges",
 )
 
 
@@ -286,10 +280,6 @@ def score(rule, dataset, indices, args, config, seed: int = 0) -> dict[str, floa
                 move_weight=args.move_weight,
                 clash_weight=args.clash_weight,
                 clash_tolerance=args.clash_tolerance,
-                # The held-out score has to be measured under the same
-                # perception the run trains with, or the flag would improve a
-                # training curve and be absent from every number reported.
-                native_edges=args.native_edges,
                 pairwise_weight=args.pairwise_weight,
             )
             sums["total"] += float(terms.total)
@@ -570,23 +560,6 @@ def build_schema() -> argparse.ArgumentParser:
             "harder and different task. Requires --birth none. Read "
             "rmsd_dmg, not rmsd: the latter is dominated by the intact "
             "context, which starts correct"
-        ),
-    )
-    parser.add_argument(
-        "--native-edges", action="store_true",
-        help=(
-            "hold the perception graph's neighbour SELECTION at the edge set "
-            "of the native coordinates, instead of recomputing it from the "
-            "live ones every step. Edge features are still measured live, so a "
-            "displaced residue reads its TRUE neighbours at their CURRENT "
-            "distances. This separates 'can the rule place a residue from "
-            "local information' from 'can it find its neighbours' -- "
-            "build_graph runs inside the step on live coordinates, so a window "
-            "starting 13 A out perceives the neighbourhood of the wrong "
-            "location, and the published automaton (E(n)-equivariant Graph "
-            "NCA, TMLR 2024) message-passes over the target graph instead. A "
-            "DIAGNOSTIC: it reads the native structure, so a result under it "
-            "is a ceiling and not a design method. Requires --birth none"
         ),
     )
     parser.add_argument(
@@ -907,27 +880,6 @@ def main() -> int:
                 "window's C-ward join starts open and closing it is the task."
             )
 
-    if args.native_edges:
-        if args.birth != "none":
-            # Refused here as well as in growth_objective, so the run dies
-            # before it loads 400 structures rather than at its first update.
-            print(
-                f"--native-edges needs --birth none, got {args.birth!r}: under "
-                "growth the alive set changes every step, so one selection "
-                "taken from the native coordinates would leak the finished "
-                "structure into a newborn's perception."
-            )
-            return 1
-        print(
-            "NATIVE EDGES: the neighbour selection is held at the native "
-            "structure's edge set for the whole rollout; edge features are "
-            "still measured from the live coordinates, so a displaced residue "
-            "reads its true neighbours at their current distances. This is a "
-            "CEILING DIAGNOSTIC -- it reads the target graph, which no design "
-            "run has. Not comparable with an arm that selects its own "
-            "neighbours, and not warm-startable across the flag."
-        )
-
     if args.identity_weight and args.birth == "torsion":
         # Not fatal, but worth saying: a torsion birth reads the parent's type
         # to pick its geometry, and under a blind rollout the newborn has no
@@ -1205,7 +1157,6 @@ def main() -> int:
             fape_clamp_prob=args.fape_clamp_prob,
             orientation_weight=args.orientation_weight,
             damage=args.damage,
-            native_edges=args.native_edges,
         )
         if not torch.isfinite(terms.total):
             continue

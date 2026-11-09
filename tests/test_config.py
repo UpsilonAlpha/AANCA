@@ -41,18 +41,26 @@ def _trainer():
 #: What each job's own log says it was run with. Do not edit these to make a
 #: test pass -- they are the record of what happened.
 RECORDED = {
-    "g13_natedge": (
-        "--tag g13_natedge --split train --updates 2000 --eval-every 250 "
-        "--seeds 16 --steps 120 --resume --birth none --initial helix "
-        "--damage 12 --fape-weight 0.1 --clash-weight 1.0 --move-weight 1.0 "
-        "--identity-weight 0 --equivariant-move --lab-rotation --native-edges"
-    ),
     "g14_pairwise": (
         "--tag g14_pairwise --split train --updates 2000 --eval-every 250 "
         "--seeds 16 --steps 120 --resume --birth none --initial helix "
         "--damage 12 --fape-weight 0.1 --clash-weight 1.0 --move-weight 1.0 "
         "--identity-weight 0 --equivariant-move --lab-rotation "
         "--pairwise-weight 0.01"
+    ),
+}
+
+#: RETIRED 9 Nov with the `native_edges` setting. Kept verbatim, because these
+#: are still the record of what those jobs ran with -- but the schema no longer
+#: accepts the flag, so no section can reproduce them and
+#: ``test_the_retired_arms_can_no_longer_be_expressed`` asserts exactly that.
+#: The tree that can still run them is commit bd0c7f8.
+RETIRED = {
+    "g13_natedge": (
+        "--tag g13_natedge --split train --updates 2000 --eval-every 250 "
+        "--seeds 16 --steps 120 --resume --birth none --initial helix "
+        "--damage 12 --fape-weight 0.1 --clash-weight 1.0 --move-weight 1.0 "
+        "--identity-weight 0 --equivariant-move --lab-rotation --native-edges"
     ),
     "g15_both": (
         "--tag g15_both --split train --updates 2000 --eval-every 250 "
@@ -66,6 +74,26 @@ RECORDED = {
 RUNTIME = argparse.Namespace(
     device="auto", max_seconds=0.0, stop_file=None, resume=True
 )
+
+
+@pytest.fixture
+def pair(data):
+    """A parent and a one-setting variant, synthesised rather than borrowed.
+
+    The tests below check the config machinery -- inheritance, snapshots,
+    resume drift -- not any particular experiment. Pointing them at live
+    sections is what made eleven of them fail when the native-edges arms were
+    retired on 9 Nov: a test of ``resolve`` should hold no opinion about which
+    arms are current. The shape is the one that mattered historically
+    (g15_both and g16_localrot, differing in ``lab_rotation`` alone).
+    """
+    data = dict(data)
+    data["parent_arm"] = {"inputs": {"pairwise_weight": 0.01}}
+    data["variant_arm"] = {
+        "inherits": "parent_arm",
+        "inputs": {"lab_rotation": False},
+    }
+    return data
 
 
 @pytest.fixture(scope="module")
@@ -113,39 +141,52 @@ def test_base_missing_a_key_is_an_error(schema):
 
 
 def test_unknown_key_is_refused_with_a_suggestion(schema, data):
-    inputs = dict(run_config.resolve(data, "g15_both"))
+    inputs = dict(run_config.resolve(data, "g14_pairwise"))
     inputs["pairwise_wieght"] = 0.01
     with pytest.raises(run_config.ConfigError) as exc:
-        run_config.to_namespace(schema, inputs, "g15_both", RUNTIME)
+        run_config.to_namespace(schema, inputs, "g14_pairwise", RUNTIME)
     assert "pairwise_weight" in str(exc.value)
 
 
 def test_a_flag_must_be_a_bool(schema, data):
-    inputs = dict(run_config.resolve(data, "g13_natedge"))
-    inputs["native_edges"] = "yes"
+    inputs = dict(run_config.resolve(data, "g14_pairwise"))
+    inputs["lab_rotation"] = "yes"
     with pytest.raises(run_config.ConfigError, match="true or false"):
-        run_config.to_namespace(schema, inputs, "g13_natedge", RUNTIME)
+        run_config.to_namespace(schema, inputs, "g14_pairwise", RUNTIME)
+
+
+@pytest.mark.parametrize("section", sorted(RETIRED))
+def test_the_retired_arms_can_no_longer_be_expressed(schema, section):
+    """The native-edges removal is real, not cosmetic.
+
+    If the schema ever accepts one of these lines again, the ceiling is back:
+    the rule would be reading the target contact graph, which is the
+    structural-interaction topology the whole interpretability argument needs
+    it to learn for itself.
+    """
+    with pytest.raises(SystemExit):
+        schema.parse_args(RETIRED[section].split())
 
 
 def test_an_int_key_refuses_a_float(schema, data):
-    inputs = dict(run_config.resolve(data, "g13_natedge"))
+    inputs = dict(run_config.resolve(data, "g14_pairwise"))
     inputs["updates"] = 2000.5
     with pytest.raises(run_config.ConfigError, match="must be an integer"):
-        run_config.to_namespace(schema, inputs, "g13_natedge", RUNTIME)
+        run_config.to_namespace(schema, inputs, "g14_pairwise", RUNTIME)
 
 
 def test_tag_cannot_be_set_in_a_section(schema, data):
-    inputs = dict(run_config.resolve(data, "g13_natedge"))
+    inputs = dict(run_config.resolve(data, "g14_pairwise"))
     inputs["tag"] = "something_else"
     with pytest.raises(run_config.ConfigError, match="derived"):
-        run_config.to_namespace(schema, inputs, "g13_natedge", RUNTIME)
+        run_config.to_namespace(schema, inputs, "g14_pairwise", RUNTIME)
 
 
 def test_a_resource_cannot_be_set_in_a_section(schema, data):
-    inputs = dict(run_config.resolve(data, "g13_natedge"))
+    inputs = dict(run_config.resolve(data, "g14_pairwise"))
     inputs["device"] = "cpu"
     with pytest.raises(run_config.ConfigError, match="names a resource"):
-        run_config.to_namespace(schema, inputs, "g13_natedge", RUNTIME)
+        run_config.to_namespace(schema, inputs, "g14_pairwise", RUNTIME)
 
 
 def test_tag_is_the_section_name(schema, data):
@@ -158,7 +199,7 @@ def test_tag_is_the_section_name(schema, data):
 def test_unknown_section_names_the_known_ones(data):
     with pytest.raises(run_config.ConfigError) as exc:
         run_config.resolve(data, "g15_bath")
-    assert "g15_both" in str(exc.value)
+    assert "g14_pairwise" in str(exc.value)
 
 
 def test_base_is_not_runnable(data):
@@ -187,14 +228,14 @@ def test_inherits_cycle_is_an_error():
 
 def test_snapshot_round_trips(schema, data, tmp_path):
     args = run_config.to_namespace(
-        schema, run_config.resolve(data, "g15_both"), "g15_both", RUNTIME
+        schema, run_config.resolve(data, "g14_pairwise"), "g14_pairwise", RUNTIME
     )
     path = tmp_path / "config.toml"
-    path.write_text(run_config.snapshot(args, "g15_both", CONFIG), encoding="utf-8")
+    path.write_text(run_config.snapshot(args, "g14_pairwise", CONFIG), encoding="utf-8")
 
     again = run_config.to_namespace(
-        schema, run_config.resolve(run_config.load(path), "g15_both"),
-        "g15_both", RUNTIME,
+        schema, run_config.resolve(run_config.load(path), "g14_pairwise"),
+        "g14_pairwise", RUNTIME,
     )
     assert vars(again) == vars(args)
 
@@ -205,21 +246,21 @@ def test_a_snapshot_can_be_run_as_a_config(schema, data, tmp_path):
     This test used to call ``check_base_is_complete({"base": load(path)[tag]})``
     -- rearranging the data by hand into the shape the loader wanted, which the
     loader will not do for itself. It passed while
-    ``train_growth.py <snapshot> --section g15_both`` raised ConfigError,
+    ``train_growth.py <snapshot> --section g14_pairwise`` raised ConfigError,
     because the snapshot had no ``[base]`` at all. It tested the content and
     asserted away the interface. Now it walks the trainer's own path, in the
     trainer's own order.
     """
     args = run_config.to_namespace(
-        schema, run_config.resolve(data, "g13_natedge"), "g13_natedge", RUNTIME
+        schema, run_config.resolve(data, "g14_pairwise"), "g14_pairwise", RUNTIME
     )
     path = tmp_path / "config.toml"
-    path.write_text(run_config.snapshot(args, "g13_natedge", CONFIG), encoding="utf-8")
+    path.write_text(run_config.snapshot(args, "g14_pairwise", CONFIG), encoding="utf-8")
 
     reloaded = run_config.load(path)
     run_config.check_base_is_complete(reloaded, schema)       # as main() does
     again = run_config.to_namespace(
-        schema, run_config.resolve(reloaded, "g13_natedge"), "g13_natedge", RUNTIME
+        schema, run_config.resolve(reloaded, "g14_pairwise"), "g14_pairwise", RUNTIME
     )
     assert vars(again) == vars(args)
 
@@ -249,7 +290,7 @@ HISTORICAL_DEFAULTS = {
     "identity_weight": 0.0, "init_from": "", "initial": "helix", "k": 32,
     "lab_rotation": False, "lr": 0.0003, "max_births": 8, "max_rotation": 0.1,
     "max_translation": 0.3, "morphogen": False, "move_weight": 0.0,
-    "native_edges": False, "orientation_weight": 0.0, "pairwise_weight": 0.0,
+    "orientation_weight": 0.0, "pairwise_weight": 0.0,
     "placement_rotation": 3.14159265, "placement_steps": 0,
     "placement_translation": 4.0, "reach_weight": 0.086, "seed": 0,
     "seeds": 4, "split": "train", "steps": 40, "structures": 400,
@@ -302,18 +343,18 @@ def test_unstated_settings_resolve_to_the_historical_defaults(section, schema, d
     assert not wrong, f"{section} would not reproduce the defaults in force: {wrong}"
 
 
-def test_g16_is_a_single_variable_arm_against_g15(schema, data):
+def test_a_variant_differs_from_its_parent_in_exactly_one_setting(schema, pair):
     """The property the config system exists to make checkable."""
-    g15 = run_config.to_namespace(
-        schema, run_config.resolve(data, "g15_both"), "g15_both", RUNTIME
+    parent = run_config.to_namespace(
+        schema, run_config.resolve(pair, "parent_arm"), "parent_arm", RUNTIME
     )
-    g16 = run_config.to_namespace(
-        schema, run_config.resolve(data, "g16_localrot"), "g16_localrot", RUNTIME
+    variant = run_config.to_namespace(
+        schema, run_config.resolve(pair, "variant_arm"), "variant_arm", RUNTIME
     )
     differ = {
         key
-        for key in vars(g15)
-        if key != "tag" and getattr(g15, key) != getattr(g16, key)
+        for key in vars(parent)
+        if key != "tag" and getattr(parent, key) != getattr(variant, key)
     }
     assert differ == {"lab_rotation"}
 
@@ -321,8 +362,8 @@ def test_g16_is_a_single_variable_arm_against_g15(schema, data):
 def test_each_arm_differs_from_its_parent_in_at_most_two_settings(schema, data):
     """A section states only its difference from what it inherits.
 
-    Against its *parent*, not against the base: g16_localrot inherits g15_both
-    and so differs from the base in three settings while differing from the arm
+    Against its *parent*, not against the base: an arm that inherits another
+    may differ from the base in several settings while differing from the arm
     it is a variant of in one, which is the property that matters. A section
     that changes more than a couple of things at once is an arm whose result
     cannot be attributed, and that is what this bound is for.
@@ -341,7 +382,7 @@ def test_each_arm_differs_from_its_parent_in_at_most_two_settings(schema, data):
 
 def test_resume_drift_is_empty_when_the_config_still_describes_the_run(schema, data):
     args = run_config.to_namespace(
-        schema, run_config.resolve(data, "g15_both"), "g15_both", RUNTIME
+        schema, run_config.resolve(data, "g14_pairwise"), "g14_pairwise", RUNTIME
     )
     stored = {
         k: v for k, v in vars(args).items() if k not in run_config.RUNTIME_ONLY
@@ -349,7 +390,7 @@ def test_resume_drift_is_empty_when_the_config_still_describes_the_run(schema, d
     assert run_config.resume_drift(stored, args) == {}
 
 
-def test_resume_drift_catches_a_section_edited_mid_chain(schema, data):
+def test_resume_drift_catches_a_section_edited_mid_chain(schema, pair):
     """The failure this check exists for: g15's weights, g16's settings.
 
     Edit a section while a 24 h chain is in flight and the next segment used
@@ -357,21 +398,23 @@ def test_resume_drift_catches_a_section_edited_mid_chain(schema, data):
     silently, on the same curve. runs/ is gitignored, so there was no record
     either.
     """
-    g15 = run_config.to_namespace(
-        schema, run_config.resolve(data, "g15_both"), "g15_both", RUNTIME
+    parent = run_config.to_namespace(
+        schema, run_config.resolve(pair, "parent_arm"), "parent_arm", RUNTIME
     )
-    g16 = run_config.to_namespace(
-        schema, run_config.resolve(data, "g16_localrot"), "g16_localrot", RUNTIME
+    variant = run_config.to_namespace(
+        schema, run_config.resolve(pair, "variant_arm"), "variant_arm", RUNTIME
     )
-    stored = {k: v for k, v in vars(g15).items() if k not in run_config.RUNTIME_ONLY}
-    drift = run_config.resume_drift(stored, g16)
+    stored = {
+        k: v for k, v in vars(parent).items() if k not in run_config.RUNTIME_ONLY
+    }
+    drift = run_config.resume_drift(stored, variant)
     assert set(drift) == {"lab_rotation", "tag"}
     assert drift["lab_rotation"] == (True, False)
 
 
 def test_resume_drift_allows_extending_a_run_and_ignores_resources(schema, data):
     args = run_config.to_namespace(
-        schema, run_config.resolve(data, "g15_both"), "g15_both", RUNTIME
+        schema, run_config.resolve(data, "g14_pairwise"), "g14_pairwise", RUNTIME
     )
     stored = {k: v for k, v in vars(args).items() if k not in run_config.RUNTIME_ONLY}
     stored["updates"] = 2000
