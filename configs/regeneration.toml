@@ -113,3 +113,55 @@ pairwise_weight = 0.01
 # their recorded command lines and asserts the schema now rejects them, so the
 # removal is a measurement rather than an assumption.
 # ======================================================================
+
+# ======================================================================
+# NOT YET RUN. The first arm since g7 with NO ceiling of any kind, and the
+# first in eleven arms that can report a capability rather than a bound.
+#
+# Two settings off g14_pairwise, which is now the only historical arm this
+# config can express -- and the right parent, because it is the one lever arm
+# that never read the native graph. Its perception has always come from the
+# live coordinates, which is the real setting.
+#
+#   move_weight = 0   removes teacher forcing. g14 was told the ideal move at
+#                     every step; this arm is told nothing about the move and
+#                     must find the bearing from the restraints alone.
+#   updates = 10000   because g17 established that 2000 reads an unconverged
+#                     curve, and this arm must not fail for want of budget.
+#
+# What is left in the objective is FAPE at 0.1 (clamped, so flat past 10 A),
+# clash, bond, reach and the unclamped pairwise restraint at 0.01. That is
+# rung 2 of the information ladder -- loose FAPE plus physical restraints --
+# which has been built since 7 Nov and has never been run.
+# docs/claims/question-can-the-architecture-place-residues-under-any-supervision.md
+#
+# PRE-REGISTERED. `settled` is the mean of the last two evaluations, against
+# the 12.23 A untrained baseline and g14's teacher-forced 10.91. Four
+# exclusive buckets:
+#
+#   settled > 11.9        the window does nothing without the ideal move. The
+#                         move head was the only thing working, and every
+#                         number from g13 on is a property of teacher forcing.
+#   10.9 < settled <= 11.9  it moves, less far than teacher forcing bought.
+#                         Real but weak; the bearing is partly learnable.
+#   9.5 < settled <= 10.9   it matches or beats the TEACHER-FORCED arm without
+#                         being told the move. The first result in this project
+#                         that bears on the thesis.
+#   settled <= 9.5        beats g14 outright. Would make the ceiling arms
+#                         retrospectively uninformative rather than merely
+#                         uninteresting.
+#
+# VOID if the run does not complete 10000 updates, or if `twist` leaves the
+# 9-12 band (that would be g17's rotation drift, not this arm's variable,
+# and the two cannot be read apart on one curve).
+#
+# NOT a convergence claim either way. Every reading is at step 120, which is
+# the only step anything is ever read at, so a settled value says the window
+# arrived and says nothing about whether it stays. The dispersion measurement
+# on this checkpoint is part of the arm, not a follow-up.
+[g19_nomove]
+inherits = "g14_pairwise"
+
+[g19_nomove.inputs]
+move_weight = 0.0
+updates = 10000

@@ -10435,3 +10435,72 @@ nowhere else, so the record cannot distinguish *settled in a basin* from *frozen
 from *will drift away by step 300*. E(n)-GNCA reports its attractor held for 1000
 steps past the training horizon. The equivalent here -- roll past 120, report the
 dispersion -- is not done by anything.
+
+### Narrowed the same day: the supervision-step finding does not explain the freeze
+
+`train_growth.py` calls `growth_objective` and nothing else, so **every** growth
+arm scored the fixed final step -- the four that froze and the four that moved
+alike. g17 reached 6.69 A with the loss at step 120 every update. So the fixed
+supervision step is not what separates them, and "the growth path froze because
+it supervises a fixed step" is refuted by our own arms. Overstated when written
+an hour earlier; the node now says so.
+
+What survives is narrower and still worth having: the sampled step is for a
+state that *persists*, and **nothing in this project has ever measured
+persistence.** Every growth number is read at step 120. g17's 6.69 A is one
+reading of one rollout at one step, and the record cannot tell a window that
+settled in a basin from one that is frozen from one that would drift by step
+300. So the cheap first test is a measurement, not an arm: roll g17's checkpoint
+past 120 steps and report the dispersion. CPU-only, no queue. A sampled-step arm
+earns a slot only if that says the window does not hold.
+
+## 9 Nov, what today actually bought, and the arm that follows from it
+
+Asked directly how any of this addresses the project's problems. Honest
+accounting:
+
+**Decisive.** `native_edges` is gone. That stops the project generating more
+numbers it cannot use, and it retired the five arms that had been setting the
+direction. The problem is restated as local cofolding, and the sequence half is
+on the record as having been off for ten arms. These change what gets run.
+
+**Bookkeeping.** The config audit, the diffusion contrast, the four corrections.
+Worth having written down, but no number moved.
+
+**Overstated and withdrawn.** The supervision-step causal reading, above.
+
+**Not addressed at all.** Rung 2 built and never run. Cofolding never run
+jointly. Perception still taken at the wrong location with no replacement for
+the ceiling that was hiding it. Zero GPU hours today on anything bearing on the
+thesis.
+
+### `g19_nomove`: the first arm since g7 with no ceiling
+
+Two settings off `g14_pairwise` -- the right parent, because it is the one lever
+arm that never read the native graph, so its perception has always come from
+live coordinates.
+
+    move_weight = 0    no teacher forcing: the bearing must come from the
+                       restraints alone
+    updates = 10000    g17 established that 2000 reads an unconverged curve
+
+What is left is FAPE 0.1 (clamped) + clash + bond + reach + the unclamped
+pairwise restraint. **That is rung 2**, built 7 Nov, never run.
+
+Pre-registered in the config against the 12.23 A baseline and g14's
+teacher-forced 10.91, four exclusive buckets:
+
+    settled > 11.9          the move head was the only thing working, and
+                            every number from g13 on is a property of
+                            teacher forcing
+    10.9 < settled <= 11.9  moves, less far than teacher forcing bought
+    9.5 < settled <= 10.9   matches or beats the TEACHER-FORCED arm without
+                            being told the move -- the first result that
+                            bears on the thesis
+    settled <= 9.5          beats g14 outright
+
+Void if it does not complete, or if `twist` leaves the 9-12 band, since that
+would be g17's rotation drift rather than this arm's variable. The dispersion
+measurement on the resulting checkpoint is part of the arm, not a follow-up.
+
+Not submitted: no Bunya session open, and it needs one GPU slot for ~6 h.

@@ -38,7 +38,44 @@ update, no sampling. `sample_loss_step` and `loss_window` appear nowhere in
 arms of 8,000 updates each ended at their own baseline to two decimal places
 ([[the-rule-keeps-whatever-conformation-it-is-given]]).
 
-## Why this is more than a missing flag
+## Narrowed within the hour: our own data contradicts the causal reading
+
+**The freeze cannot be attributed to this.** `scripts/train_growth.py` calls
+`growth_objective` and nothing else -- `training_objective` appears zero times
+in it -- so *every* growth arm scored the fixed final step. That includes the
+arms that **moved**: g13, g14, g15 and g17 all ran with the loss at step 120
+every update, and g17 reached 6.69 A
+([[the-lever-table-was-read-at-a-fifth-of-the-budget-the-arm-needed]]).
+
+So the fixed supervision step is present in the frozen arms and in the moving
+ones alike, and it is therefore not what separates them. What separates them is
+already correctly recorded: the task (whole-structure growth under clamped FAPE
+versus interior-window regeneration) and the ceilings
+([[the-rule-keeps-whatever-conformation-it-is-given]], narrowed 8 Nov).
+
+Stated plainly because it was overstated when this node was written an hour
+earlier: the asymmetry between the two code paths is real and its documented
+intent is real, but **"the growth path froze because it supervises a fixed
+step" is refuted by the arms that did not freeze.**
+
+## What survives: persistence past the horizon, which nothing measures
+
+What the sampled step is actually for is a state that *persists*, and that is a
+different question from whether the window moves. Every growth number in the
+record is read at step 120 and nowhere else, so the record cannot distinguish a
+window that settled in a basin from one that is frozen from one that would drift
+away by step 300. g17's 6.69 A is a reading at one step of one rollout.
+
+That makes the cheap first test a **measurement**, not an arm: roll a trained
+checkpoint past 120 steps and report the dispersion. E(n)-GNCA reports its
+attractor maintained for 1000 steps past the training horizon; nothing here does
+the equivalent. If g17's window holds, the fixed supervision step cost nothing
+and this node is a curiosity. If it drifts, the sampled step becomes the fix for
+a measured problem rather than a suspected one.
+
+## Why the asymmetry is still worth recording
+
+### Why a fixed step is an invitation to build a clock
 
 A rule supervised at exactly step 120 is being asked for one trajectory of one
 known length. A rule supervised at an unpredictable late step is being asked for
@@ -73,12 +110,15 @@ the neural-cubes levers missing from the growth trainer
 
 ## Scope
 
-This is an observation about two code paths, not a measurement of their effect.
-**No growth arm has been run with a sampled supervision step**, so the claim here
-is the asymmetry and its documented intent, not that sampling would have
-unfrozen the four arms. The cheapest test available: `g14_pairwise`'s settings
-with a sampled late supervision step, which is one setting and reuses an arm the
-config can still express.
+An observation about two code paths, and -- after the narrowing above -- **not
+an explanation of anything measured.** No growth arm has been run with a sampled
+supervision step, and the arms that froze shared the fixed step with the arms
+that did not. The claim is the asymmetry and its documented intent only.
+
+Order of work this implies: the dispersion measurement on `g17_long`'s
+checkpoint first, because it is CPU-only, needs no queue, and decides whether
+this matters at all. A sampled-step arm is worth a slot only if that measurement
+says the window does not hold.
 
 ## Supports
 - [[a-local-rule-can-regenerate-a-damaged-region-from-its-surviving-context]]
