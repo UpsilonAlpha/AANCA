@@ -10210,3 +10210,80 @@ would be g17's rotation drift rather than this arm's variable. The dispersion
 measurement on the resulting checkpoint is part of the arm, not a follow-up.
 
 Not submitted: no Bunya session open, and it needs one GPU slot for ~6 h.
+
+## 9 Nov, what each term is actually doing, and two things I had listed wrongly
+
+Asked why FAPE is in the objective at all if it is flat over the window's
+journey, whether a global loss corrupts a local rule, and what `reach`,
+`pairwise_window` and `pairwise_anchor` do. Checking produced two corrections to
+my own term table and one to the record's reasoning.
+
+### `reach` is structurally zero in every regeneration arm
+
+`pending_closures` takes *consecutive* entries of the sorted alive set, and
+`birth = none` means every slot is alive from step 0. So every pair it returns
+is at sequence separation 1, where a real peptide bond sits at 3.80 A against
+`REACH[1] = 3.96` and charges exactly nothing. `reach` is a growth term; every
+regeneration arm is `birth = none`. It contributes nothing to g19 and listing it
+as a loss term was wrong.
+
+### `pairwise_window` is not in the loss
+
+The weight applies to the anchor half alone -- `+ pairwise_weight *
+pairwise_anchor` at `growth.py:2049`. The window half is reported and never
+weighted, deliberately, because summing the two cancels the placement signal in
+the far regime (the transit-contraction measurement).
+
+So g19's live objective is **four** terms, not five or six: `fape` 0.1,
+`pairwise_anchor` 0.01, `clash` 1.0, `bond`.
+
+### Why FAPE stays, despite being flat where the window starts
+
+**It is the only term that constrains orientation.** Everything else in the
+objective is a distance, and distances are blind to twist -- a residue can sit
+at every correct CA-CA separation and still be rotated wrongly. FAPE scores N,
+CA and C in each residue's frame, so it is the only thing that charges for that.
+It is therefore the *arrival* term rather than the approach one: `pairwise_anchor`
+is unclamped and carries the window across the 13.3 A, and FAPE takes over
+inside 10 A, which is where g17's 6.69 A sits. Also benchmark comparability --
+a growth model reporting a bespoke error could not be compared with anything.
+
+Caveat worth keeping: at weight 0.1 it is not doing the orientation job well.
+g17's `twist` went 10.4 -> 14.3 *as placement improved*, which is the one term
+nothing else in the objective can see getting worse.
+
+### A global loss is not global information
+
+The rule never sees FAPE. A loss is computed outside the rule and may be any
+function of the whole structure; what the thesis forbids is global information in
+**perception**. Every method trains on global losses.
+
+Stronger: an all-pairs loss is *necessary*. E(n)-GNCA's authors say their
+all-pairs distance MSE is "necessary to uniquely identify the target state",
+because nodes "are not aware of their global location" and each has |V|-1
+constraints to satisfy. That is the rigidity condition expressed as a gradient
+([[placing-a-node-from-local-distances-needs-a-globally-rigid-neighbourhood]]).
+**A local rule needs a global loss precisely because it is local.**
+
+The real version of the worry is different and did bite: a global loss can ask
+for something local information cannot supply, and the rule then satisfies it
+through whatever proxy correlates. That is what teacher forcing did -- it made
+the rule a regression fitter. A mismatch between objective and architecture, not
+information leaking into perception.
+
+### And the live-pair statistic counts the wrong pairs
+
+The record's reason for leaving `fape_clamp_prob = 1.0` in regeneration was that
+90.1 % of scored pairs are inside the clamp here against 26.5 % on
+whole-structure growth, so the clamp does not bite. But a crop is ~116 intact
+residues at crystal pose and a 12-residue window: roughly 13,000 intact-intact
+pairs against 1,400 window-intact. **The 90 % is almost entirely pairs that are
+already correct and contribute no gradient.**
+
+The live fraction and the clamp problem are the same observation counted two
+ways. The quantity that would settle it is the live fraction *restricted to
+window-to-intact pairs*, which nothing has measured, and which at 13.3 A should
+be near zero. `g6_open` tested the open clamp where 73.5 % of all pairs were
+dead; it has never been tested where 90 % are live but the informative 10 % are
+dead. `scripts/baseline_probe.py` already computes the live fraction and
+splitting it by pair class is a few lines, CPU-only.

@@ -141,17 +141,32 @@ pairwise_weight = 0.01
 # What is left in the objective, and where each term's numbers come from:
 #
 #   fape      0.1   native N/CA/C in every residue's own frame, clamped at
-#                   10 A -- so EXACTLY FLAT over the 13.3 A the window starts
-#                   out, which is why the weight is 0.1 and not 1.0
-#   pairwise  0.01  native CA-CA distances, window-to-intact pairs only,
-#                   squared and UNCLAMPED so the gradient survives 13 A
+#                   10 A. The only term in the objective that constrains
+#                   ORIENTATION -- everything else is distances, which are
+#                   blind to twist. Flat past the clamp, so it is the ARRIVAL
+#                   term, not the approach one, and 0.1 reflects that.
+#   pairwise  0.01  native CA-CA distances, window-to-intact pairs ONLY,
+#                   squared and UNCLAMPED so the gradient grows with
+#                   displacement and survives the 13.3 A. This is the approach
+#                   term and the only thing that acts in the far regime.
 #   clash     1.0   Angstrom of van der Waals overlap. No native.
 #   bond            C-N against 1.329 A, omega against planar trans. No native.
-#   reach           relu(CA-CA gap minus what g residues can span). No native.
 #
-# Three of the five need no native structure at all. That is rung 2 of the
-# information ladder -- loose FAPE plus physical restraints -- built since
-# 7 Nov and never run.
+# NOT loss terms, and listed wrongly as such on 9 Nov before this was checked:
+#
+#   reach           STRUCTURALLY ZERO here. `pending_closures` takes
+#                   consecutive alive residues, and `birth = none` means every
+#                   slot is alive from step 0, so every pair is at separation
+#                   1 -- where a real peptide bond sits at 3.80 A against
+#                   REACH[1] = 3.96 and charges exactly nothing. It is a growth
+#                   term and every regeneration arm is birth = none.
+#   pairwise_window REPORTED, never weighted: the weight applies to the anchor
+#                   half alone. A diagnostic, kept because summing it with the
+#                   anchor half cancels the placement signal.
+#
+# So the live objective is FOUR terms, of which two need no native structure.
+# That is rung 2 of the information ladder -- loose FAPE plus physical
+# restraints -- built since 7 Nov and never run.
 # docs/claims/question-can-the-architecture-place-residues-under-any-supervision.md
 #
 # PRE-REGISTERED. `settled` is the mean of the last two evaluations, against

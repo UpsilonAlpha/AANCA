@@ -41,6 +41,35 @@ of pairs are live rather than 26.5 %
 ([[the-regeneration-baseline-is-10-77-angstrom-and-90-percent-live]]) -- so the
 flag stays, and the arm that needed it never needed it.
 
+## Reopened 9 Nov on the reasoning, not the result
+
+The result stands: `g6_open` ran AF2's 90 % scheme and did not move
+([[g6-open-did-not-move-with-the-clamp-open-a-tenth-of-the-time]]), so opening
+the clamp is not the key to whole-structure growth and this node stays `void`.
+
+**What does not stand is the reason given for leaving the flag at 1.0 in
+regeneration.** That reason was the live fraction: 90.1 % of scored pairs are
+inside the clamp on a damaged window against 26.5 % on whole-structure growth,
+so "the arm that needed it never needed it". But a regeneration crop is ~116
+intact residues at their crystal poses and a 12-residue window, so the pair
+counts are roughly 13,000 intact-intact against 1,400 window-intact. **The 90 %
+is almost entirely pairs that are already correct and contribute no gradient.**
+
+So the live fraction and the clamp problem are not in tension, they are the same
+observation counted two ways: the pairs inside the clamp are the pairs with
+nothing to fix, which is what this node said in the first place. A statistic
+over all pairs cannot answer a question about the informative ones.
+
+The quantity that would settle it is the live fraction **restricted to
+window-to-intact pairs**, which nothing has measured. At a 13.3 A displacement
+it should be near zero, and if it is, `fape_clamp_prob` has never been tested on
+a task where FAPE's gradient reaches the residues that need to move --
+`g6_open` tested it where 73.5 % of all pairs were dead, which is a different
+regime from where 90 % are live but the wrong 10 % are dead.
+
+Cheap: `scripts/baseline_probe.py` already computes the live fraction, and
+splitting it by pair class is a few lines. CPU-only.
+
 ## Superseded by
 - [[the-reach-probes-split-the-three-frozen-arms]]
 
