@@ -83,10 +83,37 @@ entirely in the removals.
 
     diffusion (RFD4, Chroma, RFdiffusion)   this rule
     ------------------------------------    ---------------------------------
-    timestep / noise level is an input      no step index, no noise conditioning
-    all-pairs attention each step           one message-passing hop, local only
-    one-step denoising at sampled noise     BPTT through a 120-step rollout
-    stops because the schedule ends         must converge to a fixed point
+    timestep is an INPUT to every cell      time exists; no cell can read it
+    noise is the corruption                destroyed sections are
+    all-pairs attention each step           one hop per step, every step
+    one-step denoising at sampled noise     BPTT through a truncated rollout
+    stops because the schedule ends         settles into a realistic basin
+
+**Corrected by Ulban, 9 Nov, on two rows.** The first is not "no timestep":
+*"There is kind of a time step, as the network needs to grow and settle, the
+individual AANCAs just cannot know it."* Global time exists and the trajectory
+has a direction; what is withheld is any cell's *access* to it, so the rule
+cannot learn the index in place of the structure. And the corruption is not
+noise: sections are **destroyed** and must regenerate, which is Growing NCA's
+damage protocol rather than a noise schedule.
+
+The last row was overstated as "must converge to a fixed point". *"We want
+convergence to a realistic local minimum, doesn't necessarily need to be a fixed
+point, as that is unrealistic / not physical."* Correct, and the overstatement is
+load-bearing rather than cosmetic: **an exact fixed point is precisely the
+property the degenerate solution has.** The identity map is a perfect fixed point
+([[the-rule-keeps-whatever-conformation-it-is-given]]), so an objective that
+rewards *stopping* rewards the thing four arms did. A bounded basin -- the
+structure fluctuating within a band around a realistic conformation -- is both
+physical and distinguishable from never having moved. `rollout.py`'s own
+`sample_loss_step` docstring carries the same overstatement and should be read
+the same way.
+
+**This is also a measurement gap.** Every growth number is read at step 120 and
+nowhere else, so the record cannot currently distinguish *settled in a basin*
+from *frozen* from *will drift away by step 300*. E(n)-GNCA reports its attractor
+maintained for 1000 steps past the training horizon; the equivalent here is to
+roll past 120 and report the dispersion, which nothing does.
 
 `src/aanca/model.py` states the first two as the claim itself: *"No step index,
 no noise-level conditioning, no global pooling, no attention over the whole
@@ -95,12 +122,19 @@ creep in."*
 
 **Each removal has a cost the record has already paid.**
 
-  * **No timestep** is why the identity map is a seductive degenerate solution
-    and why four arms froze at their own baselines
+  * **An unreadable timestep** is why the identity map is a seductive degenerate
+    solution and why four arms froze at their own baselines
     ([[the-rule-keeps-whatever-conformation-it-is-given]]). A diffusion model
     cannot freeze: `t` forces progress whether the network has learned anything
-    or not. We ask the rule to decide *for itself* that it has arrived.
-  * **No global attention** is why perception from wrong coordinates is the
+    or not. We ask the rule to decide *for itself* that it has arrived -- and
+    the repository already holds the mechanism for that, unused by this track
+    ([[the-growth-objective-supervises-a-fixed-final-step-while-the-track-that-converged-samples-one]]).
+  * **One hop per step, not one hop total.** Perception is refreshed every step
+    from a graph rebuilt at the current coordinates, so a cell is never stale;
+    what it is not is *deep* within a step. Two stacked hops would make a single
+    application globally connected on a small protein -- degree 28-33 -- and
+    nothing in the loss curve would reveal it, so the limit is the claim rather
+    than a budget. This is why perception from wrong coordinates is the
     central problem
     ([[the-perception-graph-is-rebuilt-from-where-the-residue-wrongly-is]]), and
     it is what `native_edges` was papering over.

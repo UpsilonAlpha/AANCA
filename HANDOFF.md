@@ -10378,3 +10378,60 @@ everything. What is local is the *function*, not its reach -- and that is why th
 payoff holds: one small function of a neighbourhood, applied repeatedly, 229,588
 parameters against a pairformer's tens of millions. Small to ablate, global in
 what it computes.
+
+## 9 Nov, four corrections to the diffusion contrast, and one of them found a real gap
+
+**1. The timestep.** Not "no timestep" -- global time exists and the trajectory
+has a direction; what is withheld is any *cell's access* to it, so the rule
+cannot learn the index in place of the structure. And the corruption is
+destroyed sections, not noise: Growing NCA's damage protocol, not a schedule.
+Both rows corrected in the thesis node.
+
+**2. One hop per step, not one hop total.** The graph is rebuilt every step at
+the current coordinates and one hop runs every step, so a cell is never stale --
+perception is refreshed continuously. What it is not is *deep within a step*,
+and that is deliberate: `model.py` records that two stacked hops would make a
+single application globally connected on a small protein at degree 28-33, *"and
+nothing in the loss curve would reveal it"*. The limit is the claim, not a
+compute budget. Depth comes from time.
+
+**3. BPTT over a fixed rollout -- the question that found something.**
+
+`rollout.sample_loss_step` draws the supervised step uniformly from the back
+`loss_window` (0.5) of the rollout. Its docstring: *"Supervising the last step
+teaches a trajectory of that length. Supervising an unpredictable late step is
+what forces a fixed point."* It is used by `rollout.training_objective` -- the
+packing and inverse-folding path, **the track that converged**, 38.0 % held-out
+recovery.
+
+`growth.growth_objective` scores `final = result.state`: step 120, every update,
+no sampling. `sample_loss_step` and `loss_window` appear nowhere in `growth.py`
+or `train_growth.py`. **The track that froze.**
+
+So the mechanism documented as the fix for exactly this exists in the repository
+and the growth path does not use it. Written up as
+`docs/claims/the-growth-objective-supervises-a-fixed-final-step-while-the-track-
+that-converged-samples-one.md`, with the three related absences: no sample pool
+(the docstring says so), fixed rollout length at 120 (Growing NCA draws its step
+count per sample; E(n)-GNCA uses 15-25 steps with a replay pool), and
+`truncate = 12` with the loss at the end, so **the gradient reaches 12 of 120
+steps**. Which answers the exploding/vanishing worry directly: it never travels
+120 steps, so that is not the live problem -- the live problem is that it never
+reaches the early ones.
+
+Cheapest test: `g14_pairwise` with a sampled late supervision step. One setting,
+and it is the one historical arm the config can still express.
+
+**4. "Must converge to a fixed point" was overstated, and the overstatement is
+load-bearing.** The target is a realistic local minimum, not a frozen point --
+a protein fluctuates. This matters because **an exact fixed point is precisely
+the property the degenerate solution has**: the identity map is a perfect fixed
+point, so an objective that rewards *stopping* rewards what four arms did. A
+bounded basin is both physical and distinguishable from never having moved.
+`sample_loss_step`'s own docstring carries the same overstatement.
+
+It is also a measurement gap: every growth number is read at step 120 and
+nowhere else, so the record cannot distinguish *settled in a basin* from *frozen*
+from *will drift away by step 300*. E(n)-GNCA reports its attractor held for 1000
+steps past the training horizon. The equivalent here -- roll past 120, report the
+dispersion -- is not done by anything.
