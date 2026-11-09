@@ -12,7 +12,7 @@ This directory records what the project believes about that and why, as argmap
 notes. `python docs/claims/check.py` validates them; the generic tool is
 vendored unchanged in `../argmap/`.
 
-**`HANDOFF.md` remains the journal and is never migrated into here.** Its
+**`docs/JOURNAL.md` is the journal and is never migrated into here.** Its
 chronology is itself evidence -- when a prediction was timestamped, how long a
 wrong finding stood -- and every node here cites the jobs or source files its
 numbers came from rather than restating the history.

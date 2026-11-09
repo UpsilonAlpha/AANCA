@@ -2,7 +2,7 @@
 losses and diagnostic that go with unfreezing amino-acid identity.
 
 The architecture is already fixed-backbone, so inverse folding is this setting
-with identity unfrozen -- see ``HANDOFF.md``, "Inverse folding: the design
+with identity unfrozen -- see ``docs/JOURNAL.md``, "Inverse folding: the design
 settled on 2026-11-02". Two decisions recorded there are what this module
 exists to implement, and both are decisions *against* the differentiable thing:
 

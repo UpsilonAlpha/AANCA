@@ -1,6 +1,6 @@
 """Fields that travel along the chain, not through space.
 
-The deficit this exists for is recorded in HANDOFF.md under "Rethink": every
+The deficit this exists for is recorded in docs/JOURNAL.md under "Rethink": every
 edge a growth rollout perceives is selected from ``coords.detach()`` within a
 10 A cutoff, so two residues that ought to touch and currently do not have no
 edge, no message and no gradient path. The rotational lever arm drifts two

@@ -238,7 +238,7 @@ class GrowthConfig:
 # **in both directions**: the peptide restraint was 47 times too strong and
 # completion 27 times too weak.
 #
-# **This corrects a claim recorded earlier in HANDOFF.md.** That said completion
+# **This corrects a claim recorded earlier in docs/JOURNAL.md.** That said completion
 # dominated early training and would need lowering, on the grounds that its
 # *value* was 2.13 against FAPE's 0.56. A term's value is not its influence: in
 # gradient, completion is 0.72 against FAPE's 18.3. The 4.8e2 activation

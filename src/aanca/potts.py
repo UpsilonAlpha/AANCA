@@ -1,6 +1,6 @@
 """A Potts energy over amino-acid identity, and the chains that sample it.
 
-Why this module exists, from ``HANDOFF.md`` ("Inverse folding: the design
+Why this module exists, from ``docs/JOURNAL.md`` ("Inverse folding: the design
 settled on 2026-11-02"): an update map ``x <- f(x)`` descends a scalar only if
 its Jacobian is symmetric, which a generic net's is not. The AANCA rule reaches
 a fixed point, but that fixed point is the minimum of nothing -- there is no
@@ -396,7 +396,7 @@ def gibbs_sweep(
 
     Returns ``(sequence, n_changed)`` -- a new tensor, and the number of
     positions whose type actually differs afterwards. That count is the
-    convergence diagnostic ``HANDOFF.md`` asks for in place of
+    convergence diagnostic ``docs/JOURNAL.md`` asks for in place of
     ``mean_abs_delta``: a discrete label can flip while a continuous residual
     settles, so the fraction of labels that changed is what must decay.
 
