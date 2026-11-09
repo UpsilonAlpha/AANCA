@@ -10310,3 +10310,71 @@ did not -- `g17_long` had the native selection, live distances, teacher-forced
 moves and 10,000 updates and settled at 6.69 A. Pruning can at best recover the
 graph, and the graph was not sufficient. Worth resolving why before building
 this.
+
+## 9 Nov, answered: why not N->C, and how this differs from diffusion
+
+### The over-complete graph is withdrawn
+
+Ulban: *"You're right that overcompleting and pruning defeats the locality
+premise."* What survives is the narrow version -- a **learned** envelope weight
+on the k-neighbour selection the rule already has.
+
+A second reason, stronger than the premise objection and missed when the node
+was written: **the complete graph buys no reach that is not already there.**
+`model.py` records a measured mean degree of **28-33** at the 10 A
+all-heavy-atom cutoff, so one hop reaches a quarter to a third of a small
+protein and **two hops reach all of it**. Perception was never reach-limited; it
+is limited by the selection being taken at the wrong *location*.
+
+### N->C placement is not a fallback -- it is the worst case, and both halves are measured
+
+**The rigidity condition.** `placing-a-node-from-local-distances-needs-a-
+globally-rigid-neighbourhood` (Aspnes 2006, Dong & Wu 2003) says a node is
+uniquely localizable from local distances iff its grounded graph is generically
+globally rigid. A residue extended off a terminus has anchors **on one side
+only, in a short nearly-collinear chain**, so its grounded graph is not globally
+rigid and its position is genuinely under-determined -- not hard, *ambiguous*. A
+residue in an interior window has anchors on several sides and is close to the
+efficiently solvable trilateration case. So N->C is the configuration the
+literature singles out as unsolvable, and the regeneration task is the one it
+singles out as solvable. The project did not choose interior windows by taste.
+
+**The drift measurement.** Parented placement composes frames, and
+`growth.py:110` records the result: *"The translational error does not compound;
+the rotational error does."* The coalescence probe measures **r = 0.970** between
+junction gaps and accumulated drift, and the escape hatch (`rigid_relax`, 0.1 rad
+and 0.3 A per residue per step) is not currently enough to undo it. An ordered
+walk also imposes an order, which is a global coordinator wearing a different
+hat -- and it would entangle the learned function with chain position, which is
+the one thing the interpretability payoff cannot afford.
+
+Note the distinction that matters: an *emergent* wavefront is fine. Growing NCA
+grows from a seed and the order appears. An *imposed* N->C order is the
+coordinator.
+
+### How this differs from diffusion
+
+Written into the thesis node, because the answer is short enough to be
+uncomfortable: **an AANCA is a diffusion model with three things removed.**
+
+    diffusion (RFD4, Chroma, RFdiffusion)   this rule
+    ------------------------------------    ---------------------------------
+    timestep / noise level is an input      no step index, no noise conditioning
+    all-pairs attention each step           one message-passing hop, local only
+    one-step denoising at sampled noise     BPTT through a 120-step rollout
+    stops because the schedule ends         must converge to a fixed point
+
+Each removal has a cost already paid in the record. No timestep is why the
+identity map is degenerate and why four arms froze -- a diffusion model cannot
+freeze, `t` forces progress. No global attention is why perception from wrong
+coordinates is the central problem, and what `native_edges` was papering over.
+Training through the rollout is why budget dominated every lever, and why
+`truncate 12` is a liability: it cuts the gradient through the iteration
+E(n)-GNCA's authors call the whole source of global reach.
+
+**Locality is not a small receptive field.** With degree 28-33, a 120-step
+rollout crosses the molecule many times, so the fixed point depends on
+everything. What is local is the *function*, not its reach -- and that is why the
+payoff holds: one small function of a neighbourhood, applied repeatedly, 229,588
+parameters against a pairformer's tens of millions. Small to ablate, global in
+what it computes.

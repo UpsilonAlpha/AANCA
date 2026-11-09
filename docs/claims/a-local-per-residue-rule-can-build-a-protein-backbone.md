@@ -74,6 +74,57 @@ rule perceives its own wrong coordinates *and* its own uncommitted labels, and
 the failure that only exists there -- sequence and structure co-adapting to a
 mutually consistent wrong guess -- has never been given a chance to appear.
 
+## How this differs from diffusion, which is the question the claim lives or dies on
+
+Asked 9 Nov, and the answer is uncomfortably short: **an AANCA is a diffusion
+model with three things removed.** The similarity is real -- both are iterative
+refinement with weights shared across steps -- so the content of the thesis is
+entirely in the removals.
+
+    diffusion (RFD4, Chroma, RFdiffusion)   this rule
+    ------------------------------------    ---------------------------------
+    timestep / noise level is an input      no step index, no noise conditioning
+    all-pairs attention each step           one message-passing hop, local only
+    one-step denoising at sampled noise     BPTT through a 120-step rollout
+    stops because the schedule ends         must converge to a fixed point
+
+`src/aanca/model.py` states the first two as the claim itself: *"No step index,
+no noise-level conditioning, no global pooling, no attention over the whole
+protein. That absence is the scientific claim -- do not let a time embedding
+creep in."*
+
+**Each removal has a cost the record has already paid.**
+
+  * **No timestep** is why the identity map is a seductive degenerate solution
+    and why four arms froze at their own baselines
+    ([[the-rule-keeps-whatever-conformation-it-is-given]]). A diffusion model
+    cannot freeze: `t` forces progress whether the network has learned anything
+    or not. We ask the rule to decide *for itself* that it has arrived.
+  * **No global attention** is why perception from wrong coordinates is the
+    central problem
+    ([[the-perception-graph-is-rebuilt-from-where-the-residue-wrongly-is]]), and
+    it is what `native_edges` was papering over.
+  * **Training through the rollout** is why budget turned out to dominate every
+    lever ([[the-lever-table-was-read-at-a-fifth-of-the-budget-the-arm-needed]])
+    and why `truncate 12` is a liability: it cuts the gradient through the
+    iteration that E(n)-GNCA's authors identify as the whole source of global
+    reach ([[the-gradient-window-is-a-third-of-the-journey-the-window-must-travel]]).
+
+**Locality is not the same as a small receptive field, and conflating them
+understates the claim.** The measured mean degree at the 10 A cutoff is 28-33,
+so one hop reaches a quarter to a third of a small protein and two reach all of
+it; a 120-step rollout crosses the molecule many times over. The converged rule's
+fixed point therefore depends on everything. What is local is the *function*, not
+its reach.
+
+That is exactly why the interpretability payoff holds. A pairformer is many
+large functions over all pairs, conditioned on a noise level. This is **one small
+function of a neighbourhood, applied repeatedly** -- 229,588 parameters against
+tens of millions -- so the thing to ablate or autoencode is small even though
+what it computes is global. `docs/PLAN_V1.md` already concedes the weaker form
+of the result: *"a rule landing close to a globally attentive diffusion model is
+already the interesting result."*
+
 ## Supported by
 - [[a-local-rule-can-regenerate-a-damaged-region-from-its-surviving-context]]
 

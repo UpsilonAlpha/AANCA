@@ -54,22 +54,34 @@ output*, readable directly, rather than something to be probed for in a hidden
 state. This is a strictly better interpretation target than anything the current
 design offers.
 
+## WITHDRAWN 9 Nov, by Ulban, on the first objection
+
+*"You're right that overcompleting and pruning defeats the locality premise."*
+The over-complete form is withdrawn. What survives is the narrower idea in
+"What it would cost to try" below -- a **learned** envelope weight on the
+k-neighbour selection the rule already has -- which edits a local graph rather
+than carving a global one.
+
+A second reason to drop it, stronger than the premise objection and not noticed
+when this node was written: **the complete graph buys no reach that is not
+already there.** `model.py` records a measured mean degree of **28-33** at the
+10 A all-heavy-atom cutoff, so one hop reaches a quarter to a third of a small
+protein and **two hops reach all of it**. Depth comes from time: a 120-step
+rollout propagates information across the molecule many times over. Perception
+was never reach-limited. It is limited by the selection being taken *at the
+wrong location*, which over-completion addresses by brute force and a learned
+local weight addresses directly.
+
 ## Three objections to settle before building it
 
-**1. A complete graph is global information, which is the thesis.** One
-message-passing hop over all pairs is what a pairformer does. If the rule starts
-complete, then during training it has global access, and "no global coordinator"
-survives only as an *outcome* -- the converged edge set happens to be sparse and
-local -- rather than an architectural guarantee. That is a weaker and arguably
-more interesting claim, but it must be made deliberately and not discovered
-later.
-
-The mitigation that keeps both properties: a **hard per-residue edge budget**.
-The rule scores N-1 candidates with a cheap scalar and must prune to exactly
-k, so message passing is never all-pairs; only the *selection* sees everything,
-and it sees it through one number per pair. Locality stays structural. Whether
-a scalar-scored selection is enough to find the true contacts is the open
-empirical question.
+**1. A complete graph is global information, which is the thesis.** Conceded,
+above. One message-passing hop over all pairs is what a pairformer does; a rule
+that starts complete has global access during training, and "no global
+coordinator" would survive only as an *outcome* rather than an architectural
+guarantee. The mitigation considered -- a hard per-residue budget, score N-1
+candidates and prune to exactly k -- keeps message passing off all-pairs, but
+the selection still sees everything, and by the degree measurement above it
+would be paying a global cost for information two local hops already carry.
 
 **2. Self-certification -- the rule can satisfy the objective by editing the
 graph instead of the coordinates.** "Geometrically realistic" scored against the
@@ -106,7 +118,7 @@ design has no target graph at inference, which is what turned the same wiring
 into `native_edges` here.
 
 The proposal inverts their fixed point: **learn the graph and the embedding
-jointly**, with the graph as a pruning process. Not aware of E(n)-GNCA doing
+jointly**, with the graph as a learned weighting. Not aware of E(n)-GNCA doing
 edge editing, and not confident about the wider literature -- learned graph
 structure, differentiable rewiring and latent graph inference all exist in
 graph-ML generally, and a search is owed before claiming novelty.
@@ -125,6 +137,7 @@ graph was not sufficient.
 
 ## Requires
 - [[question-can-the-architecture-place-residues-under-any-supervision]]
+- [[placing-a-node-from-local-distances-needs-a-globally-rigid-neighbourhood]]
 
 ## Supports
 - [[a-local-per-residue-rule-can-build-a-protein-backbone]]
