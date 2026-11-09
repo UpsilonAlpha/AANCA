@@ -59,7 +59,13 @@ always on a refuted claim.
   against. Only add `supports` from an observation when the observation really
   is evidence for that claim, not merely adjacent to it.
 - `requires`: for a premise, and for an open `question` that gates a claim.
+  It propagates from **every** `supported` node (check 3b), so use it for
+  provenance too: an observation computed on a structure the project built
+  `requires` that structure's node, and the structure's node carries its known
+  defects. Demoting the structure then flags every result computed on it.
 - `superseded-by`: see below.
+- Write every edge as a **list item** (`- [[target]]`, or `1. [[target]]`).
+  A wikilink in a prose line under an edge heading is prose, not an edge.
 
 **If you find yourself wanting a fifth edge type, you want a sentence in the
 body instead.** Nuance goes in prose; the edges are what gets checked.
@@ -130,13 +136,17 @@ These used to pass silently and are now check-0 findings, so a mistyped edit
 fails loudly instead of quietly shrinking the graph:
 
 - a misspelled or missing `status` (`suported`) - which would otherwise make
-  the node non-load-bearing and disarm checks 1, 2, 2b and 4 on it
+  the node non-load-bearing and disarm checks 1, 2, 2b, 3b and 4 on it
 - a misspelled frontmatter key (`entrys`), or any key outside the five
 - an invalid `type`, which also keeps the note out of the graph entirely
 - a short level-2 heading that looks like an edge heading but is not
   (`## Supporting`), which would otherwise discard every link beneath it
+- an edge section whose wikilinks are all on prose lines, with no list item -
+  the author meant edges and the parser sees none
+- an unclosed code fence, which would hide everything after it
+- two node ids differing only in case
 - frontmatter the parser cannot read: nesting, a stray line, a duplicate key,
-  an unclosed `---` block
+  an unclosed `---` block (a UTF-8 byte-order mark is fine)
 - an empty `entries` on a `supported` node, when the project configures a
   journal
 
@@ -149,6 +159,7 @@ fails loudly instead of quietly shrinking the graph:
 | 2 | demote the claim, refute the refuter with evidence, or record in the body why the refutation does not bite |
 | 2b | repoint at the replacement the `superseded-by` edge names, or demote |
 | 3 | evidence the premise, or drop the `requires` edge and say in the body why the thesis does not need it |
+| 3b | settle the premise, demote the node that requires it, or drop the `requires` edge and say in the body why it is not needed |
 | 4 | read the superseding entry, make the body reflect it, then add the id to the acknowledged field |
 | 5b | link the node into the argument, or remove it |
 

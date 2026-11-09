@@ -113,8 +113,8 @@ check-0 finding, because an unrecognised status is not load-bearing and would
 otherwise remove the node from scrutiny silently.
 
 `supported` is the only status the validator treats as load-bearing. Marking
-something `supported` is therefore a commitment, and checks 1, 2, 2b and 4 are
-the cost of making it.
+something `supported` is therefore a commitment, and checks 1, 2, 2b, 3b and 4
+are the cost of making it.
 
 `withheld` is not a weaker `unsupported`: the evidence exists and is unread *by
 design*, so as a premise of the thesis it is reported as a note rather than a
@@ -176,9 +176,12 @@ refutation can be visible on the node being refuted:
 An outbound heading on note *N* produces `(N, rel, target)`; a mirror heading
 produces `(target, rel, N)` - the same edge seen from the other end. Both forms
 produce the same directed edge, and writing both ends is harmless - duplicates
-collapse. A short level-2 heading that looks like a misspelled edge heading
-(`## Supporting`) is reported at check 0, because an unrecognised heading
-silently discards every link beneath it. Prefer the outbound form, and add a mirror where a reader
+collapse. Only wikilinks on **list items** under an edge heading are edges:
+`- `, `* `, `+ ` or a numbered `1.` / `1)` line. Wikilinks in prose under the
+heading are prose, and nothing inside a fenced code block is parsed. A short
+level-2 heading that looks like a misspelled edge heading (`## Supporting`), and
+an edge section that holds wikilinks but no list item at all, are reported at
+check 0, because either would silently discard every link it holds. Prefer the outbound form, and add a mirror where a reader
 of *that* node needs to see the edge: a refuted claim should carry its own
 `## Refuted by`.
 
@@ -200,13 +203,19 @@ counts the advisory notes as findings so they affect the exit status.
 
 Exit status is 0 when nothing is flagged, 1 when something is, 2 on a usage or
 structural error (not a directory, no notes, no thesis, an unknown option) - so
-it can gate a commit.
+it can gate a commit. With `--json`, a structural error still writes
+`{"error": ..., "exit": 2}` to stdout.
+
+`test_argmap.py` beside the validator is its fixture suite
+(`python test_argmap.py`, stdlib `unittest`).
 
 ### What it checks
 
-0. **Note format** - every note parses; `type`, `status` and `evidence` are
-   valid; no unknown frontmatter keys; no duplicate node ids; `entries` present
-   where `require_sources` demands it; no misspelled edge headings.
+0. **Note format** - every note parses (a UTF-8 byte-order mark is
+   tolerated); `type`, `status` and `evidence` are valid; no unknown
+   frontmatter keys; no two node ids differing only in case; `entries` present
+   where `require_sources` demands it; no misspelled edge headings, no edge
+   section whose links are all off list items, no unclosed code fence.
 0b. **More than one thesis** - a map has one root.
 1. **Support beneath supported claims** - for each `supported` `claim` or
    `thesis`, inbound `supports` is followed **transitively**, and the check
@@ -229,10 +238,19 @@ it can gate a commit.
    **transitively** (a premise of a premise is a premise) with an empty support
    set, no observation beneath it, or a `void` status. Premises that are
    `question` nodes, or `withheld`, are printed as notes.
+3b. **Supported nodes resting on premises that are not held** - `requires`
+   propagates from **every** `supported` node, not only the thesis: anything a
+   supported claim or observation requires, transitively, whose status is not
+   `supported` is a finding (a direct `requires` of a `void` node is left to
+   2b). Premises that are `question` or `withheld` are notes. This is how a
+   defect in an input propagates: an observation computed on a structure we
+   built `requires` that structure's node, and demoting the structure flags
+   every result computed on it.
 4. **Citations of overturned sources** - nodes citing a journal entry that the
    project's retractions index lists as overturned, excluding entries listed in
    that node's `checked` field. Only `supported` nodes count as findings; the
-   rest are printed as notes.
+   rest are printed as notes, as is a `checked` id the node does not cite at
+   all (stale if its citation was removed).
 5. **Broken wikilinks** (5a) and **nodes with no path to the thesis** (5b).
    A broken edge is reported in the edge's own direction, so a mirror heading
    is not reported backwards, and it names both the missing id and the file the

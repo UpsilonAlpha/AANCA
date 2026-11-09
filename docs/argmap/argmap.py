@@ -6,7 +6,7 @@ Project-agnostic. Standard library only. Run it as:
     python argmap.py [directory] [--json] [--strict]
 
 It discovers the thesis from frontmatter (`type: thesis`), builds the edge
-graph from the body sections, and prints nine numbered sections:
+graph from the body sections, and prints ten numbered sections:
 
     0   note format         every note parses; frontmatter keys, types,
                             statuses and evidence classes are valid
@@ -18,6 +18,8 @@ graph from the body sections, and prints nine numbered sections:
                             still resting on a `void` one
     3   thesis premises     anything the thesis requires, transitively, with
                             no observation beneath it
+    3b  held premises       anything a `supported` node requires,
+                            transitively, that is not itself held
     4   overturned sources  nodes citing a source the project retracted
     5a  broken wikilinks
     5b  unreachable nodes
@@ -140,6 +142,16 @@ class Item:
 
 WIKILINK = re.compile(r"\[\[([^\]|#]+?)(?:[|#][^\]]*)?\]\]")
 INLINE_LIST = re.compile(r"^\[(.*)\]$")
+#  A list item: `- `, `* `, `+ `, or a numbered `1.` / `1)`. Wikilinks on these
+#  lines under an edge heading are edges.
+LIST_ITEM = re.compile(r"^(?:[-*+]|\d+[.)])(?:\s|$)")
+FENCE = re.compile(r"^(```|~~~)")
+
+
+def read_note(path: Path) -> str:
+    """Read a file as UTF-8, tolerating a byte-order mark - some Windows
+    editors write one, and it would otherwise hide the `---` frontmatter."""
+    return path.read_text(encoding="utf-8-sig")
 
 
 def parse_frontmatter(text: str):
@@ -231,12 +243,40 @@ def parse_edges_directed(body: str):
     out = []
     warnings = []
     current = None
+    fence = None
+    # per edge section: its heading, how many list items it held, and how
+    # many wikilinks sat on non-list lines
+    section = None
+
+    def close(sec):
+        # Prose with wikilinks after an edge list is normal and is prose. An
+        # edge section holding wikilinks but *no* list item at all is an
+        # author who meant edges and wrote them in a form the parser skips.
+        if sec and sec["items"] == 0 and sec["stray"]:
+            warnings.append(
+                f"`{sec['heading']}` holds {sec['stray']} wikilink(s) but no "
+                f"list item, so none of them are edges; write each as a "
+                f"`- [[target]]` (or `1. [[target]]`) line")
+
     for line in body.splitlines():
         stripped = line.strip()
+        # Nothing inside a fenced code block is a heading or an edge.
+        m = FENCE.match(stripped)
+        if fence:
+            if m and m.group(1) == fence:
+                fence = None
+            continue
+        if m:
+            fence = m.group(1)
+            continue
         if stripped.startswith("#"):
+            close(section)
+            section = None
             level = len(stripped) - len(stripped.lstrip("#"))
             name = stripped.lstrip("#").strip().rstrip(":").lower()
             current = HEADINGS.get(name)
+            if current:
+                section = {"heading": stripped, "items": 0, "stray": 0}
             # Only a short level-2-or-deeper heading is a plausible misspelled
             # edge heading. The node's own `#` title and any prose heading
             # ("## Why the refutation does not bite") are left alone.
@@ -248,10 +288,20 @@ def parse_edges_directed(body: str):
                     f"headings are "
                     f"{', '.join('## ' + h for h in HEADINGS)}")
             continue
-        if current is None or not stripped.startswith(("-", "*")):
+        if current is None:
             continue
-        for target in WIKILINK.findall(stripped):
+        targets = WIKILINK.findall(stripped)
+        if not LIST_ITEM.match(stripped):
+            section["stray"] += len(targets)
+            continue
+        section["items"] += 1
+        for target in targets:
             out.append((current[0], current[1], target.strip()))
+    close(section)
+    if fence:
+        warnings.append(
+            f"a {fence} code fence is never closed, so everything after it "
+            f"is ignored")
     return out, warnings
 
 
@@ -278,7 +328,7 @@ def load_config(directory: Path):
     path = directory / "argmap.json"
     if path.exists():
         try:
-            given = json.loads(path.read_text(encoding="utf-8"))
+            given = json.loads(read_note(path))
         except (OSError, ValueError) as exc:
             warnings.append(f"could not read {path.name}: {exc}")
         else:
@@ -322,7 +372,7 @@ def load_nodes(directory: Path, config: dict):
     for path in sorted(directory.glob("*.md")):
         if path.stem.lower() in skip:
             continue
-        text = path.read_text(encoding="utf-8")
+        text = read_note(path)
         meta, body, fm_warnings = parse_frontmatter(text)
         for warning in fm_warnings:
             if meta or "no `---` frontmatter" not in warning:
@@ -362,7 +412,7 @@ def load_nodes(directory: Path, config: dict):
                 node.slug,
                 f"status {node.status or '(missing)'!r} is not one of "
                 f"{', '.join(STATUSES)}; an unrecognised status is not "
-                f"load-bearing, so checks 1, 2, 2b and 4 would not examine "
+                f"load-bearing, so checks 1, 2, 2b, 3b and 4 would not examine "
                 f"this node at all",
                 f"set `status:` to one of {', '.join(STATUSES)}"))
 
@@ -401,9 +451,15 @@ def load_nodes(directory: Path, config: dict):
         if bad_type:
             rejected.append(node)
             continue
-        if node.slug in nodes:
-            problems.append(Item(node.slug, "duplicate node id",
-                                 "rename one of the files"))
+        # Ids are filenames, so an exact duplicate cannot exist; but two ids
+        # that differ only in case collide on a case-insensitive filesystem
+        # and in editors that resolve wikilinks case-insensitively.
+        clash = next((s for s in nodes if s.lower() == node.slug.lower()), None)
+        if clash:
+            problems.append(Item(
+                node.slug, f"node id differs from {clash} only in case",
+                "rename one of the files; on Windows and macOS, and in most "
+                "wikilink editors, the two are the same note"))
         nodes[node.slug] = node
     return nodes, rejected, problems
 
@@ -423,7 +479,7 @@ def load_retracted(path: Path, pattern: str, ignore):
     bullet = re.compile(r"^\s*[-*]\s+\**\s*(" + pattern + r")")
     found = set()
     skipping = False
-    for line in path.read_text(encoding="utf-8").splitlines():
+    for line in read_note(path).splitlines():
         stripped = line.strip()
         if stripped.startswith("#"):
             heading = stripped.lstrip("#").strip().lower()
@@ -637,15 +693,35 @@ def main(argv):
 
     as_json = "--json" in flags
     real_stdout = sys.stdout
+    real_stderr = sys.stderr
     if as_json:
-        # the text report must not reach stdout in --json mode
+        # the text report must not reach stdout in --json mode; stderr is
+        # still shown, and also captured so a structural error reaches the
+        # JSON consumer instead of leaving stdout empty
         import io
         sys.stdout = io.StringIO()
+        captured = io.StringIO()
+
+        class Tee:
+            def write(self, s):
+                captured.write(s)
+                return real_stderr.write(s)
+
+            def flush(self):
+                real_stderr.flush()
+
+        sys.stderr = Tee()
     try:
-        return run(args[0] if args else ".", as_json, "--strict" in flags,
+        code = run(args[0] if args else ".", as_json, "--strict" in flags,
                    real_stdout)
     finally:
         sys.stdout = real_stdout
+        sys.stderr = real_stderr
+    if as_json and code == 2:
+        json.dump({"error": captured.getvalue().strip(), "exit": 2},
+                  real_stdout, indent=2)
+        real_stdout.write("\n")
+    return code
 
 
 def run(where, as_json, strict, real_stdout):
@@ -860,6 +936,48 @@ def run(where, as_json, strict, real_stdout):
                          f"({len(premises)}), reaches an observation",
                    note_header="premises not expected to carry support")
 
+    # --- 3b ----------------------------------------------------------------
+    # `requires` propagates from every held node, not only the thesis: a
+    # supported claim - or a supported observation computed on a structure we
+    # built - is no more available than its premises. Check 3 already covers
+    # the thesis, and check 2b a direct `requires` of a void node.
+    items, notes = [], []
+    for slug, node in sorted(nodes.items()):
+        if node.type == "thesis" or node.status not in SUPPORTED:
+            continue
+        direct = set(graph.outbound(slug, "requires"))
+        for premise, via in sorted(premise_closure(graph, nodes, [slug]).items()):
+            p = nodes[premise]
+            chain = "" if via == slug else f" (through {via})"
+            if p.type == "question":
+                notes.append(Item(
+                    slug, f"gated by the open question {premise}{chain}"))
+            elif p.status == WITHHELD:
+                notes.append(Item(
+                    slug, f"requires {premise}{chain}, which is withheld"))
+            elif p.status == VOID:
+                if premise in direct:
+                    continue  # check 2b's finding
+                items.append(Item(
+                    slug,
+                    f"marked supported, but it requires {premise}{chain}, "
+                    f"which is void",
+                    f"repoint the `requires` chain at {premise}'s replacement, "
+                    f"or demote this node"))
+            elif p.status not in SUPPORTED:
+                items.append(Item(
+                    slug,
+                    f"marked supported, but it requires {premise}{chain}, "
+                    f"which is not held (status {p.status or 'unset'})",
+                    f"a node is no more available than its premises: settle "
+                    f"{premise}, demote this node, or drop the `requires` edge "
+                    f"and say in the body why it is not needed"))
+    report.section(
+        "3b", "Supported nodes resting on premises that are not held",
+        items, notes,
+        clean="every premise of every supported node is itself held",
+        note_header="premises that gate a supported node by design")
+
     # --- 4 -----------------------------------------------------------------
     source_file = config.get("retracted_sources")
     field = config.get("source_field", "entries")
@@ -882,7 +1000,20 @@ def run(where, as_json, strict, real_stdout):
             items, notes = [], []
             for slug, node in sorted(nodes.items()):
                 acknowledged = set(node.sources(ack_field))
-                hits = sorted(s for s in node.sources(field)
+                cited = set(node.sources(field))
+                # An acknowledgement may name the superseding entry as well
+                # as the overturned one, so only an id the node does not cite
+                # at all is reported - either a citation removed with its
+                # acknowledgement left behind, or an entry the body discusses
+                # without citing. A note, because the second is legitimate.
+                uncited = sorted(acknowledged - cited)
+                if uncited:
+                    notes.append(Item(
+                        slug,
+                        f"`{ack_field}` lists {', '.join(uncited)}, not cited "
+                        f"in `{field}` - stale if the citation was removed, "
+                        f"fine if the body only discusses it"))
+                hits = sorted(s for s in cited
                               if s in retracted and s not in acknowledged)
                 if not hits:
                     continue
@@ -903,8 +1034,9 @@ def run(where, as_json, strict, real_stdout):
                 f"acknowledgement ({len(retracted)} sources listed in "
                 f"{source_file})",
                 items, notes,
-                note_header="further node(s) citing an overturned source, not "
-                            "marked supported, so not counted")
+                note_header="unsupported nodes citing an overturned source, "
+                            "and acknowledgements of uncited entries; not "
+                            "counted")
 
     # --- 5 -----------------------------------------------------------------
     # The missing end of a broken edge is reported as the missing end: under a

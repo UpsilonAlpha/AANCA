@@ -60,7 +60,7 @@ misspelled key reads as a missing field.
 | key | required | meaning |
 | --- | --- | --- |
 | `type` | yes | `thesis`, `claim`, `observation` or `question`. An invalid value **excludes the note from the graph entirely** - it contributes no edges and no reachability - and is reported. |
-| `status` | yes | one of the five below. Missing or misspelled is reported, because an unrecognised status is not load-bearing and would quietly remove the node from checks 1, 2, 2b and 4. |
+| `status` | yes | one of the five below. Missing or misspelled is reported, because an unrecognised status is not load-bearing and would quietly remove the node from checks 1, 2, 2b, 3b and 4. |
 | `evidence` | observations only | `experimental`, `literature` or `ours`. Required on an `observation`; reported if present on anything else. |
 | `entries` | see `require_sources` | the journal entries this node came from. Key name is configurable. |
 | `checked` | optional | journal entries the retractions index lists as overturned whose correction has been read. Key name is configurable. See check 4. |
@@ -87,7 +87,7 @@ duplicate key, unclosed frontmatter - is **reported**, not skipped.
 
 | value | meaning to the validator |
 | --- | --- |
-| `supported` | the project holds this. **The only load-bearing status**: checks 1, 2, 2b and 4 examine these nodes, which is the cost of the commitment. |
+| `supported` | the project holds this. **The only load-bearing status**: checks 1, 2, 2b, 3b and 4 examine these nodes, which is the cost of the commitment. |
 | `open` | stated, not settled. Not load-bearing, and does not pass support through to a claim above it. |
 | `unsupported` | an assertion with no traceable support, marked as one. |
 | `withheld` | evidence exists and is **deliberately unread** (a blind prediction, a sealed dataset). Treated apart from missing evidence: as a thesis premise it is a note, not a finding, but it cannot carry a `supported` claim. |
@@ -115,10 +115,12 @@ a fifth is part of the design: an edge nobody applies consistently cannot be
 checked.
 
 **Mechanism.** An edge is written as a body section on the node that *makes* the
-assertion. The parser walks the body line by line; a line beginning with `#`
-sets the current section from its lowercased text with any trailing colon
-stripped; any following line beginning with `-` or `*` has its `[[wikilinks]]`
-read as edge targets. `[[target|alias]]` and `[[target#heading]]` both resolve
+assertion. The parser walks the body line by line, skipping fenced code
+blocks; a line beginning with `#` sets the current section from its lowercased
+text with any trailing colon stripped; any following list item - a line
+beginning `- `, `* `, `+ `, or a numbered `1.` / `1)` - has its `[[wikilinks]]`
+read as edge targets. Wikilinks in prose under an edge heading are prose, not
+edges; an edge section with wikilinks but no list item at all is reported. `[[target|alias]]` and `[[target#heading]]` both resolve
 to `target`. Nine headings are recognised, giving one directed edge set:
 
 | outbound heading | mirror heading | edge produced |
@@ -140,9 +142,12 @@ unrecognised heading silently discards every link beneath it.
 
 Numbered as the output numbers them.
 
-- **0 - Note format.** Frontmatter parses; `type`, `status` and `evidence` are
-  valid; no unknown frontmatter keys; no duplicate node ids; `entries` present
-  where `require_sources` demands it; no misspelled edge headings.
+- **0 - Note format.** Frontmatter parses (a UTF-8 byte-order mark is
+  tolerated); `type`, `status` and `evidence` are valid; no unknown frontmatter
+  keys; no two node ids differing only in case (they are one note on Windows,
+  macOS and most wikilink editors); `entries` present where `require_sources`
+  demands it; no misspelled edge headings, no edge section whose links are all
+  off list items, no unclosed code fence.
 - **0b - More than one thesis.** A map has one root.
 - **1 - Support beneath supported claims.** For each `supported` `claim` or
   `thesis`, follow inbound `supports` **transitively** and report: an empty
@@ -164,9 +169,19 @@ Numbered as the output numbers them.
   set, no observation beneath it, or a `void` status. Premises that are
   `question` nodes, or `withheld`, are printed as notes: a question is not
   expected to carry support, and withheld evidence is unread by design.
+- **3b - Supported nodes resting on premises that are not held.** `requires`
+  propagates from every `supported` node, not only the thesis. Anything a
+  supported claim or observation requires, transitively, that is not itself
+  `supported` is a finding (a direct `requires` of a `void` node is check
+  2b's); `question` and `withheld` premises are notes. This is what lets a
+  defect in an input propagate: an observation computed on a structure the
+  project built `requires` that structure's node, so demoting the structure
+  flags every result computed on it.
 - **4 - Citations of overturned sources.** Nodes citing a source the project's
   retractions index lists as overturned, minus the ids in that node's
-  acknowledged field. `supported` nodes are findings; the rest are notes.
+  acknowledged field. `supported` nodes are findings; the rest are notes. An
+  acknowledged id the node does not cite at all is also a note - stale if the
+  citation was removed, fine if the body only discusses the entry.
 - **5a - Broken wikilinks.** An edge whose missing end does not exist, reported
   as the edge's own direction (so a mirror heading is not reported backwards),
   naming both the missing id and the file the link was written in. A target
@@ -210,6 +225,11 @@ findings so they affect the exit status. `--help` prints the summary.
 **Exit status: 0** when nothing is flagged, **1** when something is, **2** on a
 usage or structural error (not a directory, no notes found, no `type: thesis`,
 an unknown option, more than one directory argument). So it can gate a commit.
+In `--json` mode a structural error still writes `{"error": ..., "exit": 2}` to
+stdout, so a consumer never parses an empty stream.
+
+`python test_argmap.py` runs the validator's fixture suite (stdlib
+`unittest`, one tiny map per test in a temporary directory).
 
 A project can ship a two-line shim (`check.py`) that points the validator at its
 notes directory and passes options through, so `python check.py` works from
@@ -217,7 +237,8 @@ inside the map.
 
 ## Adopting it for another project
 
-**Generic - copy unchanged:** `argmap.py`, `SPEC.md`, `AGENT.md` and this file.
+**Generic - copy unchanged:** `argmap.py`, `test_argmap.py`, `SPEC.md`,
+`AGENT.md` and this file.
 The vocabulary is generic too: the four node types, five statuses, three
 evidence classes, four edge types and nine headings are hard-coded on purpose,
 because a per-project vocabulary is a vocabulary nobody applies consistently.
