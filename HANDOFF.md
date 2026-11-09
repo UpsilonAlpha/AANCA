@@ -10186,3 +10186,57 @@ recorded one -- so it supersedes the pool-hash item left open this morning.
 
 Both jobs finished before the code-server window closed; the session moved port
 (12059 -> 45951) in between, which is why logs live on `/scratch`.
+
+## 9 Nov, the problem restated by the user: local cofolding, and the sequence half has been off since g9
+
+The root of the argmap said *backbone*. That is half the task, and the file has
+been corrected.
+
+**Inverse folding is a finished result, not a premise.** A local rule recovers
+38.0 % of held-out sequence from structure, converged, against a ~9 %
+composition background. The open problem is the **joint** direction: sequence
+and structure emitted together from local information -- the setting RFD4 and
+the other diffusion models work in, minus the pairformer's all-pairs global
+mixing. One shared rule, one hop, no coordinator, no pooling.
+
+**The outcome, if the answer is yes, is interpretability.** One small shared
+local rule can be ablated channel by channel or run through an autoencoder; a
+pairformer cannot. That is what would make the structural interactions it
+learned recoverable, and it means `rmsd_dmg` is instrumental -- how we know the
+rule works, not what we want from it.
+
+Two things follow that the arm record has not been honouring:
+
+  * **`--native-edges` destroys the payoff, not merely the claim.** It hands the
+    rule the target contact graph, which *is* the structural-interaction
+    information an ablation is supposed to discover. An arm that reads it can
+    report nothing about interactions, because they were an input. This is a
+    much stronger reason to turn that ceiling off than "it is a ceiling".
+  * **The sequence half has been switched off for ten arms.**
+    `identity_weight = 0.0` is the config base; g9 through g18 all inherit it,
+    including the 6.69 A result from earlier today. The last arm to supervise
+    sequence and structure together is **g7_regen**, which predates the
+    equivariance fix and froze 1.5 A the wrong way. So: one half solved, one
+    half ceiling-bound, and **no joint arm since the architecture was
+    repaired.**
+
+Cofolding is not the conjunction of two working halves. In the joint setting the
+rule perceives its own wrong coordinates *and* its own uncommitted labels, and
+the failure mode specific to it -- sequence and structure co-adapting to a
+mutually consistent wrong guess -- has never had the chance to appear. The
+machinery is all built: `identity_weight`, `identity_start = "masked"`,
+`initial_identity` forcing dormant slots to unknown, `type_loss`, the recovery
+column. Built and, in this series, never run.
+
+### What this does to the queue
+
+`--eval-indices` survives, because it is the instrument every later arm is read
+against and it is cheap. `g16_localrot` drops: it is a third double-ceiling
+structure-only arm, so whatever it returns bounds the architecture and says
+nothing about the problem. Its twist argument does not disappear -- it moves to
+being a diagnostic to read *inside* the first joint arm.
+
+The arm that bears on the stated problem is the first **joint** one: g17's
+budget and equivariance, `identity_weight` on, `--native-edges` off. That is two
+ceilings removed and one half switched back on, which is more than one variable,
+so it needs splitting -- and the split is the next thing to decide.
