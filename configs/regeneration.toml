@@ -154,12 +154,16 @@ pairwise_weight = 0.01
 #
 # NOT loss terms, and listed wrongly as such on 9 Nov before this was checked:
 #
-#   reach           STRUCTURALLY ZERO here. `pending_closures` takes
-#                   consecutive alive residues, and `birth = none` means every
-#                   slot is alive from step 0, so every pair is at separation
-#                   1 -- where a real peptide bond sits at 3.80 A against
-#                   REACH[1] = 3.96 and charges exactly nothing. It is a growth
-#                   term and every regeneration arm is birth = none.
+#   reach           NOT what its docstring is about, here. `pending_closures`
+#                   takes consecutive alive residues and `birth = none` means
+#                   every slot is alive, so every pair is at separation 1 and
+#                   there is no closure to foreclose. But it is NOT zero, which
+#                   I claimed on 9 Nov before measuring: REACH[1] = 3.96
+#                   against an ideal 3.80 leaves a 0.16 A dead band, and a
+#                   rollout moving residues 0.3 A per step crosses it, so the
+#                   term acts as a bond-stretch penalty duplicating part of
+#                   `bond`. Measured frame gradient 1.42e-02 against FAPE's
+#                   1.29e-01 (growth_balance_probe.py --damage 12).
 #   pairwise_window REPORTED, never weighted: the weight applies to the anchor
 #                   half alone. A diagnostic, kept because summing it with the
 #                   anchor half cancels the placement signal.
@@ -199,3 +203,68 @@ inherits = "g14_pairwise"
 [g19_nomove.inputs]
 move_weight = 0.0
 updates = 10000
+
+# ======================================================================
+# NOT YET RUN. One setting off g19_nomove, and the setting is a term that has
+# been built since 5 Nov and switched off in every arm ever run.
+#
+# `relative_frame_restraint` charges how wrongly a peptide bond is ROTATED
+# against the crystal's. Its own docstring says why it exists: "The objective
+# has a term for a bond's *length* ... It has no term for the bond's
+# *rotation* ... FAPE charges it only through where the child's atoms land,
+# clamped at 10 A and averaged over every residue that exists, so one birth's
+# share of that gradient is very small." `orientation_weight` has been 0.0
+# since the term landed, and the quantity is reported either way -- which is
+# why `twist` can climb through a whole run with nothing asking about it, as it
+# did in g17_long (10.4 -> 14.3 AS placement improved).
+#
+# Two measurements made on 9 Nov say this is the live problem, both independent
+# of that arm:
+#
+#   * The pairs that would tell a window its orientation is wrong are the
+#     DEADEST class in the objective: read from the window's own frame the
+#     intact context is 21.79 A out and only 31.0 % inside FAPE's clamp,
+#     against 55.7 % the other way round, because a frame's rotation error
+#     multiplies by the distance to the point.
+#     docs/claims/fapes-ninety-percent-live-is-eighty-two-percent-pairs-with-zero-error.md
+#   * FAPE is the ONLY term in the objective that constrains orientation at
+#     all. pairwise_anchor is CA-CA (`frame_idx[:, 1]`), bond is a length plus
+#     omega, clash is a radius: all three are invariant to rotating a residue's
+#     frame.
+#
+# WEIGHT 2.5, MEASURED, not chosen. `growth_balance_probe.py --damage 12` was
+# extended on 9 Nov to cover this term -- it had been missing since the term
+# was added -- and run in the regeneration regime for the first time. 2.5 is
+# what equalises its frame-head gradient against FAPE's (5.14e-02 against
+# 1.29e-01 at weight 1.0). The same run put `pairwise` at 0.0199, which is
+# within 2x of the 0.01 the arms have been using, so the probe agrees with a
+# choice already made and is not being trusted here for the first time.
+#
+# PRE-REGISTERED, and the primary quantity is TWIST, not rmsd_dmg. g17 held
+# 9-12 for its first 6000 updates and ended at 14.3; every identity-free arm
+# before it held 9-12 throughout.
+#
+#   twist settled <= 9.0          the term works and overshoots into the
+#                                 crystal's own range. Report rmsd_dmg second.
+#   9.0 < twist settled <= 12.0   the term holds orientation in the band that
+#                                 arms held before budget pushed g17 out of it
+#   12.0 < twist settled <= 14.3  it helps but does not hold
+#   twist settled > 14.3          at gradient parity with FAPE the term does
+#                                 not control the quantity it was built for,
+#                                 which would make the orientation error
+#                                 something other than a per-bond rotation
+#
+# And a SECOND, independent bucket on placement, because a term at FAPE parity
+# could buy orientation by spending placement:
+#
+#   rmsd_dmg within 0.5 A of g19's    orientation was free
+#   rmsd_dmg worse by more than 0.5 A  it is a trade, and the weight is too high
+#
+# VOID if the run does not complete, or if g19_nomove has not been read first:
+# this arm's buckets are all stated against g19's numbers, so it is strictly
+# second in the queue.
+[g20_orient]
+inherits = "g19_nomove"
+
+[g20_orient.inputs]
+orientation_weight = 2.5

@@ -46,12 +46,20 @@ RAW = ROOT / "data" / "raw"
 HEADS = ("activation_head", "birth_head", "frame_head", "identity_head")
 
 #: Each term, and the keyword that switches it on alone.
+#:
+#: ``orientation`` and ``pairwise`` were both added to the objective *after*
+#: this probe was written and were missing from it until 2026-11-09, so neither
+#: has ever appeared in the balance table and neither weight has ever been
+#: measured. ``orientation_weight`` has been 0.0 in every arm, which is why
+#: `twist` can rise through a run with nothing asking about it.
 TERMS = (
     ("fape", {"fape_weight": 1.0}),
     ("bond", {"bond_weight": 1.0}),
     ("reach", {"reach_weight": 1.0}),
     ("completion", {"completion_weight": 1.0}),
     ("identity", {"identity_weight": 1.0}),
+    ("orientation", {"orientation_weight": 1.0}),
+    ("pairwise", {"pairwise_weight": 1.0}),
 )
 
 
@@ -73,6 +81,17 @@ def gradients(rule) -> dict[str, float]:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--pdb", default="1UBQ")
+    parser.add_argument(
+        "--damage", type=int, default=0,
+        help=(
+            "measure in the REGENERATION regime instead: birth none, every "
+            "slot alive from step 0, this many consecutive residues destroyed. "
+            "The published table was taken under cartesian growth, which is "
+            "not the regime any current arm runs in -- reach, for one, is "
+            "structurally zero under birth none, so its row there says nothing "
+            "about an arm"
+        ),
+    )
     parser.add_argument("--seeds", type=int, default=6)
     parser.add_argument("--steps", type=int, default=30)
     parser.add_argument("--k", type=int, default=24)
@@ -145,7 +164,10 @@ def main() -> int:
                 truncate=args.truncate or 12,
                 k=args.k,
                 blind=True,
-                growth=GrowthConfig(seeds=args.seeds, birth="cartesian"),
+                growth=GrowthConfig(
+                    seeds=args.seeds,
+                    birth="none" if args.damage else "cartesian",
+                ),
             )
             # Every weight to zero, then one back on. FAPE needs a weight for
             # this to be possible at all -- without ``fape_weight`` each row
@@ -159,6 +181,8 @@ def main() -> int:
                 "reach_weight": 0.0,
                 "completion_weight": 0.0,
                 "identity_weight": 0.0,
+                "orientation_weight": 0.0,
+                "pairwise_weight": 0.0,
             }
             # ``identity_weight`` has to be on for the identity track to exist
             # at all, so the FAPE-only case still carries labels; it is the
@@ -174,6 +198,7 @@ def main() -> int:
                 rule, native, topo, config,
                 torch.Generator().manual_seed(repeat),
                 identity_start="masked",
+                damage=args.damage,
                 **off,
             )
             value = {
@@ -182,6 +207,8 @@ def main() -> int:
                 "reach": terms.reach,
                 "completion": terms.completion,
                 "identity": terms.identity,
+                "orientation": terms.orientation,
+                "pairwise": terms.pairwise_anchor,
             }[name]
             values.append(float(value))
             rule.zero_grad()

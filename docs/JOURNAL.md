@@ -10341,3 +10341,101 @@ one. Laptop pool: 954 available, ids 2DWZ 1P6F 3H6J 4ZSX 5D2U 3C2X 4J29 2EKN
 **What this does not say:** that opening the clamp helps. g6_open tested that on
 whole-structure growth and it did not. And the fractions are for the *start
 state*; at 6.69 A they should be much higher, which is unmeasured.
+
+## 9 Nov, the orientation term has existed since 5 Nov and has never had a weight
+
+Asked whether g19 should also carry a higher `fape_weight` and the full
+all-pairs distance MSE from the E(n)-GNCA paper. Checking says: not the MSE, and
+not `fape_weight` either, because there is a direct term and it is switched off.
+
+### The all-pairs MSE would be close to a no-op here, measurably
+
+This morning's split says intact-to-intact pairs sit at a mean error of
+**0.00 A**. Going from window-restricted to all pairs adds, almost entirely,
+pairs that are *already exactly satisfied*: zero contribution to an MSE and zero
+gradient. E(n)-GNCA needs all-pairs because **every** node in their task starts
+at a random Gaussian position with no anchors at all -- "necessary to uniquely
+identify the target state" is necessary *in a setting with nothing pinned*. We
+have ~116 residues at crystal pose. The anchors already supply what all-pairs
+would buy, which is why the restricted term was the right reading of their
+result rather than a shortcut.
+
+The only real content in going all-pairs is re-including the window-to-window
+half, and that is unweighted deliberately: summing it with the anchor half
+cancels the placement signal in the far regime (the transit-contraction
+measurement).
+
+### And their loss could not fix orientation anyway, nor could ours
+
+`pairwise_distance_restraint` is **CA-only** (`frame_idx[:, 1]`), and a CA-CA
+distance is invariant to rotating a residue's frame. So "restricted vs all
+pairs" and "orientation" are different axes: *which pairs* versus *which atoms*.
+Orientation lives in the atoms axis. A point-cloud node has no frame, so their
+L_INV is sufficient for their problem and structurally cannot be for ours.
+
+### The direct term exists, and `orientation_weight = 0.0` in every arm
+
+`relative_frame_restraint`, built 5 Nov. Its docstring: *"The objective has a
+term for a bond's length ... It has no term for the bond's rotation ... FAPE
+charges it only through where the child's atoms land, clamped at 10 A and
+averaged over every residue that exists, so one birth's share of that gradient
+is very small."* Written before this week's measurement and describing it
+exactly.
+
+It is reported either way, which is why `twist` climbed 10.4 -> 14.3 through
+g17_long with **nothing asking about it**. Same shape as `identity_weight`: a
+built term, a config default of 0.0, and ten arms.
+
+### The balance probe did not cover it, and now does
+
+`scripts/growth_balance_probe.py` had five terms in `TERMS`. `orientation` and
+`pairwise` were both added to the objective after it was written and were
+missing from it, so **neither weight had ever been measured**. Extended, and run
+in the regeneration regime for the first time (the published table was taken
+under cartesian growth, which no current arm uses):
+
+    1UBQ, 6 seeds, 30 steps, birth none, damage 12, every weight but one zeroed
+
+      term            value   frame grad
+      fape           0.2545     1.29e-01
+      bond          11.3224     7.47e+00
+      reach          0.3386     1.42e-02
+      completion     0.0000     0.00e+00
+      identity       3.1030     1.45e-01   (identity head)
+      orientation    0.2097     5.14e-02
+      pairwise      80.3759     6.46e+00
+
+    weight that would match FAPE's gradient:
+      orientation       2.5
+      pairwise       0.0199
+      identity        0.884
+      reach            9.03
+      bond           0.0172
+
+**`pairwise` comes out at 0.0199 against the 0.01 the arms use** -- within 2x,
+so the probe agrees with a choice already made and is not being trusted for the
+first time on the number that matters.
+
+### And it corrects me
+
+I wrote this morning that `reach` is "structurally zero" in every regeneration
+arm. **It is not.** The reasoning was right about the start state and wrong
+about a rollout: `REACH[1] = 3.96` against an ideal 3.80 leaves a 0.16 A dead
+band, and a rollout moving residues 0.3 A per step crosses it, so under
+`birth = none` the term acts as a bond-stretch penalty duplicating part of
+`bond` rather than the closure-foreclosure term its docstring describes.
+Measured frame gradient 1.42e-02. Corrected in the config.
+
+### `g20_orient`
+
+One setting off `g19_nomove`: `orientation_weight = 2.5`, the measured parity
+value. Pre-registered on **twist** as the primary quantity, with four buckets
+against g17's 14.3 and the 9-12 band every identity-free arm held, plus a
+second independent bucket on `rmsd_dmg` within 0.5 A of g19's -- because a term
+at FAPE parity could buy orientation by spending placement. Void if g19 has not
+been read first, since every bucket is stated against g19's numbers.
+
+So the queue is two arms, in order, one variable each: g19 asks whether the
+window moves at all without being told the move; g20 asks whether the
+orientation it arrives in can be controlled. Raising `fape_weight` stays
+available as a third, but it is the indirect route to what g20 tests directly.
