@@ -88,11 +88,29 @@ IFS=: read -r h m s <<< "${WALL}"
 WALL_SECONDS=$(( 10#${h:-0} * 3600 + 10#${m:-0} * 60 + 10#${s:-0} ))
 
 # Pin the CPU generation the environment was built for; see bunya_stage.sh.
-# For the GPU profile this costs nothing -- the MI355X nodes are epyc5 anyway.
+#
+# **This stopped costing nothing on 11 Nov.** The comment here used to say the
+# constraint is free for the GPU profile "because the MI355X nodes are epyc5
+# anyway" -- which is true and was the problem: every epyc5 node in gpu_rocm IS
+# an MI355X node, so when all three went down for an infrastructure upgrade the
+# constraint excluded every remaining GPU in the partition. bun144/145 are
+# MI300X on epyc4, bun001/002/070 are MI210 on epyc3/epyc4.
+#
+# ``AANCA_ARCH`` overrides the file, and takes SLURM's OR syntax
+# (``epyc5|epyc4``) so a run can land on either generation. The guard in
+# ``bunya_train.slurm`` reads the same variable and treats it as a set, so the
+# two cannot disagree. Measured before being used: job 32603770 ran
+# ``bunya_gpu_check.slurm`` on an MI300X/epyc4 node with this epyc5-staged
+# venv, and ``device_check`` passed 11/11 paths with ``gfx942`` present in
+# ``torch.cuda.get_arch_list()``.
 ARCH_FILE="${AANCA_VENV:-${ROOT}/.venv_bunya}/arch.txt"
+ARCH="${AANCA_ARCH:-}"
+if [[ -z "${ARCH}" && -s "${ARCH_FILE}" ]]; then
+    ARCH="$(cat "${ARCH_FILE}")"
+fi
 CONSTRAINT=()
-if [[ -s "${ARCH_FILE}" ]]; then
-    CONSTRAINT=(--constraint="$(cat "${ARCH_FILE}")")
+if [[ -n "${ARCH}" ]]; then
+    CONSTRAINT=(--constraint="${ARCH}")
 fi
 
 # A one-off dependency for the first segment, e.g. "afterok:<fetch job>" so a

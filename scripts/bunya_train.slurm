@@ -65,11 +65,22 @@ if [[ ! -x "${VENV}/bin/python" ]]; then
 fi
 # Refuse a node of the wrong CPU generation rather than dying on an illegal
 # instruction three seconds later with a core dump and no explanation.
-if [[ -r "${VENV}/arch.txt" ]]; then
+# ``WANT`` may be a ``|``-separated SET, not one generation: ``AANCA_ARCH``
+# carries SLURM's OR syntax (``epyc5|epyc4``) so a run can take whichever node
+# is up, and this has to accept MEMBERSHIP rather than equality or it would
+# refuse the very node the constraint asked for. Adding a generation to that
+# set is a claim that the venv runs on it, so measure it first -- job 32603770
+# is that measurement for epyc4: bunya_gpu_check.slurm on an MI300X node with
+# this epyc5-staged venv, device_check 11/11 paths, gfx942 in
+# torch.cuda.get_arch_list().
+WANT="${AANCA_ARCH:-}"
+if [[ -z "${WANT}" && -r "${VENV}/arch.txt" ]]; then
     WANT="$(cat "${VENV}/arch.txt")"
+fi
+if [[ -n "${WANT}" ]]; then
     HAVE="$(sinfo -h -n "$(hostname -s)" -o '%f' 2>/dev/null | tr ',' '\n' | grep -m1 '^epyc' || true)"
-    if [[ -n "${WANT}" && -n "${HAVE}" && "${WANT}" != "${HAVE}" ]]; then
-        echo "ERROR: ${VENV} was built for ${WANT}, this node is ${HAVE}." >&2
+    if [[ -n "${HAVE}" ]] && [[ "|${WANT}|" != *"|${HAVE}|"* ]]; then
+        echo "ERROR: ${VENV} accepts ${WANT}, this node is ${HAVE}." >&2
         echo "       Submit with --constraint=${WANT}, or stage a second venv:" >&2
         echo "       AANCA_VENV=${ROOT}/.venv_bunya_${HAVE} bash scripts/bunya_stage.sh" >&2
         exit 1
