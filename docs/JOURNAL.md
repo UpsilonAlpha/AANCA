@@ -10482,3 +10482,76 @@ are stated against g17's 14.3 and the 9-12 band, both already known.
 Logs: `logs/aanca-gpu-32523561.{out,err}` and `logs/aanca-gpu-32523562.{out,err}`.
 Both carry `--job-name=aanca-gpu`, so the job id is the only thing telling them
 apart. Diagnostics under `/scratch/user/uquadhik/AANCA/.cc/g19/`.
+
+## 11 Nov, checked: neither arm ever started, and the card they are pinned to is down
+
+Two days on. **Both jobs are still `PENDING` and have never run.** Checked four
+ways rather than one, because "queued" and "ran and failed" look the same from a
+distance:
+
+  * `squeue`: `32523561` and `32523562` both `PD`, `TIME 0:00`.
+  * `sacct -j 32523561,32523562`: `State PENDING`, `Start Unknown`,
+    `End Unknown`, `ExitCode 0:0`, `Reason None`.
+  * `logs/aanca-gpu-3252356{1,2}.{out,err}`: all four **404** through
+    `vscode-remote-resource`, body `Not found` with no trailing period -- so the
+    route worked and the files do not exist.
+  * `runs/g19_nomove/` and `runs/g20_orient/`: no `history.json`, 404 both.
+    `runs/g17_long/history.json` fetches fine at 23,724 bytes ending on
+    `rmsd_dmg 6.748`, which is the same state it was in on 9 Nov. So the
+    checkout and the read path are both healthy and the absence is real.
+
+### Why
+
+The pending reason has moved on since submission:
+
+    9 Nov   (ReqNodeNotAvail, Reserved for maintenance)
+    11 Nov  (ReqNodeNotAvail, UnavailableNodes:bun[159-161])
+
+    sinfo -p gpu_rocm:
+      bun159  down$  gpu:mi355x:8   Infrastructure upgrade
+      bun160  down$  gpu:mi355x:8   Infrastructure upgrade
+      bun161  down$  gpu:mi355x:8   Infrastructure upgrade
+      bun001  mix    gpu:mi210:2    none
+      bun002  mix    gpu:mi210:2    none
+      bun070  mix    gpu:mi210:2    none
+      bun144  mix    gpu:mi300x:8   none
+      bun145  mix    gpu:mi300x:8   none
+
+**Every mi355x node in the cluster is down for an infrastructure upgrade**, and
+`bunya_submit.sh` pins `--gres=gpu:mi355x:1`, so these two jobs are waiting on
+exactly the three machines that are unavailable. Everything else in `gpu_rocm`
+is up. `scontrol show reservation` and `sinfo -T` both print "No reservations in
+the system" from this account, so **the end of the upgrade is not visible from
+here** -- there is no estimated return.
+
+Nothing was wasted: no GPU time was consumed, and the jobs will start on their
+own if the nodes come back before anyone cancels them.
+
+### The option, and the wrinkle that makes it the user's call
+
+`AANCA_GRES` overrides the pin (`GRES="${AANCA_GRES:-gpu:mi355x:1}"`), so
+`AANCA_GRES=gpu:mi300x:1` would put both arms on bun144/bun145 today.
+
+**Whether the wheel can use that card is not yet established.** The environment
+is `torch 2.10.0+rocm7.0`; a ROCm wheel only carries code for the architectures
+it was built for, and mi300x is gfx942 against mi355x's gfx950.
+`torch.cuda.get_arch_list()` returns `[]` on `bun147`, which is a `general`
+node with no GPU, so the check is inconclusive from the interactive session.
+`scripts/bunya_gpu_check.slurm` and `scripts/device_check.py` exist for exactly
+this and would settle it in minutes -- but that is a new GPU job, which is
+outside what was approved, so it has not been submitted.
+
+**And the scientific wrinkle.** g17_long ran on bun159, an mi355x, and g19/g20's
+buckets are read against g17's 6.69 and g14's 10.91. The project already has an
+open, undiagnosed item here: three per-update rates on one configuration
+(2.0-2.4, 1.12, 0.85 s/update) with **nothing recording which card produced
+them**, because the `[environment]` block in `snapshot()` was never built.
+Changing the card now adds precisely that unrecorded variable, two days after
+this project spent a day learning what unrecorded variables cost.
+
+So the clean version of the switch is to do both at once: build the
+`[environment]` block -- git SHA, dirty flag, torch/ROCm version, GPU name,
+`OMP_NUM_THREADS`, `SLURM_JOB_ID` -- and then resubmit on mi300x, so the card is
+in the run's own config snapshot rather than in somebody's memory. That turns a
+forced card change into the occasion for the fix that was already third in the
+queue.
