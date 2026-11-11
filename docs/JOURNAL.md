@@ -10555,3 +10555,65 @@ So the clean version of the switch is to do both at once: build the
 in the run's own config snapshot rather than in somebody's memory. That turns a
 forced card change into the occasion for the fix that was already third in the
 queue.
+
+### 11 Nov, resolved: both arms are running on mi300x as 32604034 and 32604037
+
+**It was not the one-line change it looked like**, and the reason is worth
+keeping. `bunya_submit.sh` pins the CPU generation from `.venv_bunya/arch.txt`,
+which reads `epyc5` -- and the old comment beside it said that costs nothing for
+the GPU profile "because the MI355X nodes are epyc5 anyway". True, and exactly
+the trap: **every epyc5 node in `gpu_rocm` IS an mi355x node.**
+
+    bun159/160/161   down$   epyc5   mi355x:8     <- infrastructure upgrade
+    bun144/145       mix     epyc4   mi300x:8
+    bun001/002       mix     epyc3   mi210:2
+    bun070           mix     epyc4   mi210:2
+
+So `--constraint=epyc5` excluded every GPU that was still up, and
+`bunya_train.slurm`'s own guard (`WANT != HAVE`, exit 1) would have refused an
+mi300x node even if the constraint had let it land there. Two separate blockers
+reading the same file, neither of them the GPU pin.
+
+**Measured before changing anything.** Job **32603770** ran
+`bunya_gpu_check.slurm` on an mi300x/epyc4 node with the existing epyc5-staged
+venv:
+
+  * `torch.cuda.get_arch_list()` contains **gfx942** -- the wheel covers the
+    card. (`arch.txt` is the *CPU* generation and never answered this; on
+    `bun147`, a `general` node with no GPU, `get_arch_list()` returns `[]`.)
+  * `device_check` **11/11 paths on cuda**, exit 0 -- including the
+    `training_objective with identity` path that killed job 31516313.
+  * The epyc5-built venv ran on an epyc4 CPU with no illegal instruction, so the
+    guard was conservative rather than load-bearing for a prebuilt wheel.
+
+Ten GPU-minutes to protect twelve GPU-hours, which is the whole reason that
+script exists.
+
+**The fix** (`28d6175`): `AANCA_ARCH` overrides `arch.txt` in both scripts and
+takes SLURM's OR syntax, and the train guard changed from equality to
+**membership** over that set -- otherwise it refuses the very node the
+constraint asked for. Adding a generation to the set is a claim the venv runs on
+it, so the comment names 32603770 as the measurement. Membership tested on four
+cases before committing.
+
+**Then:** `scancel 32523561 32523562` -- required, not tidiness. Had they been
+left pending, they would have started when bun159-161 return and written into
+the same `runs/g19_nomove/` and `runs/g20_orient/` as the new jobs.
+
+    32604034   g19_nomove    RUNNING on bun144
+    32604037   g20_orient    RUNNING on bun144
+
+Verified from the logs rather than from `squeue`, because job state is not a
+health signal: both print `device : cuda, 8 threads`,
+`gpu : True AMD Radeon Graphics`, `torch 2.10.0+rocm7.0 / hip 7.0.51831`, the
+right `[section]`, and no guard error. `.err` holds only the benign
+`amdgpu.ids: No such file or directory`. Budget 85,499 s per segment, chain up
+to 30.
+
+**Comparability, recorded rather than resolved.** g17_long ran on bun159, an
+mi355x; these two run on bun144, an mi300x. The card *is* in each run's `.out`
+(`bunya_train.slurm` has always printed `torch.cuda.get_device_name(0)`), so
+this is recorded -- but it is still not in the run's own config snapshot, and
+the `[environment]` block remains unbuilt. The three undiagnosed per-update
+rates (2.0-2.4, 1.12, 0.85 s/update) now have a fourth regime to be confused
+with, and a slower card would make this chain longer rather than wrong.
