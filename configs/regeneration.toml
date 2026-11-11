@@ -177,9 +177,16 @@ pairwise_weight = 0.01
 # the 12.23 A untrained baseline and g14's teacher-forced 10.91. Four
 # exclusive buckets:
 #
-#   settled > 11.9        the window does nothing without the ideal move. The
-#                         move head was the only thing working, and every
-#                         number from g13 on is a property of teacher forcing.
+#   settled > 11.9        the window does not move under a restraint-only
+#                         objective IN 10,000 UPDATES. Read as that and not as
+#                         "cannot": g17 needed five times the budget to show
+#                         its gain at all, and this arm has strictly less
+#                         signal than g17 had, so budget is confounded with
+#                         capability in this bucket and only in this one. What
+#                         it would license is "every number from g13 on is a
+#                         property of teacher forcing", which is still the most
+#                         consequential thing the project could learn.
+#                         Amended 11 Nov before any evaluation existed.
 #   10.9 < settled <= 11.9  it moves, less far than teacher forcing bought.
 #                         Real but weak; the bearing is partly learnable.
 #   9.5 < settled <= 10.9   it matches or beats the TEACHER-FORCED arm without
@@ -263,6 +270,17 @@ updates = 10000
 # VOID if the run does not complete, or if g19_nomove has not been read first:
 # this arm's buckets are all stated against g19's numbers, so it is strictly
 # second in the queue.
+#
+# AND VOID IF g19 LANDS IN ITS DEAD BUCKET (settled > 11.9). Amended 11 Nov,
+# before either run had written an evaluation, because stating the question
+# exposed the hole: `twist` on a window that never moved is not the quantity
+# this arm is about. g17's drift was twist rising AS PLACEMENT IMPROVED, so the
+# term is being asked whether it controls orientation DURING placement. With no
+# placement there is nothing for it to control, a low twist would mean only
+# that an unmoved window kept the baseline helix's relative rotations, and the
+# 9-12 band it would sit in is the band those arms sat in for exactly that
+# reason. In that case this arm is uninformative rather than negative, and the
+# orientation question reopens behind whatever g19's failure turns out to be.
 [g20_orient]
 inherits = "g19_nomove"
 
