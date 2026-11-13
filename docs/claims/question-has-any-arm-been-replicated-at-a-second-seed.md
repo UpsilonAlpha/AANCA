@@ -9,6 +9,44 @@ Every arm in the record is **one run at `seed = 0`, evaluated on 12 held-out
 crops**. There has never been a seed replicate of any arm, and no node in this
 map quotes a standard error.
 
+## The fix is `eval_ids`, not `eval_indices`, and the rename is the point
+
+Added 13 Nov. The held-out set is **derived**, not stated. The trainer takes
+the first `structures + eval_structures` entries of the split that exist on
+disk, shuffles `range(len(pool))` with `random.Random(seed)`, and holds out the
+first `eval_structures` of that shuffle. **Two separate failures come out of
+that, and pinning integers only fixes one.**
+
+**One: `seed` does two jobs.** It seeds initialisation and batch order *and*
+chooses the split, so changing it to get a replicate also changes which
+proteins are held out. That is what killed `g18_seed1`:
+
+    g15_both   seed 0   eval [6, 129, 167, 180, 193, 225, 264, 297, 319, 330, 348, 393]
+    g18_seed1  seed 1   eval [31, 45, 131, 138, 154, 164, 174, 200, 289, 294, 327, 388]
+
+Disjoint, and g18 scored 10 crops where g15 scored 12. The 0.03 A "agreement"
+was two measurements of different proteins.
+
+**Two: the index is not the protein.** `available[:412]` is taken over whatever
+is in `data/pdb`, so index 180 is one protein on a 954-structure laptop and
+another on a 23,760-structure Bunya. That is the cause of the voided 10.77 A
+baseline, which was quoted for months as the line every arm was judged against
+([[the-regeneration-baseline-is-12-23-angstrom-and-every-arm-sits-on-it]]).
+
+So **pinning integer indices leaves failure two intact.** The setting has to
+pin **PDB ids**, which are the names of the things, and the pool then becomes
+recorded rather than inferred from a directory listing. That also supersedes
+the pool-hash item, since a stated id list is a recorded pool.
+
+**The standing risk while it does not exist**, worth naming because cofolding
+was moved ahead of it on 13 Nov: every comparison on the Bunya pool is safe
+only as long as nothing is added to `data/pdb` there. If any structure is
+downloaded between two runs, `available[:412]` shifts and the indices silently
+point at different proteins -- the voided-baseline failure again, inside one
+machine. Cheap mitigation available now, independent of the setting: have
+`snapshot()` record the **resolved id list** of a run, which makes a divergence
+*detectable* even while it is still possible.
+
 That makes every comparison the project rests on a point estimate against a
 hand-chosen threshold:
 

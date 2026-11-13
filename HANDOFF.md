@@ -109,15 +109,23 @@ flexibility instrument.
    queue. **Then Spearman against per-residue backbone B-factor** on the same
    12 crops — which would be the first `experimental` observation under the
    thesis, and the cheapest external anchor this project has.
-2. **`eval_indices` as a config key.** Precondition for the whole flexibility
-   programme, not just for error bars: a flexibility map is per-residue on
-   *named* structures, and comparing residue 47 across runs is meaningless
-   while `seed` also chooses which proteins are held out. Not blocking for (1),
-   because both checkpoints already carry their frozen eval set.
-3. **The replicate arm** — same section, `seed` moved, `eval_indices` pinned.
+2. **Cofolding**, `identity_weight` on. **Moved up 13 Nov** on the argument
+   from the deliverable, not from curiosity: ProteinEBM is backbone-only as
+   implemented, so a backbone-only local potential is a better-localised
+   version of what it already does. Explicit side chains are the whole
+   advantage, binding is side-chain packing, and the growth track has never
+   had them (`docs/claims/what-an-aanca-can-learn-that-a-pairformer-cannot-and-the-reverse.md`).
+   Without this the potential inherits the limitation it exists to escape.
+3. **`eval_ids` as a config key** — note the rename from `eval_indices`, and it
+   matters. A flexibility map is per-residue on *named* structures, so
+   comparing residue 47 across runs is meaningless while `seed` also chooses
+   which proteins are held out. But pinning integer **indices** would only half
+   fix it: the pool is `available[:412]` over whatever is on disk, so the same
+   index is a different protein on a 954-structure laptop and a
+   23,760-structure Bunya — which is what voided the 10.77 Å baseline. **Pin
+   PDB ids, not indices.**
+4. **The replicate arm** — same section, `seed` moved, `eval_ids` pinned.
    Turns the regeneration claim from `open` to supported.
-4. **Cofolding**, `identity_weight` on. More interesting under this framing,
-   not less: flexibility as a function of sequence is the design question.
 5. **The missing evaluations.** Updates 5750 and 9750 absent from
    `history.json` in g17, g19 and g20 — three runs, three objectives, the same
    two updates. Reproducible, so cheap to find, and it has silently broken the
