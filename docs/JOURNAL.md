@@ -10713,3 +10713,32 @@ table. Ulban's 9 Nov words were that a fixed point is unrealistic and not
 physical and that the target is a realistic local minimum. The dispersion node
 said "Ulban's 9 Nov correction" in a way that read as though he had written the
 phrase he was correcting; fixed.
+
+## 13 Nov, g21_pool submitted as 32904055, and the s/update rate confirms the jitter is live
+
+Session had moved again (`bun149/12996` -> `bun147/25843`), so a new terminal
+and every variable re-set. Pulled to `385a0ae`, dry-ran at RC=0 with
+`--gres=gpu:mi300x:1` and `--constraint=epyc5|epyc4`, submitted, **32904055 on
+bun144**.
+
+Verified from the log rather than from `squeue`, and in this case startup was
+not enough: the pool's resume path only fires from the second update onward, so
+a clean banner proves nothing about the new code. The first progress line is
+what does:
+
+          62  total 1.494  fape 0.294  rmsd 3.74 A  alive 100.0%  twist 11.1d   2.38 s/u
+
+**62 updates means the resume path has run about thirty times** at
+`pool_probability = 0.5` without raising, which is the confirmation that was
+wanted. `.err` holds only the benign `amdgpu.ids` warning, and the job is
+`RUNNING` at 2:38 elapsed.
+
+**And 2.38 s/update is itself a check on `steps_min`, unplanned.** g20 ran at
+3.2 s/update on the same card. With rollout lengths drawn from [40, 120] the
+mean length is about 80 instead of 120, which is two thirds of the work -- and
+2.38/3.2 is 0.74. So the length jitter is demonstrably active rather than
+silently defaulted, measured without adding a line of instrumentation.
+
+`twist` 11.1 deg at update 62 sits in the 9-12 band, which is the inherited
+orientation term behaving as g20 did. At this rate 10,000 updates is ~6.6 h,
+inside one 24 h segment.
