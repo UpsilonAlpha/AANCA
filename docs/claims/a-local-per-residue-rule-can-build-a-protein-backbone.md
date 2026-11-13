@@ -74,6 +74,38 @@ rule perceives its own wrong coordinates *and* its own uncommitted labels, and
 the failure that only exists there -- sequence and structure co-adapting to a
 mutually consistent wrong guess -- has never been given a chance to appear.
 
+## What the rule is conditioned on, and what the damage protocol is FOR
+
+Ulban, 13 Nov, and the second half of this was not in the record at all.
+
+**The conditioning target.** Each residue is conditioned on its neighbouring
+residues -- **and eventually on ligands** -- the way ProteinMPNN is, and the
+intent is for that conditioning to be *physically realistic* in the sense
+`src/aanca/potts.py` already aims at rather than a generic learned embedding.
+Ligand conditioning is the direction LigandMPNN took from ProteinMPNN (atomic
+context over small molecules, nucleotides and metals, 50.4 % -> 63.3 % sequence
+recovery near small molecules), and it is a stated destination here, not a
+speculation. Nothing in the growth stack reads a non-protein atom today.
+
+**Repeated damage and regrowth is an instrument, not just a training task.**
+The record had regeneration as the near target because the surviving context
+supplies the positional information a Growing NCA gets from its grid
+([[in-regeneration-the-surviving-context-is-the-grid]]). That is still true and
+it is only half the reason. The other half: a rule that can destroy and regrow
+an arbitrary section **repeatedly** can be interrogated by doing exactly that --
+regrow one loop a hundred times and the spread of the outcomes is a measurement
+of that loop's conformational freedom, made with a local rule rather than
+inferred from a global model's confidence.
+
+That makes the unmeasured persistence question
+([[the-growth-objective-supervises-a-fixed-final-step-while-the-track-that-converged-samples-one]])
+much more than a convergence check. The dispersion of a settled window past the
+training horizon **is** a per-residue flexibility readout, and flexibility is
+the quantity that binding-affinity prediction is worst at. A pairformer can be
+asked for an affinity; it cannot cheaply be asked "how many ways can this loop
+sit". This architecture can, and that is a capability the interpretability
+argument gets for free rather than a separate feature.
+
 ## How this differs from diffusion, which is the question the claim lives or dies on
 
 Asked 9 Nov, and the answer is uncomfortably short: **an AANCA is a diffusion
