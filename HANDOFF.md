@@ -18,11 +18,26 @@ converged, against a ~9 % composition background. The open problem is the joint
 direction, which is the setting RFD4 and the other diffusion models work in,
 minus the pairformer's all-pairs global mixing.
 
-**The payoff is interpretability.** One small shared local function — 229,588
-parameters — can be ablated channel by channel or run through an autoencoder; a
-pairformer conditioned on a noise level cannot. That is what would make the
-structural interactions it learned recoverable, and it is why `rmsd_dmg` is
-instrumental: how we know the rule works, not what we want from it.
+**The payoff is interpretability, and as of 13 Nov it has a deliverable.** One
+small shared local function — 229,588 parameters — can be ablated channel by
+channel; a pairformer conditioned on a noise level cannot. But the stronger
+version is that the rule can be made to *emit* a potential rather than be
+probed for one: destroy a window, regrow it N times, and `-log` of the
+conformational distribution is a **local statistical potential**, summarised as
+Potts fields and couplings. `potts.py` already fits that shape and is agnostic
+to whether the states are amino acids or backbone basins.
+
+What a pairwise diffusion model cannot do is not the single conditional — it can
+inpaint — but the **dense sweep**: every sample costs a full global denoising
+trajectory, so a map of local potentials over a whole structure is
+combinatorially out of reach, while the AANCA's sampling cost is local.
+
+And it makes the binder hypothesis computable: **pre-organisation is low
+conformational entropy of the local potential**, readable from coupling
+strength. See
+`docs/claims/destruction-and-regrowth-yields-a-local-statistical-potential.md`.
+`rmsd_dmg` is instrumental throughout — how we know the rule works, not what we
+want from it.
 
 Locality is not a small receptive field. At the measured mean degree of 28–33, a
 120-step rollout crosses the molecule many times, so the fixed point depends on
