@@ -291,6 +291,16 @@ HISTORICAL_DEFAULTS = {
     "lab_rotation": False, "lr": 0.0003, "max_births": 8, "max_rotation": 0.1,
     "max_translation": 0.3, "morphogen": False, "move_weight": 0.0,
     "orientation_weight": 0.0, "pairwise_weight": 0.0,
+    # **Added with the setting, not extracted from history.** Every other entry
+    # here was read out of `git show 3b97972^:scripts/train_growth.py` with
+    # `ast`, so it is a record of what the arms ran under. These two settings
+    # did not exist then, so these values are an ASSERTION that the old code
+    # behaved as if they were zero -- true, since a pool nothing reads from and
+    # a jitter of zero are both no-ops, but asserted here rather than measured.
+    # A key added to both sides of a comparison passes it trivially, which is
+    # the self-referential failure this file was rewritten to stop, so the
+    # distinction is recorded rather than left to look like the rest.
+    "pool_probability": 0.0, "steps_min": 0,
     "placement_rotation": 3.14159265, "placement_steps": 0,
     "placement_translation": 4.0, "reach_weight": 0.086, "seed": 0,
     "seeds": 4, "split": "train", "steps": 40, "structures": 400,

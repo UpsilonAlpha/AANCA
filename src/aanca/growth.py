@@ -1607,6 +1607,21 @@ class GrowthTerms:
     #: How many residues were damaged, because the RMSD above is a mean over
     #: them and a window of 4 is a different claim from a window of 24.
     damaged: int = 0
+    #: The same quantity measured on the state the rollout STARTED from, so an
+    #: update records where it began as well as where it ended.
+    #:
+    #: Nothing recorded this before the sample pool, because the start was
+    #: always the fresh baseline and therefore always the same number. With a
+    #: pool it is the only thing that distinguishes "began at the baseline" from
+    #: "resumed a state the rule had already wandered into", and it is what the
+    #: pool's own accept/reject guard is read against. ``None`` when nothing was
+    #: damaged.
+    start_rmsd_damaged: float | None = None
+    #: The damaged mask itself, not just its count, because the sample pool has
+    #: to store the window a state was grown against and cannot re-draw it --
+    #: ``damage_window`` consumes the generator, so recomputing it outside would
+    #: be a different window that happened to be the same size.
+    damaged_mask: Tensor | None = None
     #: The ceiling check's value, before ``move_weight``. Zero on every run
     #: that did not ask for it, which is every run that is not rung zero.
     move: Tensor | None = None
@@ -1644,6 +1659,41 @@ class GrowthTerms:
     pairwise_window: Tensor | None = None
 
 
+@dataclass
+class GrowthPoolEntry:
+    """One remembered end-state, for resuming a rollout instead of restarting it.
+
+    **The Growing-NCA sample pool, adapted to many targets.** Growing NCA has
+    one target image, so its pool is a flat set of states. This trainer sees one
+    structure per update out of 400, and a state grown on structure A is
+    meaningless as a start for structure B -- so the pool here is **keyed by
+    crop**, and an entry is only ever resumed on the crop that produced it.
+
+    ``damaged`` travels with the state and is not re-drawn, because the loss is
+    scored on the damaged window: resuming coordinates under a freshly drawn
+    window would score a hole the state was never asked to fill. ``identity``
+    travels for the same reason -- a resumed state's committed labels are part
+    of what the rule has already decided.
+
+    Why this exists at all: the rule does not hold what it builds past its
+    training horizon (``docs/claims/the-rule-has-no-attractor-past-its-training-horizon.md``
+    -- 7.78 A at step 120, 16.5 A at 600, against a 12.23 A baseline), and
+    persistence is what a pool trains. E(n)-GNCA holds its attractor 1,000 steps
+    past training and uses a replay pool; this project has never had one.
+    """
+
+    coords: Tensor
+    hidden: Tensor
+    damaged: Tensor
+    identity: Tensor | None = None
+    #: ``rmsd_damaged`` of the fresh baseline for this crop, remembered the
+    #: first time the crop was seen. The pool's accept/reject bar: a state worse
+    #: than not trying is not worth resuming, and given that the rule diverges
+    #: past its horizon an unguarded pool would fill with 16 A states and train
+    #: on them. Self-calibrating per crop, so there is no threshold to pick.
+    baseline_rmsd: float | None = None
+
+
 def growth_objective(
     rule,
     native_coords: Tensor,
@@ -1664,6 +1714,7 @@ def growth_objective(
     clash_weight: float = 0.0,
     clash_tolerance: float = 0.5,
     pairwise_weight: float = 0.0,
+    resume_from: "GrowthPoolEntry | None" = None,
 ) -> tuple[GrowthTerms, object]:
     """Supervised regrowth: from a seed, rebuild the native backbone.
 
@@ -1760,11 +1811,22 @@ def growth_objective(
         # context is right, which is a difference FAPE can see. Under
         # reconstruction the stable answer and the correct answer were the same
         # thing, and the rule found the stable one.
-        if damage > 0:
+        if resume_from is not None:
+            # **Resumed, so nothing about the start is re-drawn.** The window
+            # comes from the entry rather than from ``damage_window``: the loss
+            # is scored on the damaged residues, so a freshly drawn window over
+            # resumed coordinates would score a hole this state was never asked
+            # to fill, and the number would be noise with a plausible shape.
+            damaged = resume_from.damaged
+            start_coords = resume_from.coords
+        elif damage > 0:
             damaged = damage_window(
                 topo.n_residues, links, damage, generator, native_coords.device
             )
             anchors = ~damaged
+            start_coords = baseline_coords(
+                native_coords, topo, links, anchors, growth.initial, generator
+            )
         else:
             damaged = torch.zeros(
                 topo.n_residues, dtype=torch.bool, device=native_coords.device
@@ -1772,9 +1834,9 @@ def growth_objective(
             anchors = run_anchors(
                 topo.n_residues, links, generator, native_coords.device
             )
-        start_coords = baseline_coords(
-            native_coords, topo, links, anchors, growth.initial, generator
-        )
+            start_coords = baseline_coords(
+                native_coords, topo, links, anchors, growth.initial, generator
+            )
     else:
         # Seeded per covalent run: see seed_alive on why uniform seeding caps
         # the alive fraction at the share of the crop its seeds' runs cover.
@@ -1798,15 +1860,26 @@ def growth_objective(
     # doing to the geometry. Gating the state on the weight instead would have
     # made that run differ in perception as well, and the comparison would have
     # measured two changes.
-    if identity_weight or getattr(rule, "identity", False):
+    if resume_from is not None and resume_from.identity is not None:
+        identity_start_state = resume_from.identity
+    elif identity_weight or getattr(rule, "identity", False):
         identity_start_state = initial_identity(
             topo, native_coords, identity_start, generator, alive=alive
         )
+    begin = initial_state(
+        start_coords, rule, identity=identity_start_state, alive=alive
+    )
+    if resume_from is not None:
+        # **The hidden state is the point.** Resuming coordinates alone would
+        # hand the rule a structure it had built with no memory of having built
+        # it, which is a start state no rollout ever produces and not what a
+        # pool is for -- Growing NCA stores the whole cell state. ``alive`` is
+        # every residue under ``birth = none``, so no slot is parked and the
+        # coordinates go in as they are.
+        begin = replace(begin, hidden=resume_from.hidden)
     result = rollout(
         rule,
-        initial_state(
-            start_coords, rule, identity=identity_start_state, alive=alive
-        ),
+        begin,
         topo,
         config,
         generator=generator,
@@ -2069,7 +2142,17 @@ def growth_objective(
             orientation=orientation.detach(),
             orientation_degrees=orientation_degrees,
             rmsd_damaged=rmsd_damaged,
+            start_rmsd_damaged=(
+                float(
+                    backbone_rmsd_on(
+                        start_coords, native_coords, topo, alive, damaged
+                    )
+                )
+                if bool(damaged.any())
+                else None
+            ),
             damaged=int(damaged.sum()),
+            damaged_mask=damaged,
             move=move_term.detach(),
             clash=clash_term.detach(),
             pairwise_anchor=pairwise_anchor.detach(),

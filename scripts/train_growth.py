@@ -52,6 +52,7 @@ actually move.
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import json
 import math
 import os
@@ -71,6 +72,7 @@ from aanca.growth import (
     GrowthConfig,
     count_runs,
     growth_links,
+    GrowthPoolEntry,
     growth_objective,
 )
 from aanca.model import AANCARule
@@ -446,6 +448,35 @@ def build_schema() -> argparse.ArgumentParser:
     parser.add_argument("--truncate", type=int, default=12)
     parser.add_argument("--k", type=int, default=32)
     parser.add_argument("--update-schedule", default="bernoulli")
+    parser.add_argument(
+        "--pool-probability", type=float, default=0.0,
+        help=(
+            "probability that an update RESUMES a remembered end-state instead "
+            "of starting from a fresh baseline. 0.0 reproduces every run before "
+            "this setting exactly. The Growing-NCA sample pool, which is what "
+            "makes persistence trainable: the rule then meets states it has "
+            "already wandered into as INPUTS, rather than only ever seeing the "
+            "baseline. Measured need -- the trained rule takes a window from "
+            "7.78 A at its 120-step horizon to 16.5 A at 600, against a 12.23 A "
+            "untrained baseline, so it does not hold what it builds. A state is "
+            "only kept if it is no worse than that crop's own fresh baseline, "
+            "because an unguarded pool would fill with 16 A states"
+        ),
+    )
+    parser.add_argument(
+        "--steps-min", type=int, default=0,
+        help=(
+            "when nonzero, draw each update's rollout length uniformly from "
+            "[steps_min, steps] instead of always using steps. 0 reproduces "
+            "every run before this setting. The other half of persistence: a "
+            "fixed length teaches one trajectory of that length, and a length "
+            "the rule cannot anticipate asks for a state that PERSISTS. Growing "
+            "NCA draws its step count per sample and E(n)-GNCA trains over "
+            "15-25 steps; this trainer has always used exactly 120. Cheaper "
+            "than moving the supervised step, which would need surgery on "
+            "growth_objective, and it is the same mechanism"
+        ),
+    )
     parser.add_argument("--coupling-radius", type=float, default=5.0)
 
     parser.add_argument("--seeds", type=int, default=4)
@@ -1126,17 +1157,50 @@ def main() -> int:
         for key in ("total", "fape", "rmsd", "alive", "recovery", "twist")
     }
 
+    # **The sample pool, keyed by (structure index, crop seed).** Not by index
+    # alone: ``load_crop`` re-crops on every visit, so the same index yields a
+    # different topology each time and a state grown on one crop is meaningless
+    # on another. Its own docstring says the returned seed "is the only way a
+    # caller holding a state from an earlier sample can pair it with the
+    # topology it belongs to", which is this caller.
+    pool: dict[tuple[int, int | None], GrowthPoolEntry] = {}
+
     for update in range(start_update + 1, args.updates + 1):
-        index = rng.choice(train_indices)
-        try:
-            topo, native, _crop, _used = dataset.load_crop(index, rng=rng)
-        except Exception:
-            continue
+        resume: GrowthPoolEntry | None = None
+        if args.pool_probability > 0 and pool and rng.random() < args.pool_probability:
+            key = rng.choice(sorted(pool, key=lambda k: (k[0], k[1] or -1)))
+            index, crop_seed = key
+            try:
+                topo, native, _crop, _used = dataset.load_crop(
+                    index, seed_residue=crop_seed, rng=rng
+                )
+            except Exception:
+                pool.pop(key, None)
+                continue
+            resume = pool[key]
+            if resume.coords.shape[0] != topo.n_residues:
+                # The crop did not reproduce. Drop the entry rather than
+                # resume a state against a topology it was not grown on.
+                pool.pop(key, None)
+                continue
+        else:
+            index = rng.choice(train_indices)
+            try:
+                topo, native, _crop, crop_seed = dataset.load_crop(index, rng=rng)
+            except Exception:
+                continue
+            key = (index, crop_seed)
         if topo.n_residues < 12:
             continue
         generator = torch.Generator().manual_seed(args.seed * 1_000_003 + update)
-        terms, _result = growth_objective(
-            rule, native, topo, config,
+        step_config = config
+        if args.steps_min:
+            step_config = dataclasses.replace(
+                config, steps=rng.randint(args.steps_min, args.steps)
+            )
+        terms, result = growth_objective(
+            rule, native, topo, step_config,
+            resume_from=resume,
             generator=generator,
             bond_weight=args.bond_weight,
             completion_weight=args.completion_weight,
@@ -1197,6 +1261,40 @@ def main() -> int:
             continue
         torch.nn.utils.clip_grad_norm_(rule.parameters(), args.clip)
         optimiser.step()
+
+        # **Write the end-state back, but only if it is worth resuming.**
+        # The bar is that crop's own fresh baseline, remembered the first time
+        # the crop was seen, so there is no threshold to pick and it
+        # self-calibrates per protein. Without the guard the pool fills with
+        # the states the rule diverges into -- measured at 16.5 A against a
+        # 12.23 A baseline -- and training on those is training on its own
+        # failure
+        # (docs/claims/the-rule-has-no-attractor-past-its-training-horizon.md).
+        if args.pool_probability > 0:
+            bar = (
+                resume.baseline_rmsd if resume is not None
+                else terms.start_rmsd_damaged
+            )
+            reached = terms.rmsd_damaged
+            if (
+                bar is not None
+                and reached is not None
+                and reached <= bar
+                and terms.damaged_mask is not None
+            ):
+                state = result.state
+                pool[key] = GrowthPoolEntry(
+                    coords=state.coords.detach().clone(),
+                    hidden=state.hidden.detach().clone(),
+                    damaged=terms.damaged_mask.clone(),
+                    identity=(
+                        state.identity.detach().clone()
+                        if state.identity is not None else None
+                    ),
+                    baseline_rmsd=bar,
+                )
+            else:
+                pool.pop(key, None)
 
         recent["total"].append(float(terms.total.detach()))
         recent["fape"].append(float(terms.fape))

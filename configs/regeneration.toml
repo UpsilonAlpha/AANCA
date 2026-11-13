@@ -71,6 +71,8 @@ split = "train"
 steps = 120
 structures = 400
 truncate = 12
+pool_probability = 0.0  # off in base; the Growing-NCA sample pool. See [g21_pool].
+steps_min = 0  # off in base; 0 means every rollout is exactly `steps` long.
 update_schedule = "bernoulli"
 updates = 2000
 
@@ -286,3 +288,77 @@ inherits = "g19_nomove"
 
 [g20_orient.inputs]
 orientation_weight = 2.5
+
+# ======================================================================
+# NOT YET RUN. Persistence, which the 13 Nov dispersion measurement turned from
+# the cheapest available improvement into a precondition.
+#
+# g20_orient's own checkpoint takes a window from 7.78 A at its 120-step
+# training horizon to 16.4-16.9 A at 600 steps, against a 12.23 A UNTRAINED
+# baseline, with 0 of 48 rollouts converging. So the rule does not hold what it
+# builds; past the horizon it drives the window further from native than leaving
+# it alone would.
+# docs/claims/the-rule-has-no-attractor-past-its-training-horizon.md
+#
+# That blocks the statistical-potential programme rather than delaying it: -log
+# of a distribution needs a distribution, and a diverging trajectory is not one.
+# A Potts model fitted to the current spread would be a confident model of
+# drift.
+#
+# Two settings, both Growing-NCA mechanisms this trainer has never had, and both
+# aimed at the same thing:
+#
+#   pool_probability 0.5   half of all updates RESUME a remembered end-state
+#                          instead of starting from a fresh baseline, so the
+#                          rule meets states it has already wandered into as
+#                          INPUTS. Keyed by (structure, crop seed) -- a state
+#                          grown on one crop is meaningless on another. An
+#                          end-state is kept only if it is no worse than that
+#                          crop's own fresh baseline, because an unguarded pool
+#                          would fill with the 16 A states above and train on
+#                          them.
+#   steps_min 40           each rollout's length is drawn from [40, 120]
+#                          instead of being exactly 120. A fixed length teaches
+#                          one trajectory of that length; a length the rule
+#                          cannot anticipate asks for a state that persists.
+#                          Growing NCA draws its step count per sample;
+#                          E(n)-GNCA trains over 15-25 steps and reports its
+#                          attractor held 1,000 steps past training.
+#
+# TWO settings at once, deliberately, against this file's usual one-variable
+# rule. They are not independent: a pool without length jitter still only ever
+# supervises step 120, and jitter without a pool still only ever starts from the
+# baseline. Separating them would cost two slots to test half a mechanism each.
+# Recorded as a departure rather than smuggled.
+#
+# PRE-REGISTERED, and the primary quantity is NOT rmsd_dmg. It is the 600-step
+# reading from scripts/regrowth_dispersion.py on this arm's checkpoint, against
+# g20's 16.4-16.9 A and the 12.23 A untrained baseline:
+#
+#   600-step rmsd_dmg <= 9.0        the rule holds its structure. The
+#                                   statistical-potential programme is
+#                                   unblocked and the ensemble is a distribution
+#                                   over poses rather than over drift.
+#   9.0 < 600-step <= 12.23         it holds better than doing nothing, which is
+#                                   more than g20 manages, but the basin is wide
+#   12.23 < 600-step <= 16.4        persistence improved and the rule still ends
+#                                   up worse than untouched: the mechanism helps
+#                                   and is not sufficient
+#   600-step > 16.4                 no better than g20. Persistence is not a
+#                                   training-protocol problem and the next move
+#                                   is architectural.
+#
+# SECOND, independent: `settled` at step 120 within 1.0 A of g20's 7.78. The
+# pool trades some horizon accuracy for persistence by construction, and more
+# than an Angstrom of it means the price is too high to read the first bucket
+# against g20 at all.
+#
+# VOID if the run does not complete, or if `twist` leaves the 9-12 band --
+# g20's orientation term is inherited and this arm is not the place to retest
+# it.
+[g21_pool]
+inherits = "g20_orient"
+
+[g21_pool.inputs]
+pool_probability = 0.5
+steps_min = 40
