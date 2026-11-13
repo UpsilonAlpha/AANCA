@@ -10742,3 +10742,61 @@ silently defaulted, measured without adding a line of instrumentation.
 `twist` 11.1 deg at update 62 sits in the 9-12 band, which is the inherited
 orientation term behaving as g20 did. At this rate 10,000 updates is ~6.6 h,
 inside one 24 h segment.
+
+## 13 Nov, 23:15 check on g21_pool (32904055): on track, and the missing-eval bug is diagnosed
+
+Update 1674 of 10,000, `RUNNING` on bun144, 2.38 s/update cumulative. Marginal
+rate over updates 186-1674 is **2.40 s/update**, so ~5.5 h remain and one 24 h
+segment still covers it.
+
+### The eval curve, against g20 on the same crops
+
+    update   g20 rmsd_dmg   g21 rmsd_dmg    g20 twist   g21 twist   g20 bond   g21 bond
+       250        11.09          11.68          10.1        10.3       4.40       5.15
+       500        11.10          12.00           9.8        10.8       4.38       5.50
+       750        10.93          11.17          10.4        10.3       4.17       4.67
+      1000        11.15          10.88          10.0        10.2       4.00       4.40
+      1250        10.88            --           10.0          --       4.06         --
+      1500        10.66          10.70          10.4        10.4       3.74       4.05
+
+**g21 starts worse and converges to parity**, which is the signature a pool
+should have: early updates are partly spent on resumed states, so the
+fresh-baseline trajectory is learned more slowly and then catches up. 0.9 A
+behind at 500, slightly ahead at 1000, level at 1500.
+
+**`twist` is inside the 9-12 band throughout** -- 10.3, 10.8, 10.3, 10.2, 10.4,
+max 10.8. The void condition is not triggered.
+
+And a correction to last night's note: I flagged a per-update `twist` of 12.2 as
+"already a touch over". That was the **training-batch running mean**, not the
+held-out eval row, and the void condition is about the quantity every other arm
+is reported on -- the eval row from `history.json`, which is how g17's 14.3 and
+g20's 11.24 were computed. Watching the wrong column. The eval rows have never
+left the band.
+
+### The missing row cracked a four-day-old bug
+
+g21 is missing update **1250** -- and g17, g19 and g20 were all missing **5750
+and 9750**. A different victim is what the three identical failures could not
+give, and it rules out any explanation tied to the update number.
+
+`train_growth.py:1327` puts the held-out evaluation **inside the training loop,
+after every `continue`**, so an update that skips its training step takes its
+evaluation with it. Three runs at `seed = 0` on one pool draw the same crop
+sequence and hit the same unusable crop at the same update; g21 is also seed 0
+but pool resumption consumes extra `rng` draws, so its sequence diverges.
+
+Confirmed in the log and not only in `history.json`: `held out after` prints for
+250, 500, 750, 1000 and 1500 and not for 1250. No skip message anywhere, so it
+was one of the three *silent* `continue` paths rather than the non-finite
+gradient one, which prints.
+
+Written up as `docs/claims/a-skipped-update-silently-skips-its-evaluation.md`,
+including that **my own pool code added two more silent `continue`s** to that
+loop -- and that those two are the wrong shape regardless, since a failed resume
+should fall through to a fresh baseline draw rather than discard the update.
+
+**The fix is not applied while 32904055 runs.** The chain resubmits with
+whatever is in the tree, so a code change landing mid-run would splice two
+trainer versions onto one curve if it reached segment 2 -- which `resume_drift`
+would not catch, because it guards settings and not code.
