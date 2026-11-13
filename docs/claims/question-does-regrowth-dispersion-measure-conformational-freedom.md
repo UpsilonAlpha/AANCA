@@ -66,10 +66,13 @@ and says nothing about entropy -- a perfect regressor to the crystal pose is the
 *worst* possible flexibility instrument. So the two quantities are in tension
 and the objective currently rewards only the first.
 
-This is what Ulban's 9 Nov correction was actually about. "Must converge to a
-fixed point" was not a terminological slip: an exact fixed point is a zero-width
-basin, and a **bounded basin** is both the physical object and the one that
-carries the measurement
+This is what Ulban's 9 Nov correction was about, and the attribution matters:
+**"must converge to a fixed point" was mine**, written into the diffusion
+comparison table. What he said was that a fixed point is *unrealistic and not
+physical*, and that the target is convergence to a realistic local minimum. He
+was right on the physics and it turns out to be right on the instrument too: an
+exact fixed point is a zero-width basin, so the phrasing I used specified away
+the quantity this question is about
 ([[a-local-per-residue-rule-can-build-a-protein-backbone]]).
 
 **And it predicts something about the ceiling arms, testable on checkpoints
@@ -80,6 +83,60 @@ suppressed the quantity the project is for -- a second and independent reason
 the ceilings were bad, arrived at from the opposite direction to the
 interpretability argument. That is a paired comparison over two existing
 checkpoints and needs no new training at all.
+
+## The ensemble design above is wrong, and his update-schedule question is why
+
+Asked on 13 Nov whether stochastic updates might be interfering with no real
+benefit. Chasing that exposed a hole in the measurement proposed above.
+
+**In a `birth = none`, `identity_weight = 0` regeneration rollout there are only
+two stochastic sources**: which window `damage_window` picks, and the Bernoulli
+update mask. Hold the window fixed, as an ensemble measurement must, and **the
+only thing left varying is the update mask.** At `update_probability >= 1.0`
+``update_mask`` returns all-ones and the rollout is deterministic, so the spread
+would be exactly zero.
+
+So "N rollouts differing only in the rollout generator" would have measured
+**the update schedule, not the protein.** Mask order is not conformational
+multiplicity.
+
+**The design that measures what the hypothesis means** varies the *initial
+condition*: N different starting poses for the damaged window -- different
+helix placements, or bounded random perturbations of one -- each rolled to
+convergence, and the spread of the settled poses is the basin structure. Mask
+variation then becomes the **control**: if mask-only spread is comparable to
+initialisation spread, the measurement is noise-dominated and says nothing.
+
+That control is the real test of the whole idea, and it is one extra run of the
+same script.
+
+## Rolling to convergence rather than to a fixed horizon
+
+Ulban, 13 Nov, preferring a rollout that ends when the structure settles over a
+fixed 120 steps. It is the better evaluation protocol and it improves this
+measurement specifically: rolled to its own convergence, each member of the
+ensemble is a *settled* pose rather than a pose-at-step-120, which removes the
+confound that some members may not have arrived yet. **And "steps to converge"
+becomes a second observable** -- a floppy window should take longer or never
+settle, so settling time is itself a flexibility signal, free with the same run.
+
+**One condition on the stopping rule, and it is the difference between a
+protocol and a new ceiling.** Convergence must be measured on the rule's *own*
+successive coordinates -- the step-to-step change falling below a threshold --
+and **never** on RMSD to native. A stopping rule that reads the native
+structure puts the answer back inside the rollout, which is the class of thing
+`native_edges` was removed for. Two quantities, one usable:
+
+    delta RMSD between consecutive steps   self-referential, available at
+                                           inference, correct
+    RMSD to native                         reads the target: a ceiling
+
+Also needs a step cap with "did not converge" recorded as an outcome rather
+than silently truncated, since the prior-art note warns some Graph NCA rules
+oscillate instead of converging. And note the degenerate case: a rule that never
+moves converges immediately, so settling time is only meaningful quoted beside
+the accuracy -- the same pairing `train_growth.py` already enforces between
+`rmsd` and the alive fraction.
 
 ## What would answer this
 

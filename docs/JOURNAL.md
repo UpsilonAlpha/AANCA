@@ -10617,3 +10617,99 @@ this is recorded -- but it is still not in the run's own config snapshot, and
 the `[environment]` block remains unbuilt. The three undiagnosed per-update
 rates (2.0-2.4, 1.12, 0.85 s/update) now have a fourth regime to be confused
 with, and a slower card would make this chain longer rather than wrong.
+
+## 13 Nov, the Growing-NCA audit: which ingredients transfer, and the one setting no config records
+
+Asked which Growing-NCA settings are actually relevant to the current
+trajectory, and whether stochastic updates might be interfering with no real
+benefit.
+
+    ingredient                     status here
+    -----------------------------  ------------------------------------------
+    identity/residual init         HAVE. Delta head zeroed so an untrained
+                                   rule is the identity map. Essential -- a
+                                   rule that starts by moving atoms randomly,
+                                   applied 120 times, diverges before it
+                                   learns anything.
+    alive masking                  HAVE, as `alive`.
+    damage and regeneration        HAVE -- it is the task, and now also the
+                                   instrument.
+    sample pool                    ABSENT. The most relevant missing piece:
+                                   it is what makes persistence trainable,
+                                   and persistence is now the product.
+    sampled rollout length         ABSENT. The roll-to-convergence proposal
+                                   is a better version of it.
+    learning-rate decay            ABSENT.
+    stochastic async update        HAVE -- and its justification may not
+                                   transfer. See below.
+
+### The asynchrony argument, and why it is weaker here than in a grid
+
+In Growing NCA asynchrony is a **symmetry-breaking** device: grid cells are
+genuinely identical -- same weights, same neighbourhood structure, no per-cell
+identity -- so a synchronous step makes every cell in an identical local
+configuration do an identical thing.
+
+Residues are not symmetric that way. Each carries a different neighbourhood
+geometry, a different closure-separation block, a different chain position, and
+a different sequence context once identity is on. **The symmetry asynchrony
+exists to break may not exist here**, while the cost is real: a random mask
+inside a BPTT window adds gradient variance, and `rollout.py` records that
+Bernoulli at 0.5 ticks about three times more residues than the `"independent"`
+schedule allows, which is the quantity the oscillation worry is about.
+
+Worth keeping the contrast straight: `"independent"` (chromatic Gibbs, no two
+contacting residues updating from the same stale neighbourhood) was reasoned out
+*for this problem*. `"bernoulli"` at 0.5 is the inherited one.
+
+### And the knob is not reachable from a config
+
+`RolloutConfig.update_probability` defaults to 0.5, and
+`scripts/train_growth.py` builds its `RolloutConfig` without passing it. So it
+has been 0.5 in **every arm**, and it is absent from `configs/regeneration.toml`,
+from `build_schema()`, from `HISTORICAL_DEFAULTS` and from every test --
+invisible to the section diff, to `snapshot()` and to `resume_drift`, all three
+built this week to stop exactly this. `update_schedule` **is** a config key,
+which is what hid it: the schedule is recorded and its only parameter is not.
+
+Written up as
+`docs/claims/update-probability-is-a-result-affecting-setting-that-no-config-records.md`.
+The test is one key: expose it at historical default 0.5, then one arm at 1.0
+off `g20_orient` -- a fully synchronous, deterministic rollout, one setting,
+same crops.
+
+### This corrected the dispersion design before it was built
+
+`update_mask` returns all-ones at `probability >= 1.0`, so that setting is the
+difference between a stochastic rollout and a deterministic one -- and in a
+`birth = none`, `identity_weight = 0` rollout it is the *only* remaining source
+of nondeterminism once the damaged window is held fixed.
+
+So "N rollouts differing only in the rollout generator" would have measured
+**the update schedule, not the protein**. Mask order is not conformational
+multiplicity. The design now varies the **initial condition** -- N starting
+poses for the damaged window, each rolled to convergence, spread of the settled
+poses -- with mask-only variation kept as the **control**: if mask-only spread
+is comparable to initialisation spread, the measurement is noise-dominated.
+
+### Rolling to convergence
+
+Preferred over a fixed 120 steps, and it is the better protocol. Each ensemble
+member becomes a *settled* pose rather than a pose-at-step-120, which removes
+the confound that some have not arrived; and **"steps to converge" is a second
+observable** that should itself track flexibility, free with the same run.
+
+**One condition, and it is the difference between a protocol and a new
+ceiling:** convergence must be read on the rule's own successive coordinates --
+step-to-step change below a threshold -- and never on RMSD to native, which
+would put the answer back inside the rollout. Plus a step cap with "did not
+converge" recorded rather than silently truncated, and settling time quoted
+beside accuracy, since a rule that never moves converges instantly.
+
+### One correction to the record
+
+"Must converge to a fixed point" was **mine**, in the diffusion comparison
+table. Ulban's 9 Nov words were that a fixed point is unrealistic and not
+physical and that the target is a realistic local minimum. The dispersion node
+said "Ulban's 9 Nov correction" in a way that read as though he had written the
+phrase he was correcting; fixed.
