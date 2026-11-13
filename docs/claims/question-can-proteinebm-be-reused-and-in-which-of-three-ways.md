@@ -29,11 +29,22 @@ project already recorded about it (`src/aanca/graph.py` copied "invariant
 features plus rotation augmentation" from ProteinEBM's choice, and `HANDOFF.md`
 notes it is "deliberately *not* equivariant").
 
-Not fully confirmed: the search snippets did not state the representation
-explicitly, and the methods section has not been read. Flagged rather than
-asserted. **If it is all-atom, the stated objection disappears and it is a
-better interface scorer than a CA-only model would be** -- but it makes weight
-reuse worse, not better.
+**CORRECTED 13 Nov, and the inference above was wrong.** Ulban, who is running
+it: ProteinEBM is **backbone-only in its implementation.** The architecture
+being derived from all-atom modules and the model as shipped being backbone-only
+are compatible, and the implementation is what one can actually score with. The
+reasoning here -- all-atom modules therefore all-atom model -- was an inference
+from architecture to artefact and should have stayed a question until the
+methods were read, which is what the hedge below said and the paragraph above
+then talked past.
+
+Consequence, and it is large: **a backbone-only energy cannot score an
+interface**, because binding is side-chain packing. The Boltzmann-reweighting
+use survives for *backbone* conformational entropy and nothing more, and the
+AANCA's advantage over it is explicit side chains -- which the growth track does
+not have either.
+[[what-an-aanca-can-learn-that-a-pairformer-cannot-and-the-reverse]] carries
+that ledger.
 
 ## Weights: no, and for a principled reason
 
