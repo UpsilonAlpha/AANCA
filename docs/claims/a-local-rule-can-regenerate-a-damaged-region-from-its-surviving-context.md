@@ -22,7 +22,21 @@ and the thesis asks for the whole backbone. The two applications the project is
 for hang off this node, not off the thesis, because both are regeneration
 problems.
 
-`status: open` as of 7 Nov: **implemented and not yet trained.**
+`status: open` as of 13 Nov, and now for a different reason: **trained, and it
+worked.** `g20_orient` moved a 12-residue window from the 12.23 A baseline to
+**7.78 A** on 12 held-out crops with **no native information inside the
+rollout** -- no teacher forcing, no target graph
+([[with-no-ceiling-at-all-the-rule-places-a-damaged-window-to-7-8-angstrom]]).
+Nine earlier arms without teacher forcing had sat at their own baselines to two
+decimal places.
+
+What keeps this `open` rather than `supported` is one specific gap, not
+caution: **no arm in this project has been replicated at a second seed**,
+because `seed` also chooses the held-out set, so the one replicate attempted
+measured different proteins
+([[question-has-any-arm-been-replicated-at-a-second-seed]]). The claim is one
+`--eval-indices` flag and one run away from supported, and that run is the
+cheapest thing in the queue.
 `--damage N` destroys a contiguous window inside one covalent run and keeps
 every other residue at its crystal pose. Measured on an untrained rule over
 three held-out crops with a 12-residue window, against the reconstruction arms'

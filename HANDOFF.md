@@ -50,8 +50,19 @@ distinguishable from never having moved.
     track                        state
     ---------------------------  -------------------------------------------
     inverse folding              DONE, 38.0 % held-out, converged
-    structure, sequence given    ceiling-bound; best 6.69 A under two ceilings
+    structure, sequence given    7.78 A with NO ceiling in the rollout
+                                 (6.69 A under two ceilings)
     sequence + structure jointly  NEVER RUN since the equivariance fix
+
+**13 Nov: the first capability rather than a bound.** `g20_orient` placed a
+damaged 12-residue window at **7.78 A** from the 12.23 A baseline with no
+teacher forcing and no target graph, on the same 12 held-out crops as every
+comparator (verified from the checkpoints). Nine earlier arms without teacher
+forcing had sat at their own baselines. Removing both ceilings costs 1.09 A
+against `g17_long` at matched budget. `twist` settled at 11.24 against g19's
+14.26, so the orientation term built on 5 Nov controls the quantity it was
+built for. `g19_nomove`'s placement number is void by its own pre-registration
+(twist left the 9-12 band) and stands as that control.
 
 `identity_weight = 0.0` is the config base, so every arm from g9 to g18 had the
 sequence half switched off. The last joint arm is `g7_regen`, which predates the
