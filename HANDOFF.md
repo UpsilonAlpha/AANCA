@@ -81,20 +81,37 @@ still express.
 
 ### Next
 
-1. **`g19_nomove`** — written and pre-registered, not submitted. Two settings
-   off `g14_pairwise`: `move_weight = 0` (no teacher forcing) and
-   `updates = 10000`. First arm since g7 with **no ceiling inside the
-   rollout**, and the first run of rung 2. It still has native targets in the
-   *loss* — clamped FAPE and native CA–CA distances — which is ordinary
-   supervised training and not a ceiling; a ceiling is native information fed
-   into the rollout, where no real run has it. One slot, ~6 h.
-2. **The dispersion measurement** on `g17_long`'s checkpoint — roll past 120
-   steps and report the spread. CPU-only, no queue. Nothing in this project has
-   ever measured whether a settled window *stays*.
-3. **`--eval-indices`**, because `seed` currently chooses the held-out split, so
-   the instrument moves when the seed moves (this is what voided `g18_seed1`).
-4. **The cofolding arm** — `identity_weight` on — once (1) says whether the
-   structure half works without being told the move.
+Reordered 13 Nov against the flexibility hypothesis
+(`docs/claims/question-does-regrowth-dispersion-measure-conformational-freedom.md`).
+`rmsd_dmg` is no longer the thing being chased: it is how we know the rule
+works, and a rule that collapses to one tight answer is the *worst* possible
+flexibility instrument.
+
+1. **Ensemble dispersion, on checkpoints that already exist.** N regrowths of
+   the same window from one checkpoint, differing only in the rollout
+   generator; per-residue RMSF over the N settled poses. `g20_orient` first,
+   then `g17_long` for the paired ceiling comparison. Inference only, CPU, no
+   queue. **Then Spearman against per-residue backbone B-factor** on the same
+   12 crops — which would be the first `experimental` observation under the
+   thesis, and the cheapest external anchor this project has.
+2. **`eval_indices` as a config key.** Precondition for the whole flexibility
+   programme, not just for error bars: a flexibility map is per-residue on
+   *named* structures, and comparing residue 47 across runs is meaningless
+   while `seed` also chooses which proteins are held out. Not blocking for (1),
+   because both checkpoints already carry their frozen eval set.
+3. **The replicate arm** — same section, `seed` moved, `eval_indices` pinned.
+   Turns the regeneration claim from `open` to supported.
+4. **Cofolding**, `identity_weight` on. More interesting under this framing,
+   not less: flexibility as a function of sequence is the design question.
+5. **The missing evaluations.** Updates 5750 and 9750 absent from
+   `history.json` in g17, g19 and g20 — three runs, three objectives, the same
+   two updates. Reproducible, so cheap to find, and it has silently broken the
+   pre-registered `settled` pair three times.
+6. **The `[environment]` block** in `snapshot()`. Now a fourth undiagnosed
+   per-update rate: 3.2 s/update on mi300x against 0.85 on mi355x.
+
+Demoted: driving `rmsd_dmg` lower on its own, and `g16_localrot`, which was
+already dropped as a third ceiling arm.
 
 ### Environment
 

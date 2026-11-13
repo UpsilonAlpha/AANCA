@@ -35,7 +35,7 @@ caution: **no arm in this project has been replicated at a second seed**,
 because `seed` also chooses the held-out set, so the one replicate attempted
 measured different proteins
 ([[question-has-any-arm-been-replicated-at-a-second-seed]]). The claim is one
-`--eval-indices` flag and one run away from supported, and that run is the
+`eval_indices` flag and one run away from supported, and that run is the
 cheapest thing in the queue.
 `--damage N` destroys a contiguous window inside one covalent run and keeps
 every other residue at its crystal pose. Measured on an untrained rule over

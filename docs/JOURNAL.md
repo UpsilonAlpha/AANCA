@@ -9874,14 +9874,14 @@ no bucket could have caught -- the same class as the voided 10.77 A baseline,
 where a crop index meant a different protein.
 
 A real replicate needs a seed that does not touch the split: either a separate
-`--init-seed` for initialisation and batch order, or an explicit
-`--eval-indices` pinning the held-out set. **The second is the smaller change
+`init_seed` for initialisation and batch order, or an explicit
+`eval_indices` pinning the held-out set. **The second is the smaller change
 and also fixes the unrecorded-pool problem**, since a pinned index list is a
 recorded one -- so it supersedes the pool-hash item left open this morning.
 
 ### Where that leaves the queue
 
-  1. `--eval-indices` (or `--init-seed`), because every arm from here is read
+  1. `eval_indices` (or `init_seed`), because every arm from here is read
      against an instrument that currently moves when the seed moves.
   2. `g16_localrot` at 10,000 updates against g17, not 2,000 against g15 --
      promoted by g17's twist drift, which is the rotation half of the
@@ -9936,7 +9936,7 @@ column. Built and, in this series, never run.
 
 ### What this does to the queue
 
-`--eval-indices` survives, because it is the instrument every later arm is read
+`eval_indices` survives, because it is the instrument every later arm is read
 against and it is cheap. `g16_localrot` drops: it is a third double-ceiling
 structure-only arm, so whatever it returns bounds the architecture and says
 nothing about the problem. Its twist argument does not disappear -- it moves to

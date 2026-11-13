@@ -116,8 +116,8 @@ baseline, where a crop index meant a different protein
 ### What a real replicate needs
 
 A second seed that does **not** touch the split: either a separate
-`--init-seed` used only for weight initialisation and batch order while
-`--seed` keeps choosing the structures, or an explicit `--eval-indices` that
+`init_seed` used only for weight initialisation and batch order while
+`--seed` keeps choosing the structures, or an explicit `eval_indices` that
 pins the held-out set so any seed can be varied against a fixed instrument. The
 second is the smaller change and also fixes the unrecorded-pool problem, since
 a pinned index list is a recorded one.

@@ -108,7 +108,7 @@ placement learnable from restraints alone.
 ## Scope
 
   * **One seed, one split, no replicate.** `seed` still chooses the held-out
-    set, so a second seed is not a replicate and `--eval-indices` is still
+    set, so a second seed is not a replicate and `eval_indices` is still
     unbuilt ([[question-has-any-arm-been-replicated-at-a-second-seed]]). This
     is why the regeneration claim is not being marked `supported` on it.
   * **Read at step 120 and nowhere else.** Whether the window *stays* is
