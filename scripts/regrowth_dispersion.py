@@ -98,7 +98,19 @@ def rule_from_checkpoint(ckpt, device):
         identity=tg.identity_track(args),
         identity_keep=args.identity_keep,
     ).to(device)
-    rule.load_state_dict(ckpt["rule"])
+    # **The two checkpoint files name the weights differently.** `last.pt`
+    # stores them under `rule` and `best.pt` under `state_dict` -- two writers,
+    # two keys, which cost a run here before it was noticed. Accept either and
+    # say so rather than assuming.
+    weights = ckpt.get("rule")
+    if weights is None:
+        weights = ckpt.get("state_dict")
+    if weights is None:
+        raise KeyError(
+            "checkpoint holds neither 'rule' nor 'state_dict'; keys are "
+            f"{sorted(ckpt)}"
+        )
+    rule.load_state_dict(weights)
     rule.eval()
     config = tg.build_config(args, args.eval_activation)
     return rule, args, config
