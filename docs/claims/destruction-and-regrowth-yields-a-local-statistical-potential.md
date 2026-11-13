@@ -89,6 +89,43 @@ And the ensemble has to come from varied **initial conditions**, with the
 mask-only spread as the control -- fitting a Potts model to update-mask noise
 would produce a confident and meaningless potential.
 
+## The chain has three links and only one is being tested
+
+Added 13 Nov, answering "how does this help achieve our objectives". The route
+from the sample pool to a usable potential is **pool -> persistence ->
+distribution -> potential**, and the arm that was just built tests the first
+arrow only.
+
+  1. **pool -> persistence.** `g21_pool`'s question. It can fail outright: if
+     divergence is architectural -- the rule having no way to represent "I have
+     arrived" -- then no training protocol fixes it, which is that arm's fourth
+     bucket and says go architectural.
+  2. **persistence -> a usable distribution.** *Not tested by that arm, and the
+     pool may work against it.* A rule that holds its structure perfectly can
+     have **zero** spread, and a delta function is as useless here as a
+     diverging trajectory. Worse, the pool's guard keeps only end-states no
+     worse than the baseline, which is selective pressure toward one good
+     answer -- so persistence could be bought by collapsing the multiplicity it
+     was wanted for. A third pre-registered bucket on the step-120 ensemble
+     spread was added to catch exactly that.
+  3. **distribution -> potential.** Still `-log` of optimiser outcomes rather
+     than of a Boltzmann distribution, with the B-factor correlation as the only
+     external check and that check untried.
+
+So the pool is **necessary and not sufficient**, and its honest value is that it
+is the cheapest way to learn whether divergence is a protocol problem or an
+architectural one. Either answer redirects the project, which is what makes it
+worth a slot.
+
+**And it has a justification that does not depend on this programme at all.**
+Every number this project has ever reported is read at step 120. If the rule
+does not hold its structure, every `settled` value is a snapshot of a transient
+-- the 7.78 A included
+([[the-rule-has-no-attractor-past-its-training-horizon]]). Persistence is not
+only a prerequisite for the potential; it is what would make the existing
+numbers mean what they are reported as meaning. That reason survives even if
+the potential programme is abandoned.
+
 ## And the honest limit on what "statistical potential" can mean here
 
 It is a potential in the knowledge-based sense -- `-log` of an observed

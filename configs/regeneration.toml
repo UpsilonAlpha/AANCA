@@ -353,6 +353,27 @@ orientation_weight = 2.5
 # than an Angstrom of it means the price is too high to read the first bucket
 # against g20 at all.
 #
+# THIRD, and added 13 Nov on noticing a flaw in this arm's own design: the
+# ENSEMBLE SPREAD at step 120, from the same script, against g20's figures.
+#
+# The guard above keeps an end-state only if it is no worse than the crop's
+# fresh baseline. That guard is right -- without it the pool trains on the
+# rule's own divergence -- but it is also SELECTIVE PRESSURE TOWARD ONE GOOD
+# ANSWER, and a narrow distribution is exactly what the statistical-potential
+# programme cannot use. So this arm could succeed at persistence by collapsing
+# the very multiplicity the persistence was wanted for, and the first two
+# buckets would both read as wins while the programme stayed blocked.
+#
+#   spread at 120 falls by more than half against g20   the pool bought
+#       persistence by narrowing the distribution. Persistence is real and the
+#       potential programme is no better off; the guard needs replacing with
+#       something that does not rank states by accuracy alone.
+#   spread holds or rises                               persistence and
+#       multiplicity are compatible under this protocol, which is the result
+#       the whole chain needs and nothing has yet shown.
+#
+# Costs nothing: same script, same checkpoint, one extra column.
+#
 # VOID if the run does not complete, or if `twist` leaves the 9-12 band --
 # g20's orientation term is inherited and this arm is not the place to retest
 # it.
