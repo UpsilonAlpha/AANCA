@@ -128,6 +128,44 @@ each residue an anchor-atom coordinate plus a **32-dimensional latent**, and the
 flow model generates both. ~435M stored parameters across flow model and
 autoencoder.
 
+### Head to head, so the asymmetry is on the record
+
+|                        | RFD4-Proteina                                  | this rule                              |
+|------------------------|------------------------------------------------|----------------------------------------|
+| parameters             | ~435M (flow model + autoencoder)               | **229,588**, hidden width 96           |
+| generative family      | flow matching, partly latent                   | learned update applied repeatedly      |
+| what a residue carries | anchor-atom coordinate + **32-d latent**       | explicit coords to 15 heavy atoms + 96-d hidden |
+| sidechains             | in the latent, decoded                         | explicit, in the state                 |
+| global information     | triangle multiplicative updates every other block, pair track, global time, trajectory search | **none** -- one hop on a 10 A heavy-atom graph |
+| time / noise           | two `[256]` adaLN embeddings, coordinate and latent | no step index, no noise conditioning   |
+| invariance             | AF3-lineage, augmentation                      | invariant edge features + rotation augmentation (ProteinEBM's choice, not E(n)-GNCA's) |
+| physics in training    | differentiable Rosetta energy via TMol on decoded coords | bond, clash, orientation restraints    |
+| stopping               | 60-step schedule, adaptive recycling inside    | **nothing** -- no attractor            |
+| chemistry              | 147-class vocabulary: modified AAs, sugars, DNA, RNA, ligands | 20 amino acids                         |
+| inverse folding        | beats LigandMPNN at matched diversity          | 38.0 % held out, converged             |
+| de novo binders        | 10.6 % clustered pass rate, 42x throughput, wet-lab validated | not attempted                          |
+| local regeneration     | partial diffusion; rescued 100/102 binders     | 7.78 A at step 120, 16.4-16.9 A at 600 |
+
+**So they are not competitors.** This is ~1/1900 the size and does a fraction of
+one of their seven tasks, worse. The comparison that is actually live is not
+"which designs better" but **"what is the least information a rule needs to
+cofold"**, and that is a question they are not asking.
+
+**And the cleanest way to state the relationship:** their architecture already
+contains something NCA-shaped -- recycling at every timestep with a variable
+number of passes, adaptively allocating computation. This rule is roughly *that
+inner loop with everything around it deleted*. The difference is that their inner
+loop can read the pair track and the global time while it iterates, and ours can
+read one hop of a distance graph. That is the ablation, and it is the whole
+project.
+
+**Where the explicit state genuinely wins**, and it is narrow but it is the part
+Ulban cares about: their anchor coordinate is CA-level and the chemistry and
+sidechains live in a 32-d code that only the decoder reads, whereas here every
+heavy atom is a coordinate in the state. For a sidechain-resolved interface
+potential that is the difference between fitting a model over conformations and
+fitting one over latents.
+
 ### The premise of "differential denoising" does not hold, and the mechanism is the shape of ours
 
 Table S7, the flow model's complete input inventory, settles it. Every
