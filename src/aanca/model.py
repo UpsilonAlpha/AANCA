@@ -58,19 +58,21 @@ GROWTH_NODE_EXTRA = 24
 DENSITY_NODE_EXTRA = 16
 
 #: Extra node dimensions a field-aware rule carries: the block from
-#: ``aanca.morphogen.field_features``, each chain-transported channel's
-#: amplitude and its logarithm.
+#: ``aanca.morphogen.field_features``, each secreted channel's amplitude and
+#: its logarithm.
 #:
-#: **It exists because perception is selected from the model's own
-#: coordinates.** ``select_neighbours`` keeps pairs within 10 A of where the
-#: rule currently thinks they are, so two residues that ought to touch and do
-#: not have no edge and no gradient path. A quantity transported along the
-#: covalent chain reaches one from the other anyway, because the backbone
-#: connects them whatever the geometry says. See ``aanca.morphogen``.
+#: **It is the Growing-NCA mechanism and nothing else.** The rule secretes a
+#: chemical, it spreads by a fixed local operator over the spatial graph the
+#: rule already perceives, and neighbours read it -- so a cell can manufacture
+#: a gradient nobody specified. Four dimensions, down from 20, because the two
+#: chain-transported groups were removed on 14 Nov: under ``birth="none"``
+#: they converge to ``decay ** index`` and are a positional encoding. See
+#: ``aanca.morphogen`` and
+#: ``docs/claims/the-chain-transported-morphogen-is-a-positional-encoding.md``.
 #:
 #: Asserted equal to ``morphogen.FIELD_FEATURE_DIM`` in the tests, the same
 #: guard the two blocks above have.
-FIELD_NODE_EXTRA = 20
+FIELD_NODE_EXTRA = 4
 EDGE_FEATURE_DIM = 575
 
 #: Ceiling on ``log kappa``. A likelihood loss can be reduced by claiming
@@ -573,10 +575,12 @@ class AANCARule(nn.Module):
         straight to :func:`aanca.morphogen.diffuse`, which takes ``None`` to
         mean no secretion.
 
-        It carries gradient. Every residue the field reaches reads the emitted
-        channels as node features, so a later loss anywhere downchain trains
-        the head that secreted -- which is the one route in this architecture
-        that does not pass through the spatial graph.
+        It carries gradient. Every residue the chemical reaches reads the
+        emitted channels as node features, so a later loss on their geometry
+        trains the head that secreted. Since 14 Nov the chemical spreads over
+        the perception graph, so this is a second signal *on* that graph rather
+        than a route around it: what it adds is a quantity the rule invents,
+        where every other node feature is measured.
         """
         if not getattr(self, "morphogen", False):
             return None

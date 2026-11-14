@@ -1,68 +1,44 @@
-"""Fields that travel along the chain, not through space.
+"""A chemical the rule secretes, diffusing over the perception graph.
 
-**Superseded 14 Nov, and nothing uses it.** Ulban: transport should not run
-along the chain, because the residue graph is spatial. The measurement that
-settles it is in
-``docs/claims/the-chain-transported-morphogen-is-a-positional-encoding.md``:
-``_live_bonds`` below makes the whole design conditional on ``alive`` varying,
-and under ``birth="none"`` -- what ``configs/regeneration.toml`` sets and every
-arm since g9 has run -- nothing is dormant, every bond conducts, and the
-transported groups converge to ``decay ** index`` to 1.2e-07. By this module's
-own stated test that is a positional encoding handed to the rule, and
-``field_features`` feeds its logarithm, which is a linear sequence coordinate at
-four resolutions mirrored from both termini.
+This is the Growing-NCA mechanism, kept and nothing else. In Growing NCA a
+cell's channels beyond the visible ones are hidden chemicals that spread by a
+fixed local kernel over the grid, and what each cell secretes is learned while
+the spreading is not. The grid is what a protein does not have
+([[growing-nca-grid-is-the-missing-information]] in the claim map), so the
+neighbourhood the chemical spreads over is the **spatial graph the rule already
+perceives** -- within the cutoff, selected from the model's own coordinates,
+rebuilt every step as the structure moves.
 
-What survives is the **emitted** group, because the rule chooses what to
-secrete. Diffusing it over the perception graph's own edges instead of along
-``links`` drops both decay groups -- 8 of 10 channels -- and needs no second
-topology. ``morphogen = false`` in every arm ever run, so there is no recorded
-result to reproduce and this module can be replaced rather than deprecated.
+Three properties, each a constraint rather than a nicety:
 
-The original rationale follows, kept because the bootstrap problem it names is
-real; the answer is that a spatially diffused field is wrong in the same way the
-geometry is wrong, which is the right kind of wrong, while a chain field is
-robust to the geometry being wrong because it carries no geometry at all.
+* **Local.** A residue reads its own value and its current spatial neighbours'.
+  Nothing sees the molecule as a whole and no step costs more than the
+  perception already does, because it reuses the same neighbour list.
+* **Not a coordinate.** There is no source at a terminus, no decay indexed by
+  chain distance, and nothing a residue could integrate into "how far along the
+  chain am I". The field is zero everywhere until something secretes, so it
+  carries only what the rule puts in it.
+* **Emergent.** The rule chooses what to secrete; the spreading is fixed. So a
+  cell can manufacture a gradient nobody specified, and the chain can develop
+  coordinates of its own -- or not, and then this costs four node features.
 
-The deficit this exists for is recorded in docs/JOURNAL.md under "Rethink": every
-edge a growth rollout perceives is selected from ``coords.detach()`` within a
-10 A cutoff, so two residues that ought to touch and currently do not have no
-edge, no message and no gradient path. The rotational lever arm drifts two
-independently grown fronts apart before they come within the cutoff, so they
-never acquire the edge that would correct them.
+**What was here before, and why it went.** Two groups transported along the
+covalent chain, sourced at the termini of each alive run and decaying per
+residue. Under ``birth="none"`` -- what every arm since g9 runs -- nothing is
+dormant, every bond conducts, and those groups converge to ``decay ** index`` to
+1.2e-07: a deterministic function of the residue index, which is the positional
+encoding the old module's own ``_live_bonds`` docstring named as the thing to
+avoid. Ulban, 14 Nov: *"they shouldn't transport along the chain -- the residue
+graph is spatial."* Measured and recorded in
+``docs/claims/the-chain-transported-morphogen-is-a-positional-encoding.md``.
+``morphogen = false`` in every arm ever run, so there was no result to
+reproduce and the module was replaced rather than deprecated.
 
-A field propagating along the **covalent chain** is a communication channel
-that does not depend on the spatial graph being right. Two residues forty
-Angstrom apart in a wrong structure have no spatial edge, but they are still
-connected through the backbone, and a quantity transported along that path
-reaches one from the other regardless of where the model currently thinks
-either of them is.
-
-Three properties were required of it, and each is a constraint on the design
-rather than a nicety:
-
-* **Local.** A residue reads its own field value and its immediate covalent
-  neighbours'. Nothing here sees the chain as a whole, and no step costs more
-  than O(R).
-* **Length-free.** The sources are the termini of each *alive* covalent run,
-  and a terminus is detectable from the absence of a live bond on one side. No
-  residue is told the length of the protein or its index in it. A normalised
-  sequence index would supply the same gradient and would be neither -- it is
-  a global coordinate handed to every cell, and it is exactly what this
-  deliberately is not.
-* **Emergent where it can be.** The two transported groups below are fixed
-  physics -- a conserved quantity emitted at a terminus and decaying as it
-  moves. The emitted group is not: the rule chooses what to secrete, into a
-  symmetrically diffusing channel, so a cell can manufacture a gradient of its
-  own and the chain can develop coordinates nobody specified.
-
-The transported groups use *directed* transport rather than symmetric
-diffusion, which is worth stating because "morphogen" usually implies the
-latter. Directed transport advances one residue per step and converges to
-``decay ** (i - start)`` exactly, so its logarithm is linear in chain distance
-from the terminus -- a positional coordinate, at a resolution set by the decay.
-Symmetric diffusion from a single source spreads as the square root of time and
-would still be propagating when the rollout ends. The emitted group, which has
-sources anywhere, is symmetric.
+The bootstrap problem those groups existed for is real and is not solved here:
+two fronts that have drifted apart have no edge, so no chemical reaches across
+either. That is the right kind of wrong -- the field is over the geometry as it
+currently is, and becomes right as the structure does -- where a chain field was
+robust to the geometry being wrong precisely because it carried no geometry.
 """
 
 from __future__ import annotations
@@ -70,32 +46,24 @@ from __future__ import annotations
 import torch
 from torch import Tensor
 
-#: Decay per residue for the group sourced at each alive run's N-terminus and
-#: transported C-ward. Four scales so the field resolves position both near a
-#: terminus and far from it: ``0.99`` is still 0.28 at a hundred residues while
-#: ``0.60`` has fallen to 0.01 by residue nine, and the logarithm of each is a
-#: linear coordinate over the range where it has not underflowed.
-NWARD_DECAYS: tuple[float, ...] = (0.99, 0.95, 0.85, 0.60)
-#: The mirror group: sourced at each run's C-terminus, transported N-ward. Both
-#: directions because which end a residue is near is not recoverable from one.
-CWARD_DECAYS: tuple[float, ...] = (0.99, 0.95, 0.85, 0.60)
-#: Channels the rule secretes into. Symmetric diffusion, so a secreting cell
-#: raises its neighbourhood in both directions.
+#: Channels the rule secretes into. Two, so a cell can make a gradient and a
+#: second signal that is not a function of the first.
 EMIT_CHANNELS = 2
-#: Decay per hop for the emitted channels. Not a tuple: the rule can modulate
-#: the amplitude it secretes but not the length scale, which keeps the emitted
-#: group one mechanism rather than four.
+#: Fraction of a neighbourhood's mean concentration that arrives in one hop.
+#: Not a tuple, unlike the length scales the old transported groups carried: the
+#: rule modulates the amplitude it secretes, not the distance the chemical
+#: travels, which keeps this one mechanism rather than four.
 EMIT_DECAY = 0.90
 
-FIELD_CHANNELS = len(NWARD_DECAYS) + len(CWARD_DECAYS) + EMIT_CHANNELS
-#: Raw amplitude and log-amplitude per channel. The log is what carries
-#: position: ``log(decay ** d) = -d * |log decay|`` is linear in chain distance,
-#: while the raw amplitude saturates at one end and underflows at the other.
+FIELD_CHANNELS = EMIT_CHANNELS
+#: Raw amplitude and log-amplitude per channel. The log is kept because a
+#: concentration that has decayed over several hops is small, and the rule has
+#: more resolution in the log than in the raw value near zero.
 FIELD_FEATURE_DIM = 2 * FIELD_CHANNELS
 
 #: Floor inside the logarithm, and the scale the log is divided by so the
-#: feature lands in roughly ``[-1, 0]``. A dormant or unreached residue reads
-#: ``-1`` rather than minus infinity.
+#: feature lands in roughly ``[-1, 0]``. An unreached residue reads ``-1``
+#: rather than minus infinity.
 _LOG_FLOOR = 1e-6
 _LOG_SCALE = -float(torch.log(torch.tensor(_LOG_FLOOR)))
 
@@ -103,117 +71,99 @@ _LOG_SCALE = -float(torch.log(torch.tensor(_LOG_FLOOR)))
 def initial_field(n_residues: int, device=None, dtype=torch.float32) -> Tensor:
     """``(R, FIELD_CHANNELS)`` of zeros.
 
-    Zero rather than source-clamped: the sources depend on ``alive``, which the
-    caller has and this does not, and :func:`diffuse` clamps them on its first
-    call anyway. So the first step a rollout takes already sees the terminus
-    markers, and nothing has to be seeded twice.
+    Zero and not source-clamped, because there are no sources: nothing is
+    secreting until the rule does. A rollout whose emit head never fires
+    carries a field of zeros from start to finish, which is the correct null --
+    the old module could not express it, since its termini were clamped to one
+    whatever the rule did.
     """
     return torch.zeros(n_residues, FIELD_CHANNELS, device=device, dtype=dtype)
 
 
-def _live_bonds(alive: Tensor, links: Tensor) -> Tensor:
-    """``(R-1,)``: bonds whose *both* ends are alive, so they can conduct.
-
-    A dormant slot does not conduct. That is the choice that makes the field a
-    property of the structure grown so far rather than of the crop's sequence:
-    if dormant slots conducted, the converged field would be a deterministic
-    function of the residue index and the whole thing would be a positional
-    encoding handed to the rule rather than a quantity the growing chain
-    carries.
-    """
-    if links.numel() == 0:
-        return links
-    return links & alive[:-1] & alive[1:]
-
-
 def diffuse(
     field: Tensor,
-    alive: Tensor,
-    links: Tensor,
+    neighbours: Tensor,
+    edge_mask: Tensor,
     emission: Tensor | None = None,
+    alive: Tensor | None = None,
 ) -> Tensor:
-    """One hop of transport. Returns the new ``(R, FIELD_CHANNELS)`` field.
+    """One hop of diffusion over the perception graph. Returns ``(R, C)``.
 
-    ``emission`` is ``(R, EMIT_CHANNELS)`` in ``[0, 1]`` -- what each residue
-    secretes this step -- or ``None`` for no secretion. It carries gradient:
-    the emitted channels are read as node features by every residue the field
-    reaches, so the head that secretes is trained by their losses, which is the
-    whole point of a channel that does not need the spatial graph.
+    ``neighbours`` ``(R, k)`` and ``edge_mask`` ``(R, k)`` are the graph's own,
+    so the chemical spreads over exactly the pairs the rule can perceive and
+    nothing has to agree with anything. ``emission`` is ``(R, EMIT_CHANNELS)``
+    in ``[0, 1]`` -- what each residue secretes this step -- or ``None`` for no
+    secretion. ``alive`` zeroes dormant slots; ``None`` means every slot is
+    alive, which is the ``birth="none"`` case and needs no mask.
 
-    A residue that is alive and has no conducting bond on the inflow side is a
-    **source**, clamped to one. That is the same test as "is this the terminus
-    of its alive run", written as the absence of inflow rather than as a
-    separate predicate, so the two can never disagree.
+    **The receiver's own neighbour list, so transport is not symmetric.** A
+    kNN graph is not symmetric and this does not symmetrise it: residue i reads
+    the concentration of the residues *it* perceives, which is what a cell
+    sensing its surroundings does and is the same relation perception itself
+    uses. The consequence to be aware of is that mass is not conserved -- this
+    is a sensing rule, not a continuity equation, and it was never conservative
+    anyway because secretion is free.
+
+    **A masked mean, not a distance weighting.** The neighbour list already
+    says "within the cutoff", and weighting by distance would put a coordinate
+    gradient on the secretion head -- a second pathway by which the rule could
+    move atoms, which is exactly the kind of extra mechanism this module just
+    lost. The spreading stays a fixed local operator, as Growing NCA's kernel
+    is.
+
+    ``emission`` carries gradient: every residue the chemical reaches reads it
+    as a node feature, so a loss on their geometry trains the head that
+    secreted.
     """
-    bonds = _live_bonds(alive, links)
-    live = alive.unsqueeze(-1).to(field.dtype)
-    pad_bool = torch.zeros(1, dtype=torch.bool, device=field.device)
-    out = []
-    at = 0
+    if field.dim() != 2 or field.shape[1] != FIELD_CHANNELS:
+        raise ValueError(
+            f"field must be (R, {FIELD_CHANNELS}), got {tuple(field.shape)}"
+        )
+    n_res = field.shape[0]
+    if neighbours.shape[:1] != (n_res,) or edge_mask.shape != neighbours.shape:
+        raise ValueError(
+            f"neighbours and edge_mask must both be (R, k) with R={n_res}, got "
+            f"{tuple(neighbours.shape)} and {tuple(edge_mask.shape)}"
+        )
 
-    # Built by padding and concatenation rather than slice assignment. The
-    # emitted channels carry gradient from the secretion head, and an in-place
-    # write into a tensor an earlier line already wrote is the shape of bug
-    # autograd reports a hundred lines away from its cause.
-    for decays, nward in ((NWARD_DECAYS, True), (CWARD_DECAYS, False)):
-        group = field[:, at : at + len(decays)]
-        at += len(decays)
-        decay = torch.tensor(decays, device=field.device, dtype=field.dtype)
-        pad = torch.zeros_like(group[:1])
-        if bonds.numel() == 0:
-            inflow, conducts = torch.zeros_like(group), torch.zeros_like(alive)
-        elif nward:
-            mask = bonds.unsqueeze(-1).to(field.dtype)
-            inflow = torch.cat([pad, group[:-1] * mask], dim=0)
-            conducts = torch.cat([pad_bool, bonds], dim=0)
-        else:
-            mask = bonds.unsqueeze(-1).to(field.dtype)
-            inflow = torch.cat([group[1:] * mask, pad], dim=0)
-            conducts = torch.cat([bonds, pad_bool], dim=0)
-        source = (alive & ~conducts).unsqueeze(-1).to(field.dtype)
-        # ``maximum`` rather than ``where``: a source is clamped to one, and a
-        # non-source keeps what flowed in. Written as a maximum so a residue
-        # that is both -- a run of length one -- is one rather than zero.
-        out.append(torch.maximum(decay * inflow, source) * live)
+    mask = edge_mask.unsqueeze(-1).to(field.dtype)
+    # ``field[neighbours]`` is (R, k, C): each residue's view of what its
+    # neighbours are carrying. Gathered rather than scattered, so a residue
+    # that appears in many neighbour lists is read many times and never
+    # written -- which is what makes this the receiver's rule.
+    neighbour_field = field[neighbours] * mask
+    count = mask.sum(dim=1).clamp(min=1.0)
+    arrived = EMIT_DECAY * (neighbour_field.sum(dim=1) / count)
 
-    emitted = field[:, at:]
-    pad = torch.zeros_like(emitted[:1])
-    if bonds.numel() == 0:
-        neighbour_sum = torch.zeros_like(emitted)
-        neighbour_count = torch.zeros_like(alive, dtype=field.dtype)
-    else:
-        mask = bonds.unsqueeze(-1).to(field.dtype)
-        from_nward = torch.cat([pad, emitted[:-1] * mask], dim=0)
-        from_cward = torch.cat([emitted[1:] * mask, pad], dim=0)
-        neighbour_sum = from_nward + from_cward
-        count = bonds.to(field.dtype)
-        zero = torch.zeros(1, dtype=field.dtype, device=field.device)
-        neighbour_count = torch.cat([zero, count]) + torch.cat([count, zero])
-    averaged = neighbour_sum / neighbour_count.clamp(min=1.0).unsqueeze(-1)
-    arrived = EMIT_DECAY * averaged
     if emission is None:
-        new_emitted = arrived
+        new_field = arrived
     else:
+        if emission.shape != (n_res, EMIT_CHANNELS):
+            raise ValueError(
+                f"emission must be (R, {EMIT_CHANNELS}), got "
+                f"{tuple(emission.shape)}"
+            )
         # ``a + e - a*e`` rather than ``(a + e).clamp(max=1)``. Both keep the
         # channel in ``[0, 1]``, but a clamp has exactly zero gradient once it
-        # binds -- so a residue secreting near its maximum would train with no
-        # signal at all, which is the state a saturating sigmoid head arrives
-        # at. This is smooth everywhere, monotone in both arguments, and
-        # saturates only in the limit.
+        # binds, so a residue secreting near its maximum would train with no
+        # signal at all -- the state a saturating sigmoid head arrives at. This
+        # is smooth everywhere, monotone in both arguments, and saturates only
+        # in the limit.
         secreted = emission.to(field.dtype)
-        new_emitted = arrived + secreted - arrived * secreted
-    out.append(new_emitted * live)
+        new_field = arrived + secreted - arrived * secreted
 
-    return torch.cat(out, dim=-1)
+    if alive is not None:
+        new_field = new_field * alive.unsqueeze(-1).to(field.dtype)
+    return new_field
 
 
 def field_features(field: Tensor) -> Tensor:
     """``(R, FIELD_FEATURE_DIM)``: each channel's amplitude and its logarithm.
 
-    The log is the feature that matters and the raw amplitude is kept because
-    it is the only one that distinguishes *at* a source from *near* one: the
-    log of 1.0 and of 0.99 differ by 0.01 of the scale, while the amplitudes
-    differ by the same 0.01 on a range where the rule has resolution.
+    Both, because they have resolution in different places: the amplitudes of
+    1.0 and 0.99 differ by 0.01 on a range the rule can read, while their logs
+    differ by 0.01 of the scale; several hops out the amplitudes are both near
+    zero and only the logs separate them.
     """
     amplitude = field.clamp(min=0.0, max=1.0)
     logged = torch.log(amplitude + _LOG_FLOOR) / _LOG_SCALE

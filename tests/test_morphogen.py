@@ -1,11 +1,16 @@
-"""The chain-transported field: a route that does not pass through the graph.
+"""A chemical the rule secretes, spreading over the graph it already perceives.
 
-Every edge a growth rollout perceives is selected from ``coords.detach()``
-within a 10 A cutoff, so two residues that ought to touch and currently do not
-have no edge and no gradient path between them. These tests pin the properties
-that make a field along the backbone a route anyway -- that it reaches far
-along the chain regardless of geometry, that its sources are detectable
-locally, and that it carries gradient from the head that secretes into it.
+The module these test replaced transported two groups along the covalent chain,
+and its tests pinned exactly the properties that turned out to be the problem:
+that termini are sources whether or not the rule wants them, that the log
+amplitude is linear in chain distance, and that the field *ignores geometry
+entirely*. Under ``birth="none"`` that converges to ``decay ** index``, which is
+a positional encoding
+(``docs/claims/the-chain-transported-morphogen-is-a-positional-encoding.md``).
+
+So these tests pin the opposite, and the first two are the ones that matter: the
+field is **zero until the rule secretes**, and it spreads over **spatial**
+neighbours rather than bonded ones.
 """
 
 from __future__ import annotations
@@ -14,194 +19,277 @@ import torch
 
 from aanca.model import FIELD_NODE_EXTRA
 from aanca.morphogen import (
-    CWARD_DECAYS,
     EMIT_CHANNELS,
+    EMIT_DECAY,
     FIELD_CHANNELS,
     FIELD_FEATURE_DIM,
-    NWARD_DECAYS,
     diffuse,
     field_features,
     initial_field,
 )
 
 
-def _chain(n: int, alive: slice | None = None) -> tuple[torch.Tensor, torch.Tensor]:
-    """One covalent run of ``n`` slots, with ``alive`` the live stretch."""
-    links = torch.ones(n - 1, dtype=torch.bool)
-    live = torch.zeros(n, dtype=torch.bool)
-    live[alive if alive is not None else slice(None)] = True
-    return live, links
+def _line_graph(n: int) -> tuple[torch.Tensor, torch.Tensor]:
+    """Each residue perceives its two index-neighbours. ``(neighbours, mask)``.
+
+    A deliberately chain-shaped *spatial* graph, used only where the question is
+    about hops and decay rather than about which topology is in play. It is the
+    graph, not ``links``: nothing in :func:`diffuse` knows about bonds.
+    """
+    neighbours = torch.zeros(n, 2, dtype=torch.long)
+    mask = torch.zeros(n, 2, dtype=torch.bool)
+    for i in range(n):
+        if i > 0:
+            neighbours[i, 0] = i - 1
+            mask[i, 0] = True
+        if i + 1 < n:
+            neighbours[i, 1] = i + 1
+            mask[i, 1] = True
+    return neighbours, mask
 
 
-def _settle(alive: torch.Tensor, links: torch.Tensor, hops: int) -> torch.Tensor:
-    field = initial_field(alive.shape[0])
-    for _ in range(hops):
-        field = diffuse(field, alive, links, None)
-    return field
+def _emit(n: int, where: dict[int, float]) -> torch.Tensor:
+    """``(n, EMIT_CHANNELS)`` secreting ``where[i]`` at residue ``i``."""
+    emission = torch.zeros(n, EMIT_CHANNELS)
+    for i, amount in where.items():
+        emission[i] = amount
+    return emission
 
 
 def test_dim_constants_agree():
-    """The same guard the growth and density blocks have, for the same reason.
+    """The node block's width and the field's cannot drift apart.
 
-    Two modules agree on a width, and disagreement would surface as a shape
-    error at the first forward pass rather than next to the definitions.
+    ``FIELD_NODE_EXTRA`` is what the rule reserves and ``FIELD_FEATURE_DIM`` is
+    what ``field_features`` returns; a mismatch is a shape error at the first
+    forward pass, which is the wrong way to find out.
     """
-    assert FIELD_FEATURE_DIM == FIELD_NODE_EXTRA
-    assert FIELD_CHANNELS == len(NWARD_DECAYS) + len(CWARD_DECAYS) + EMIT_CHANNELS
+    assert FIELD_CHANNELS == EMIT_CHANNELS
+    assert FIELD_FEATURE_DIM == 2 * FIELD_CHANNELS
+    assert FIELD_NODE_EXTRA == FIELD_FEATURE_DIM
 
 
-def test_termini_are_sources_without_being_told():
-    """The N-most and C-most alive residues clamp to one.
+def test_nothing_secreting_means_the_field_stays_exactly_zero():
+    """The null the old module could not express.
 
-    No residue is handed its index or the chain's length. A terminus is the
-    absence of inflow, so the test is that the field finds them from the alive
-    mask alone -- and finds the *alive* run's ends, not the crop's.
+    Its termini were clamped to one on the first hop whatever the rule did, so
+    a rule with a dead emit head still handed every residue a gradient in chain
+    distance. Here a rollout that never secretes carries zeros from start to
+    finish, so the block costs four features and says nothing.
     """
-    alive, links = _chain(20, slice(5, 15))
-    field = _settle(alive, links, 30)
-    n_channel, c_channel = field[:, 0], field[:, len(NWARD_DECAYS)]
-    assert float(n_channel[5]) == 1.0
-    assert float(c_channel[14]) == 1.0
-    # The crop's own ends are dormant and carry nothing at all.
-    assert float(field[0].abs().sum()) == 0.0
-    assert float(field[19].abs().sum()) == 0.0
+    n = 24
+    neighbours, mask = _line_graph(n)
+    field = initial_field(n)
+    for _ in range(200):
+        field = diffuse(field, neighbours, mask)
+    assert torch.equal(field, torch.zeros_like(field))
 
 
-def test_log_amplitude_is_linear_in_chain_distance():
-    """The feature that makes this a positional coordinate.
+def test_the_field_is_not_a_function_of_the_residue_index():
+    """The property whose failure retired the old module.
 
-    ``decay ** d`` has a logarithm proportional to ``-d``, so the log channel
-    is a linear ramp along the chain. That is what lets a residue know how far
-    it is from a terminus without anything global being computed.
+    One residue secretes, in the middle of a uniform line graph. The converged
+    field is symmetric about it and says nothing about where the chain begins
+    or ends -- in particular residue 0 and residue n-1 are equal, where the old
+    transported groups made them 1.0 and ``decay ** (n-1)``.
     """
-    alive, links = _chain(40)
-    field = _settle(alive, links, 80)
-    logged = field_features(field)[:, FIELD_CHANNELS:]
-    ramp = logged[:, 0]
-    steps = ramp[1:] - ramp[:-1]
-    # Constant slope, and a decreasing one: further from the N-terminal source
-    # is a smaller amplitude, so a more negative logarithm.
-    assert float(steps.std()) < 1e-6
-    assert float(steps.mean()) < 0.0
+    n = 21
+    neighbours, mask = _line_graph(n)
+    field = initial_field(n)
+    emission = _emit(n, {n // 2: 1.0})
+    for _ in range(300):
+        field = diffuse(field, neighbours, mask, emission)
+    assert float(field[0, 0]) == torch.tensor(float(field[-1, 0]))
+    for offset in range(1, n // 2):
+        assert abs(float(field[n // 2 - offset, 0]) - float(field[n // 2 + offset, 0])) < 1e-6
 
 
-def test_transport_is_one_residue_per_step():
-    """Propagation speed is the whole reason for directed transport.
+def test_the_chemical_spreads_over_spatial_neighbours_not_bonded_ones():
+    """The whole point of the rewrite, as a single assertion.
 
-    Symmetric diffusion from one source spreads as the square root of time and
-    would still be travelling when a 120-step rollout ends. Directed transport
-    advances exactly one residue per hop, which matches growth's own rate at
-    the frontier.
+    A graph where residue 0 perceives residue 9 and nothing else, and residues
+    1 and 2 -- 0's *sequence* neighbours -- perceive each other and not 0. One
+    hop from a secreting residue 0 reaches 9 and never reaches 1, which is the
+    opposite of what the chain-transported field did.
     """
-    alive, links = _chain(60)
-    for hops in (3, 10, 25):
-        field = _settle(alive, links, hops)
-        reached = int((field[:, 0] > 0).sum())
-        assert reached == hops, (hops, reached)
+    n = 10
+    neighbours = torch.zeros(n, 1, dtype=torch.long)
+    mask = torch.zeros(n, 1, dtype=torch.bool)
+    neighbours[9, 0], mask[9, 0] = 0, True   # 9 perceives 0
+    neighbours[1, 0], mask[1, 0] = 2, True   # 1 perceives 2, not 0
+    neighbours[2, 0], mask[2, 0] = 1, True
+
+    field = initial_field(n)
+    field = diffuse(field, neighbours, mask, _emit(n, {0: 1.0}))
+    assert float(field[0, 0]) == 1.0          # it secreted
+    field = diffuse(field, neighbours, mask)  # one hop, no further secretion
+    assert float(field[9, 0]) > 0.0           # spatially adjacent: reached
+    assert float(field[1, 0]) == 0.0          # bonded to 0: not reached
+    assert float(field[2, 0]) == 0.0
 
 
-def test_the_field_ignores_geometry_entirely():
-    """The property the spatial graph does not have.
+def test_a_masked_edge_does_not_conduct():
+    """``edge_mask`` is honoured, so a padded or dead slot is not a sender.
 
-    The same chain, once compact and once with every residue flung apart, must
-    give the same field: ``diffuse`` reads ``alive`` and ``links`` and never a
-    coordinate. This is the whole claim -- a wrong fold cannot delete this
-    route the way it deletes a 10 A edge.
+    The graph pads its neighbour lists, and a padded entry points at a real
+    index -- so a diffusion that ignored the mask would read a residue chosen
+    by the padding.
     """
-    alive, links = _chain(30)
-    field = _settle(alive, links, 50)
-    # There is no coordinate argument to vary, which is the point; the test is
-    # that the signature cannot accept one, and the field is a function of the
-    # covalent topology alone.
-    broken = links.clone()
-    broken[14] = False
-    split = initial_field(30)
-    for _ in range(50):
-        split = diffuse(split, alive, broken, None)
-    # Breaking the *chain* does change it -- two runs, so four termini.
-    assert float(split[:, 0][15]) == 1.0
-    assert float(field[:, 0][15]) < 1.0
+    n = 4
+    neighbours = torch.zeros(n, 2, dtype=torch.long)
+    neighbours[:, 0] = 1  # everyone "perceives" residue 1 in slot 0
+    mask = torch.zeros(n, 2, dtype=torch.bool)
+    mask[3, 0] = True     # but only residue 3 really does
+
+    field = initial_field(n)
+    field = diffuse(field, neighbours, mask, _emit(n, {1: 1.0}))
+    field = diffuse(field, neighbours, mask)
+    assert float(field[3, 0]) > 0.0
+    assert float(field[0, 0]) == 0.0
+    assert float(field[2, 0]) == 0.0
 
 
-def test_a_chain_break_makes_two_runs_with_their_own_sources():
-    """Transport cannot cross a break, because growth cannot either.
+def test_one_hop_arrives_at_the_decay_and_a_second_at_its_square():
+    """The spreading is a fixed local operator, with a known rate.
 
-    ``frontier`` is gated on ``links``, so a crop holding several covalent runs
-    grows them independently. A field that leaked across a break would tell a
-    residue it was near a terminus that no amount of growth could connect it
-    to.
+    Residue 0 secretes once and stops. Residue 1 perceives only 0 and residue 2
+    perceives only 1, so the concentration at step h is ``EMIT_DECAY ** h``
+    exactly -- a mean over one neighbour is that neighbour.
     """
-    alive = torch.ones(20, dtype=torch.bool)
-    links = torch.ones(19, dtype=torch.bool)
-    links[9] = False
-    field = _settle(alive, links, 40)
-    n_channel = field[:, 0]
-    assert float(n_channel[0]) == 1.0
-    assert float(n_channel[10]) == 1.0
-    assert float(n_channel[9]) < 1.0
+    n = 3
+    neighbours = torch.zeros(n, 1, dtype=torch.long)
+    mask = torch.zeros(n, 1, dtype=torch.bool)
+    neighbours[1, 0], mask[1, 0] = 0, True
+    neighbours[2, 0], mask[2, 0] = 1, True
+
+    field = initial_field(n)
+    field = diffuse(field, neighbours, mask, _emit(n, {0: 1.0}))
+    assert float(field[0, 0]) == 1.0
+    field = diffuse(field, neighbours, mask)
+    assert abs(float(field[1, 0]) - EMIT_DECAY) < 1e-6
+    field = diffuse(field, neighbours, mask)
+    assert abs(float(field[2, 0]) - EMIT_DECAY**2) < 1e-6
 
 
-def test_dormant_slots_do_not_conduct():
-    """Otherwise the converged field is a positional encoding, handed over.
+def test_transport_uses_the_receivers_list_and_is_not_symmetrised():
+    """A one-way edge moves the chemical one way, which is a sensing rule.
 
-    If a dormant slot conducted, the field at residue ``i`` would settle to
-    ``decay ** i`` -- a deterministic function of the sequence index, which is
-    the global coordinate this is deliberately not. Conduction through live
-    residues only makes it a property of the structure grown so far.
+    Residue 1 perceives residue 0 and residue 0 perceives nobody. With 0
+    secreting steadily, 1 holds a concentration and 0 never reads anything
+    back, so nothing here quietly symmetrises the graph -- worth pinning
+    because a kNN graph is not symmetric and a conservative diffusion would
+    have to make it so.
     """
-    alive, links = _chain(20, slice(0, 8))
-    field = _settle(alive, links, 40)
-    assert float(field[:, 0][7]) > 0.0
-    assert float(field[8:].abs().sum()) == 0.0
+    n = 2
+    neighbours = torch.zeros(n, 1, dtype=torch.long)
+    mask = torch.zeros(n, 1, dtype=torch.bool)
+    neighbours[1, 0], mask[1, 0] = 0, True
+
+    field = initial_field(n)
+    emission = _emit(n, {0: 1.0})
+    for _ in range(5):
+        field = diffuse(field, neighbours, mask, emission)
+    assert abs(float(field[1, 0]) - EMIT_DECAY) < 1e-6
+    assert float(field[0, 0]) == 1.0
 
 
-def test_emission_reaches_both_directions_and_carries_gradient():
-    """The emitted channels are the emergent half, and must be trainable.
+def test_the_field_has_no_memory_so_a_pulse_dies(capsys):
+    """Each step RECOMPUTES the concentration; it does not accumulate.
 
-    A fixed terminus source is physics; a secreted one is the rule inventing a
-    coordinate. For that to be learnable the gradient has to run from a distant
-    residue's feature back to the secreting residue's head, which is the one
-    path in this architecture that does not pass through the spatial graph.
+    ``field_new = EMIT_DECAY * mean(neighbours) + secretion``, so one residue
+    secreting once produces a single hop and then nothing -- the chemical is a
+    steady state around persistent sources, not a travelling wave. The old
+    chain-transported module had the same structure, so this is not a
+    regression, but it IS the open design question: real diffusion is
+    ``c + D * (mean - c)``, which keeps memory and would need a degradation
+    term to stay bounded. Recorded in
+    ``docs/claims/the-emitted-chemical-diffuses-over-the-perception-graph.md``.
     """
-    alive, links = _chain(21)
-    source = torch.zeros(21, EMIT_CHANNELS)
-    source[10] = 0.5
-    emission = source.clone().requires_grad_(True)
-    field = initial_field(21)
-    for _ in range(6):
-        field = diffuse(field, alive, links, emission)
-    emitted = field[:, -EMIT_CHANNELS:]
-    assert float(emitted[6, 0]) > 0.0
-    assert float(emitted[14, 0]) > 0.0
-    emitted[6, 0].backward()
+    n = 4
+    neighbours, mask = _line_graph(n)
+    field = initial_field(n)
+    field = diffuse(field, neighbours, mask, _emit(n, {0: 1.0}))
+    assert float(field[0, 0]) == 1.0
+    # One hop with nothing secreting: residue 1 receives, and residue 0 -- whose
+    # only neighbour is the empty residue 1 -- is already back to zero.
+    field = diffuse(field, neighbours, mask)
+    assert abs(float(field[1, 0]) - EMIT_DECAY / 2) < 1e-6
+    assert float(field[0, 0]) == 0.0
+    # And a second hop leaves nothing anywhere upstream of it.
+    field = diffuse(field, neighbours, mask)
+    assert float(field[1, 0]) < 1e-6
+
+
+def test_emission_carries_gradient_to_the_residues_that_read_it():
+    """The one route by which a loss on geometry trains the secretion head.
+
+    A loss on residue 2's concentration, two hops from residue 0, has a nonzero
+    derivative with respect to what residue 0 secreted.
+    """
+    n = 3
+    neighbours, mask = _line_graph(n)
+    emission = torch.zeros(n, EMIT_CHANNELS, requires_grad=True)
+    with torch.no_grad():
+        emission[0] = 0.5
+
+    field = initial_field(n)
+    field = diffuse(field, neighbours, mask, emission)
+    for _ in range(3):
+        field = diffuse(field, neighbours, mask, emission)
+    field[2, 0].backward()
     assert emission.grad is not None
-    assert float(emission.grad[10].abs().sum()) > 0.0
+    assert float(emission.grad[0, 0]) > 0.0
 
 
-def test_features_are_finite_at_zero_and_at_a_source():
-    """Both ends of the range are ordinary inputs, not edge cases.
+def test_dormant_slots_are_zeroed_when_a_mask_is_passed():
+    """``alive`` still zeroes dormant slots, and ``None`` means all alive.
 
-    A dormant slot reads exactly zero and a source reads exactly one, and the
-    logarithm is taken of both. Without the floor the first is minus infinity,
-    which poisons the whole batch's gradient one matmul later.
+    The mask is no longer load-bearing -- the field has no sources to place --
+    but a dormant slot must not carry a concentration something could read.
     """
-    alive, links = _chain(12, slice(0, 4))
-    field = _settle(alive, links, 10)
-    block = field_features(field)
-    assert block.shape == (12, FIELD_FEATURE_DIM)
-    assert bool(torch.isfinite(block).all())
-    assert float(block.min()) >= -1.0 - 1e-6
-    assert float(block.max()) <= 1.0 + 1e-6
+    n = 6
+    neighbours, mask = _line_graph(n)
+    alive = torch.ones(n, dtype=torch.bool)
+    alive[4:] = False
+
+    field = initial_field(n)
+    emission = _emit(n, {0: 1.0, 5: 1.0})
+    for _ in range(10):
+        field = diffuse(field, neighbours, mask, emission, alive)
+    assert float(field[0, 0]) > 0.0
+    assert float(field[4, 0]) == 0.0
+    assert float(field[5, 0]) == 0.0
 
 
-def test_a_run_of_one_is_a_source_in_both_directions():
-    """A single seed is both termini of its own run.
+def test_features_are_finite_at_zero_and_at_saturation():
+    """``field_features`` never returns minus infinity.
 
-    ``seed_alive`` starts every rollout here, so this is the state at step zero
-    of every growth run rather than a degenerate case. Written as a maximum
-    against the source term precisely so this reads one and not zero.
+    An unreached residue is the common case -- the field is zero until
+    something secretes -- so the log needs its floor, and a saturated channel
+    has to stay in range.
     """
-    alive, links = _chain(10, slice(4, 5))
-    field = diffuse(initial_field(10), alive, links, None)
-    assert float(field[4, 0]) == 1.0
-    assert float(field[4, len(NWARD_DECAYS)]) == 1.0
+    field = torch.zeros(3, FIELD_CHANNELS)
+    field[1] = 1.0
+    field[2] = 0.5
+    features = field_features(field)
+    assert features.shape == (3, FIELD_FEATURE_DIM)
+    assert torch.isfinite(features).all()
+    assert float(features[0, FIELD_CHANNELS]) < 0.0
+    assert abs(float(features[1, FIELD_CHANNELS])) < 1e-6
+
+
+def test_the_field_shape_and_the_emission_shape_are_checked():
+    """A wrong width is a loud error rather than a broadcast.
+
+    ``(R, k)`` against ``(R, C)`` broadcasts in several wrong ways, and the
+    quiet ones produce a field that trains.
+    """
+    import pytest
+
+    n = 4
+    neighbours, mask = _line_graph(n)
+    with pytest.raises(ValueError, match="field must be"):
+        diffuse(torch.zeros(n, FIELD_CHANNELS + 1), neighbours, mask)
+    with pytest.raises(ValueError, match="neighbours and edge_mask"):
+        diffuse(initial_field(n), neighbours, mask[:-1])
+    with pytest.raises(ValueError, match="emission must be"):
+        diffuse(initial_field(n), neighbours, mask, torch.zeros(n, 1))

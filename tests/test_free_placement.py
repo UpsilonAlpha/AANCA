@@ -225,9 +225,18 @@ def test_free_placement_trains_the_heads_that_remain(ubiquitin):
 def test_the_field_is_carried_and_reaches_beyond_the_perception_cutoff(ubiquitin):
     """The field's whole purpose, asserted on a real rollout.
 
-    A 10 A cutoff reaches three or four residues along a helix. The field has
-    to reach further than that along the chain, because the pairs it exists to
-    connect are the ones the cutoff has already dropped.
+    The chemical spreads over the perception graph, so what it reaches is the
+    neighbourhood the rule currently has -- not a fixed number of residues
+    along the chain. The old chain-transported field advanced exactly one
+    residue per hop from each run's N-terminus, and this test used to pin that
+    number; it was the positional encoding the field was replaced for
+    (``docs/claims/the-chain-transported-morphogen-is-a-positional-encoding.md``).
+
+    What is pinned instead: the field is carried, it is finite, it is confined
+    to residues that are alive, and an untrained emit head secretes everywhere,
+    so every alive residue holds a concentration. The last part is the one that
+    would catch a dead wiring -- a field that never left zero would pass a
+    "finite and confined" check trivially.
     """
     topo, coords, _links = ubiquitin
     rule = AANCARule(growth=True, birth="free", morphogen=True)
@@ -235,15 +244,6 @@ def test_the_field_is_carried_and_reaches_beyond_the_perception_cutoff(ubiquitin
         steps=20, truncate=99, k=24,
         growth=GrowthConfig(seeds=1, birth="free", placement_steps=4),
     )
-    # **The field conducts through alive residues only, so it reaches exactly
-    # as far as the chain has been grown and no further.** That is a real limit
-    # and it is recorded here rather than hidden: a field cannot connect two
-    # residues the growing structure has not yet connected covalently, so two
-    # separately seeded segments have separate fields until they fuse. What it
-    # does connect is two residues far apart *in sequence* on one grown run --
-    # which is the case where the 10 A cutoff has dropped the edge and the
-    # chain between them exists. So the reach is measured on a grown stretch
-    # rather than on one the rollout has to grow first.
     alive = torch.zeros(topo.n_residues, dtype=torch.bool)
     alive[20:50] = True
     result = rollout(
@@ -256,12 +256,18 @@ def test_the_field_is_carried_and_reaches_beyond_the_perception_cutoff(ubiquitin
     )
     field = result.state.morphogen
     assert field is not None
-    carrying = int((field[:, 0] > 0).sum())
-    # One residue per hop from the run's N-terminus, so twenty steps carries it
-    # twenty residues -- five times what a 10 A cutoff reaches along a helix,
-    # and the pairs this exists for are the ones that cutoff has dropped.
-    assert carrying == 20, f"the field reached {carrying} residues in 20 steps"
     assert bool(torch.isfinite(field).all())
+
+    grown = result.state.alive
+    carrying = field[:, 0] > 0
+    # Confined to the grown structure: a dormant slot has no atoms in
+    # perception and must not hold a concentration anything could read.
+    assert int((carrying & ~grown).sum()) == 0
+    # And every alive residue is carrying, because an untrained sigmoid emit
+    # head secretes about 0.5 everywhere. This is what fails if the field is
+    # never diffused or never secreted into.
+    assert int(carrying.sum()) == int(grown.sum())
+    assert float(field.max()) > 0.5
 
 
 def test_a_rule_without_the_field_carries_none(ubiquitin):

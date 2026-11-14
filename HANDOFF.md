@@ -215,17 +215,18 @@ deliverable, and not a number to chase on its own.
 7. **The `[environment]` block** in `snapshot()`. A fourth undiagnosed
    per-update rate: 3.2 s/update on mi300x against 0.85 on mi355x.
 
-**Superseded by the rescope, and recorded rather than deleted:** the
-chain-transported morphogen. Under `birth="none"`, which every arm since g9
-runs, nothing is dormant, every bond conducts, and the transported groups
-converge to `decay ** index` to 1.2e-07 -- a positional encoding by the module's
-own stated test, whose logarithm is a linear sequence coordinate at four
-resolutions from both termini. Ulban, 14 Nov: transport should not run along the
-chain, because the residue graph is spatial. What survives is the emitted group
-diffused over the perception graph's existing edges, which drops 8 of the 10
-channels and needs no second topology
-(`docs/claims/the-chain-transported-morphogen-is-a-positional-encoding.md`).
-`morphogen = false` in every arm, so nothing is locked and it is not queued.
+**Replaced 14 Nov, on Ulban's instruction:** the morphogen is now one secreted
+chemical spreading over the perception graph -- `field_new = EMIT_DECAY * mean
+over perceived neighbours + secretion`, with `diffuse` taking
+`graph.neighbours` and `edge_mask` instead of `links`. Both chain-transported
+groups are gone; they converged to `decay ** index` and were a positional
+encoding. `FIELD_NODE_EXTRA` 20 -> 4, one mechanism rather than three, no
+sources and no alive mask required. Verified end to end on 1UBQ: 33 alive, 33
+carrying, 0 outside alive, 0.90-0.92. **Open choice:** the field has no memory,
+so a pulse dies and only persistent sources hold a concentration; real
+diffusion is `c + D * (mean - c)` plus a degradation term
+(`docs/claims/the-emitted-chemical-diffuses-over-the-perception-graph.md`).
+`morphogen = false` in every arm, so nothing is waiting on it.
 
 **Demoted by the rescope**, and recorded as such rather than dropped:
 ensemble-dispersion spread and the B-factor Spearman. A positive result there

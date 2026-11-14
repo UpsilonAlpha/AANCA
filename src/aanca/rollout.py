@@ -307,7 +307,11 @@ def initial_state(
     age = None
     if alive is not None:
         age = torch.zeros(coords.shape[0], dtype=torch.long, device=coords.device)
-    if alive is not None and getattr(rule, "morphogen", False):
+    # No longer gated on ``alive``. The old field's sources were the termini of
+    # each alive covalent run, so it was meaningless without a mask; a secreted
+    # chemical has no sources until the rule makes one, so a packing rollout can
+    # carry it too.
+    if getattr(rule, "morphogen", False):
         morphogen = initial_field(coords.shape[0], coords.device, dtype)
     return RolloutState(
         coords=coords,
@@ -626,22 +630,27 @@ def step_once(
             # rollout is placing side chains and must keep them.
             coords = blind_coords(coords, topo)
 
-    # One hop of transport, after the rule has run and with the secretion it
+    # One hop of diffusion, after the rule has run and with the secretion it
     # just chose. Placed here rather than before perception so a residue reads
-    # the field its neighbourhood had when it decided, and the field it
-    # produces is what the *next* step reads -- the same one-step lag the
-    # hidden state has, for the same reason.
+    # the chemical its neighbourhood had when it decided, and what it produces
+    # is what the *next* step reads -- the same one-step lag the hidden state
+    # has, for the same reason.
+    #
+    # **Over this step's graph**, which is why it is here and not in a helper:
+    # ``graph.neighbours`` was selected from the coordinates the rule has just
+    # moved, so the chemical spreads over the structure as it currently is. No
+    # alive mask is required any more -- the old field was clamped at the
+    # termini of each alive run and was zero without one, where this is zero
+    # until something secretes.
     morphogen = state.morphogen
     if morphogen is not None:
-        if alive is None:
-            raise ValueError(
-                "this rollout carries a morphogen field but no alive mask. "
-                "The field's sources are the termini of each alive covalent "
-                "run, so without the mask there are no sources and the field "
-                "would stay zero for the whole rollout "
-                "(aanca.rollout; see aanca.morphogen)."
-            )
-        morphogen = diffuse(morphogen, alive, links, rule.emit(node, hidden))
+        morphogen = diffuse(
+            morphogen,
+            graph.neighbours,
+            edge_mask,
+            rule.emit(node, hidden),
+            alive,
+        )
 
     identity, logits = state.identity, None
     if state.identity is not None:

@@ -97,7 +97,11 @@ graph with nothing added -- i to i+4 CA in a helix is about 6 A, inside the
 cutoff, so a backbone hydrogen bond is already an edge once the fold is roughly
 right ([[the-clash-term-does-not-see-the-ramachandran-plot]]).
 
-So this node records a design correction, not work to do.
+**Built on 14 Nov, after this node was written.** Ulban asked for it directly,
+so the spatial version exists:
+[[the-emitted-chemical-diffuses-over-the-perception-graph]] carries the
+arithmetic -- 20 node features down to 4 -- and the end-to-end check. What this
+node records is why the old one went.
 
 ## Supports
 - [[a-local-per-residue-rule-can-build-a-protein-backbone]]
