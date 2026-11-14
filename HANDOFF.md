@@ -195,17 +195,24 @@ deliverable, and not a number to chase on its own.
    make the pool's two new failure paths fall back to a fresh baseline draw
    rather than `continue`
    (`docs/claims/a-skipped-update-silently-skips-its-evaluation.md`).
-6. **The clash term's i/i+1 exemption, which is Ulban's call.** `clash` drops
-   the whole bonded residue pair, so the 11 atom pairs at or beyond
-   `CLASH_MIN_SEPARATION` -- the ones phi and psi control -- are not scored, and
-   a single-residue (phi, psi) scan reads flat over the entire plane against the
-   crystal floor. **Nothing in the objective forbids an impossible backbone**,
-   and the 7 Nov argument that clash subsumes Ramachandran is overturned
-   (`docs/claims/the-clash-term-does-not-see-the-ramachandran-plot.md`).
-   Narrowing the exemption makes Ramachandran emerge from sterics, which is the
-   right shape; a tabulated (phi, psi) potential is not. It changes every future
-   arm's objective, so it is pre-registered nowhere yet.
-6. **The `[environment]` block** in `snapshot()`. A fourth undiagnosed
+6. **Nothing in the objective forbids an impossible backbone, and nothing
+   cheap will.** `clash` dropped the bonded residue pair whole, so the 15 atom
+   pairs at or beyond `CLASH_MIN_SEPARATION` -- the ones phi and psi control --
+   were unscored, and a single-residue (phi, psi) scan read flat across the
+   whole plane. Narrowing the exemption is now available as `clash_bonded`,
+   default off, and **it changes nothing measurable**: those pairs are four or
+   more bonds apart precisely because they are far apart, and at Bondi
+   heavy-atom radii they never reach contact -- a bonded pair on crystal
+   ubiquitin reads exactly 0.0 under the switch at tolerance zero. The
+   Ramachandran exclusions are carried largely by hydrogens this representation
+   does not have. So a heavy-atom clash term cannot produce the plot at this
+   resolution either way
+   (`docs/claims/the-clash-term-does-not-see-the-ramachandran-plot.md`), and the
+   phi/psi preference has to be **learned** -- which is `g22_random`'s second
+   bucket, not a new term. No tabulated Ramachandran potential and no
+   electrostatic term: both would supply the preference that bucket exists to
+   detect.
+7. **The `[environment]` block** in `snapshot()`. A fourth undiagnosed
    per-update rate: 3.2 s/update on mi300x against 0.85 on mi355x.
 
 **Demoted by the rescope**, and recorded as such rather than dropped:

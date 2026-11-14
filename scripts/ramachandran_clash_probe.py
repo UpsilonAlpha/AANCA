@@ -92,6 +92,15 @@ def main() -> int:
             "steric question the Ramachandran plot is about"
         ),
     )
+    parser.add_argument(
+        "--bonded", action="store_true",
+        help=(
+            "pass bonded_pairs=True, i.e. score the 15 i/i+1 atom pairs at or "
+            "beyond CLASH_MIN_SEPARATION instead of dropping the bonded "
+            "residue pair whole. This is the switch the probe exists to "
+            "evaluate"
+        ),
+    )
     parser.add_argument("--seed", type=int, default=0)
     args = parser.parse_args()
 
@@ -119,7 +128,8 @@ def main() -> int:
     print(f"{len(pool)} on disk, {len(indices)} crops, "
           f"ids {[pool[i].pdb_id for i in indices]}")
     print(f"window {args.damage}, clash tolerance {args.tolerance} A, "
-          f"grid {args.step} deg, scope {args.scope}")
+          f"grid {args.step} deg, scope {args.scope}, "
+          f"bonded_pairs {args.bonded}")
 
     rng = random.Random(args.seed)
     crops = []
@@ -154,7 +164,8 @@ def main() -> int:
                 if args.scope == "all" else damaged
             )
             floor.append(float(backbone_clash_loss(
-                native, topo, alive, links, args.tolerance
+                native, topo, alive, links, args.tolerance,
+                bonded_pairs=args.bonded,
             )))
     crystal = sum(floor) / len(floor)
     print(f"crystal floor on these crops: {crystal:.5f} A\n")
@@ -179,7 +190,8 @@ def main() -> int:
                             if args.scope == "all" else damaged
                         )
                         scores.append(float(backbone_clash_loss(
-                            start, topo, alive, links, args.tolerance
+                            start, topo, alive, links, args.tolerance,
+                            bonded_pairs=args.bonded,
                         )))
                     mean = sum(scores) / len(scores)
                     rows.append((float(phi), float(psi), mean,

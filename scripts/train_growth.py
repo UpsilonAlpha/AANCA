@@ -282,6 +282,7 @@ def score(rule, dataset, indices, args, config, seed: int = 0) -> dict[str, floa
                 move_weight=args.move_weight,
                 clash_weight=args.clash_weight,
                 clash_tolerance=args.clash_tolerance,
+                clash_bonded=args.clash_bonded,
                 pairwise_weight=args.pairwise_weight,
             )
             sums["total"] += float(terms.total)
@@ -532,6 +533,20 @@ def build_schema() -> argparse.ArgumentParser:
             "break them. 0.5 zeroes that floor (1.5e-05) while still seeing a "
             "damaged window at 150x it. AF2's 1.5 is too permissive here -- the "
             "window reads exactly zero"
+        ),
+    )
+    parser.add_argument(
+        "--clash-bonded", action="store_true",
+        help=(
+            "score the i/i+1 atom pairs that are at or beyond "
+            "CLASH_MIN_SEPARATION instead of dropping the bonded residue pair "
+            "whole. 15 of the 25 pairs over N, CA, C, O, CB qualify, and they "
+            "are the contacts phi and psi control -- so without this the term "
+            "reads FLAT over the whole Ramachandran plane and nothing in the "
+            "objective forbids an impossible backbone. Off by default only so "
+            "g1-g22 reproduce; it raises the crystal floor, so re-read the "
+            "floor before choosing a weight. See "
+            "docs/claims/the-clash-term-does-not-see-the-ramachandran-plot.md"
         ),
     )
     parser.add_argument(
@@ -1211,6 +1226,7 @@ def main() -> int:
             move_weight=args.move_weight,
             clash_weight=args.clash_weight,
             clash_tolerance=args.clash_tolerance,
+            clash_bonded=args.clash_bonded,
             pairwise_weight=args.pairwise_weight,
             # **Training only.** The held-out evaluation above keeps the clamp
             # unconditionally, because a reported `fape` has to mean the same

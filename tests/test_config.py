@@ -300,6 +300,10 @@ HISTORICAL_DEFAULTS = {
     # A key added to both sides of a comparison passes it trivially, which is
     # the self-referential failure this file was rewritten to stop, so the
     # distinction is recorded rather than left to look like the rest.
+    # Same kind of assertion as the two below: `clash_bonded` did not exist
+    # when the arms ran, and False reproduces them because dropping the
+    # bonded residue pair whole is exactly what the old code did.
+    "clash_bonded": False,
     "pool_probability": 0.0, "steps_min": 0,
     "placement_rotation": 3.14159265, "placement_steps": 0,
     "placement_translation": 4.0, "reach_weight": 0.086, "seed": 0,

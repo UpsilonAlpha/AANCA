@@ -22,7 +22,7 @@ Ramachandran restraint on 7 Nov as redundant:
 The physics in that sentence is right. The claim that `backbone_clash_loss`
 delivers it is not.
 
-## One line of `steric.py` removes the shadow
+## One line of `steric.py` was the first suspect
 
     bonded = torch.nonzero(links[: n_res - 1], as_tuple=False).flatten()
     near[bonded, bonded + 1] = False
@@ -33,16 +33,21 @@ reason, and it is sound for *part* of the block: pairs one to three bonds across
 the peptide bond have distances that psi and omega fix, and
 `peptide_bond_restraint` already holds them.
 
-But 11 of those 25 pairs are **four or more bonds apart**, which is
+But **15** of those 25 pairs are four or more bonds apart, which is
 `CLASH_MIN_SEPARATION`, the project's own threshold for what counts as a steric
 observation: O(i)-CB(i+1), CA(i)-CB(i+1), CB(i)-CA(i+1), CB(i)-CB(i+1),
-N(i)-CA(i+1), O(i)-O(i+1), CA(i)-C(i+1), O(i)-C(i+1) and the rest. Those are
+N(i)-CA(i+1), O(i)-O(i+1), CA(i)-C(i+1), O(i)-C(i+1) and eight more --
+enumerated in `GROWTH_DEPTH_TO_C` / `GROWTH_DEPTH_TO_N`, which count the
+separation through the bond as `to_c[a] + 1 + to_n[b]` rather than by hand; an
+earlier version of this node said 11, counted by hand, and was wrong. Those
+are
 precisely the contacts whose distances **phi and psi control**, and they are the
 ones that carve the Ramachandran plot's forbidden regions. Dropping the block
 "in full" throws them out with the exempt ones.
 
 So the term cannot be the shadow of Ramachandran: the pairs that cast the
-shadow are not scored.
+shadow are not scored. **That turned out to be true and not sufficient** --
+scoring them changes nothing measurable, for the reason two sections down.
 
 ## Measured, and it is flat
 
@@ -90,31 +95,73 @@ through the favoured boxes too.
 keeps `--damage` and `--scope` as flags so both readings are reproducible, and
 `--damage 1 --scope all` is the one that means what it says.
 
-## What follows, and what it is not
+## Narrowing the exemption does not fix it either, and that is the real result
 
-The honest fix is **narrower and more physical than a Ramachandran table**, and
-it is the one the 7 Nov node already claimed was in place: exempt only the
-i/i+1 atom pairs that are within `CLASH_MIN_SEPARATION` bonds and score the
-remaining 11. Then the Ramachandran plot emerges from sterics, which is the
-right shape for this project -- a tabulated (phi, psi) potential is an
-engineered feature, and the preference here is to let the rule meet the physics
-([[the-objective-should-restrain-the-output-not-teach-the-placement]]).
+`backbone_clash_loss(..., bonded_pairs=True)` keeps the bonded residue pair and
+exempts only the atom pairs under `CLASH_MIN_SEPARATION`, wired as the config
+key `clash_bonded`, default `false` so g1-g22 reproduce. The 15 pairs are now in
+the sum -- `tests/test_backbone_clash.py` proves it by collapsing a bonded pair,
+where the switch charges and the default stays silent.
 
-Two things this does **not** establish:
+**It changes nothing measurable.** Rescanned with `--bonded`: still flat, 0.3 to
+12.7 milli-A over the whole plane, ratio 0.79x, `(0, 180)` at 1.1 against an
+ordinary `(-180, 120)` at 11.5. And on crystal ubiquitin a bonded pair reads
+**exactly 0.0** under the switch at tolerance zero, not merely small.
 
-  * **That any arm has produced an impossible backbone.** Nothing forbids one,
-    which is a different statement. The `twist` diagnostic is a mean over
-    bonded-pair relative rotations and would not show it, and no arm's output
-    torsions have ever been read against the plot. That measurement needs a
-    checkpoint and Bunya is offline.
-  * **That the alpha-versus-beta preference comes free.** It does not; it is
-    partly electrostatic, the 7 Nov node says so, and no steric term supplies
-    it. That part should be **learned**, and whether it is learned is bucket 2
-    of `g22_random`
-    ([[the-start-state-hands-the-rule-its-secondary-structure]]).
+That last number is the explanation. The pairs phi and psi control are four or
+more bonds apart *because* they are far apart, and at Bondi heavy-atom radii
+they never reach contact -- 2 x 1.52 = 3.04 A for two oxygens against a real
+O(i)-O(i+1) distance well above it. The Ramachandran plot's exclusions are
+carried largely by **hydrogens**, which this representation does not have, and
+by effective radii tighter than heavy-atom vdW. So:
 
-Changing the exemption set alters the objective of every future arm, so it is
-pre-registered nowhere yet and is Ulban's call.
+**A heavy-atom clash term cannot produce the Ramachandran plot at this
+resolution, with the exemption or without it.** The 7 Nov argument was wrong in
+a deeper way than the exemption: it is not that one line dropped the shadow, it
+is that the representation does not cast it.
+
+Two caveats on the scan, kept because they bound what it proves. A
+**one-residue** window is placed by a walk from its N-ward neighbour and
+[[the-damaged-region-must-start-within-reach-of-where-it-belongs]] records that
+the C-ward join is deliberately left open, so the scanned residue has a dangling
+bond on one side and some room that a closed backbone would not give it. A
+closed-tripeptide sweep -- the experiment Ramachandran actually ran -- would
+measure this without that slack. It is worth doing only to put a number on how
+much of the flatness is the open join and how much is the missing hydrogens; it
+will not change the conclusion, because the crystal-geometry reading of exactly
+0.0 has no open join in it at all.
+
+## So the phi/psi preference has to be learned, which is where this lands
+
+Ulban, 14 Nov, on this and on electrostatics: *"electrostatic interactions
+should be learned or through morphogen gradients"*, and *"we want a simple AANCA
+model that can hopefully learn real physics"*. That settles the direction, and
+the measurements above say it is the only direction available anyway.
+
+  * **No tabulated (phi, psi) potential.** It would supply the
+    alpha-versus-beta preference that `g22_random`'s second bucket exists to
+    detect being learned
+    ([[the-start-state-hands-the-rule-its-secondary-structure]]), so adding it
+    would make the project's own result unmeasurable.
+  * **No electrostatic term.** Same reason, and the preference is partly
+    electrostatic.
+  * **`clash_bonded` stays available and off.** It is a correction to a term
+    that was provably blind on 15 pairs, worth having in the tree, and it buys
+    no measured constraint -- so switching it on in an arm needs a reason this
+    node does not supply.
+  * **The route for electrostatics is the perception graph, not a new
+    channel.** Backbone hydrogen bonding is through-space and short: i to i+4
+    CA in a helix is about 6 A, inside the 10 A cutoff, so the partner is
+    already an edge once the fold is roughly right and the rule can learn the
+    interaction from one hop with nothing added. Morphogens transport along the
+    **chain** rather than through space, by design -- that is the deficit they
+    were built for -- so the emitted channels are a bootstrap for getting the
+    fold roughly right, not a carrier for Coulomb. `morphogen = false` in every
+    arm to date, and keeping it off is consistent with a simple rule.
+
+So nothing in the objective forbids an impossible backbone, deliberately. The
+question that replaces it is whether the rule produces one anyway, and that is a
+measurement on output torsions, not a term.
 
 ## Supports
 - [[a-local-rule-can-regenerate-a-damaged-region-from-its-surviving-context]]

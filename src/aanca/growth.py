@@ -1713,6 +1713,7 @@ def growth_objective(
     move_weight: float = 0.0,
     clash_weight: float = 0.0,
     clash_tolerance: float = 0.5,
+    clash_bonded: bool = False,
     pairwise_weight: float = 0.0,
     resume_from: "GrowthPoolEntry | None" = None,
 ) -> tuple[GrowthTerms, object]:
@@ -1972,7 +1973,8 @@ def growth_objective(
         from .steric import backbone_clash_loss
 
         clash_term = backbone_clash_loss(
-            final.coords, topo, alive, links, tolerance=clash_tolerance
+            final.coords, topo, alive, links, tolerance=clash_tolerance,
+            bonded_pairs=clash_bonded,
         ).to(fape.dtype)
 
     # The ceiling check. Zero unless asked for, and `placement_loss` carries

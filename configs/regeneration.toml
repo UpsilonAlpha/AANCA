@@ -29,6 +29,7 @@ activation = "sample"
 activation_init = -2.0
 birth = "none"  # "none": every slot alive from step 0, so nothing is grown and the window places itself
 bond_weight = 0.122
+clash_bonded = false  # score the 15 i/i+1 pairs at or beyond CLASH_MIN_SEPARATION; false is the behaviour under which clash reads FLAT over the Ramachandran plane
 clash_tolerance = 0.5
 clash_weight = 1.0
 clip = 1.0

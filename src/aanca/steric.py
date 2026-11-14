@@ -352,6 +352,20 @@ GROWTH_CLASH_ATOMS = rc.BACKBONE_ATOMS | {"CB"}
 #: bound with a little room, not a tuned value.
 GROWTH_CUTOFF = 9.0
 
+#: Bonds from each growth atom to its own residue's C, and to its own N. Used
+#: only to count separation **across a peptide bond**, where the path from an
+#: atom of residue i to an atom of residue i+1 runs
+#: ``a -> C(i) -> N(i+1) -> b``, so the separation is
+#: ``to_c[a] + 1 + to_n[b]``.
+#:
+#: Written out rather than derived from a bond graph because the growth
+#: representation is five fixed atoms with a fixed topology: N-CA-C with O on C
+#: and CB on CA. A table that small is clearer read than computed, and
+#: ``tests/test_backbone_clash.py`` pins every entry against the separations
+#: ``residue_constants`` reports for the all-atom path.
+GROWTH_DEPTH_TO_C: dict[str, int] = {"N": 2, "CA": 1, "C": 0, "O": 1, "CB": 2}
+GROWTH_DEPTH_TO_N: dict[str, int] = {"N": 0, "CA": 1, "C": 2, "O": 3, "CB": 2}
+
 
 @lru_cache(maxsize=32)
 def _growth_atom_tables(
@@ -366,6 +380,10 @@ def _growth_atom_tables(
     n_res = len(atom_names)
     is_growth = torch.zeros(n_res, MAX_ATOMS, dtype=torch.bool)
     radii = torch.zeros(n_res, MAX_ATOMS, dtype=torch.float64)
+    # Large enough that an atom which is not one of the five can never fall
+    # under CLASH_MIN_SEPARATION by accident; ``is_growth`` excludes it anyway.
+    to_c = torch.full((n_res, MAX_ATOMS), 99, dtype=torch.int64)
+    to_n = torch.full((n_res, MAX_ATOMS), 99, dtype=torch.int64)
     for r, names in enumerate(atom_names):
         for i, name in enumerate(names):
             if name in GROWTH_CLASH_ATOMS:
@@ -373,7 +391,9 @@ def _growth_atom_tables(
                 # The same Bondi radii the all-atom term uses, so the two
                 # numbers are on one scale and comparable with the literature's.
                 radii[r, i] = rc.vdw_radius(name)
-    return is_growth, radii
+                to_c[r, i] = GROWTH_DEPTH_TO_C[name]
+                to_n[r, i] = GROWTH_DEPTH_TO_N[name]
+    return is_growth, radii, to_c, to_n
 
 
 def backbone_clash_loss(
@@ -382,6 +402,7 @@ def backbone_clash_loss(
     alive: Tensor,
     links: Tensor,
     tolerance: float = 0.0,
+    bonded_pairs: bool = False,
 ) -> Tensor:
     """Mean angstroms of van der Waals overlap per scored backbone-or-CB atom.
 
@@ -416,13 +437,34 @@ def backbone_clash_loss(
       under :data:`residue_constants.CLASH_MIN_SEPARATION` and none is a steric
       observation. The neighbour list's ``triu(diagonal=1)`` drops them
       wholesale rather than naming them.
-    * **across a peptide bond** -- the i/i+1 block in full, wherever ``links``
-      says the two residues are bonded. C(i)-N(i+1) is one bond, and the pairs
-      that reach four bonds across it (CA(i)-C(i+1), O(i)-C(i+1), N(i)-CA(i+1))
-      still have distances that psi and omega fix, not ones a clash term should
-      have an opinion about -- ``peptide_bond_restraint`` already holds them.
-      Left in, they are a near-constant offset that no gradient relieves and
-      that would have to be subtracted by hand to read the term at all.
+    * **across a peptide bond** -- under ``bonded_pairs=False``, the default,
+      the i/i+1 block **in full** wherever ``links`` says the two residues are
+      bonded.
+
+      **That default is wrong and is kept only for reproducibility.** Dropping
+      the block whole also drops every i/i+1 pair at or beyond
+      ``CLASH_MIN_SEPARATION``, and those are the contacts whose distances phi
+      and psi control -- which is to say the ones that carve the Ramachandran
+      plot. With them gone the term reads flat over the whole (phi, psi) plane,
+      so nothing in the objective forbids a sterically impossible backbone; a
+      single-residue scan measured 2.4 to 16.7 milli-A across the entire plane
+      against a 2.59 crystal floor, with (0, 180) scoring *lower* than ordinary
+      conformations. See
+      ``docs/claims/the-clash-term-does-not-see-the-ramachandran-plot.md``.
+
+      ``bonded_pairs=True`` keeps the bonded residue pair and exempts only the
+      atom pairs **under** ``CLASH_MIN_SEPARATION``, counted through the peptide
+      bond as ``GROWTH_DEPTH_TO_C[a] + 1 + GROWTH_DEPTH_TO_N[b]``. The pairs
+      that stay exempt are the ones psi and omega fix and
+      ``peptide_bond_restraint`` already holds; left in, they are a
+      near-constant offset no gradient relieves. The rest are scored, so the
+      Ramachandran constraint **emerges from sterics** rather than being
+      supplied as a tabulated (phi, psi) potential -- which is the point, since
+      a table would also hand over the alpha-versus-beta preference that is
+      meant to be learned.
+
+      It raises the crystal floor, because real structures hold some of those
+      contacts tight; ``tests/test_backbone_clash.py`` pins the new floor.
 
     Unweighted, like the bond term, because it is a physical quantity whose
     value on a crystal structure is known.
@@ -434,9 +476,11 @@ def backbone_clash_loss(
             f"got {tuple(coords.shape)}"
         )
     device = coords.device
-    is_growth, radii = _growth_atom_tables(topo.torsion.atom_names)
+    is_growth, radii, to_c, to_n = _growth_atom_tables(topo.torsion.atom_names)
     is_growth = is_growth.to(device)
     radii = radii.to(device=device, dtype=coords.dtype)
+    to_c = to_c.to(device)
+    to_n = to_n.to(device)
     # An atom is scored only if it exists, is one of the five, and its residue
     # is alive. A dead slot's coordinates are a parking position, not a claim
     # about where anything is.
@@ -459,13 +503,31 @@ def backbone_clash_loss(
         # ``links[i]`` says residue i is bonded to i + 1, the same convention
         # ``peptide_bond_restraint`` uses.
         bonded = torch.nonzero(links[: n_res - 1], as_tuple=False).flatten()
-        near[bonded, bonded + 1] = False
+        if not bonded_pairs:
+            near[bonded, bonded + 1] = False
         pairs = near.nonzero(as_tuple=False)
 
     total = coords.new_zeros(())
     if pairs.numel():
         i, j = pairs[:, 0], pairs[:, 1]
         scored = scored_atom[i].unsqueeze(-1) & scored_atom[j].unsqueeze(-2)
+        if bonded_pairs:
+            # Only the pairs that are a peptide bond apart need the separation
+            # test; everything else in the list is two residues with no
+            # covalent route between them, so every atom pair is a steric
+            # observation. ``near`` is upper-triangular, so a bonded pair is
+            # always (i, i+1) in that order and the depth tables are not
+            # symmetric -- i contributes its distance to C, i+1 its distance
+            # to N.
+            across = (j == i + 1) & links[i].to(torch.bool)
+            if bool(across.any()):
+                separation = (
+                    to_c[i].unsqueeze(-1) + 1 + to_n[j].unsqueeze(-2)
+                )
+                allowed = separation >= rc.CLASH_MIN_SEPARATION
+                scored = scored & torch.where(
+                    across.view(-1, 1, 1), allowed, torch.ones_like(allowed)
+                )
         bound = radii[i].unsqueeze(-1) + radii[j].unsqueeze(-2) - tolerance
         total = total + _overlap(coords[i], coords[j], bound, scored)
 

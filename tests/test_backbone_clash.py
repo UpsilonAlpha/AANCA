@@ -268,3 +268,107 @@ def test_dead_residues_are_ignored(ubiquitin):
     none_loss = backbone_clash_loss(moved, topo, nobody, links)
     assert float(none_loss) == 0.0
     assert none_loss.shape == ()
+
+
+def test_the_depth_tables_count_separation_through_the_peptide_bond():
+    """15 of the 25 i/i+1 pairs are steric observations, and these are them.
+
+    Pinned by name rather than by count alone, because the count is what a
+    hand tally gets wrong -- an early version of
+    ``docs/claims/the-clash-term-does-not-see-the-ramachandran-plot.md`` said
+    11. The path from an atom of residue i to one of residue i+1 runs
+    ``a -> C(i) -> N(i+1) -> b``, so the separation is
+    ``to_c[a] + 1 + to_n[b]``.
+    """
+    from aanca import residue_constants as rc
+    from aanca.steric import GROWTH_DEPTH_TO_C, GROWTH_DEPTH_TO_N
+
+    names = ("N", "CA", "C", "O", "CB")
+    scored = {
+        f"{a}-{b}"
+        for a in names
+        for b in names
+        if GROWTH_DEPTH_TO_C[a] + 1 + GROWTH_DEPTH_TO_N[b]
+        >= rc.CLASH_MIN_SEPARATION
+    }
+    assert scored == {
+        "N-CA", "N-C", "N-O", "N-CB",
+        "CA-C", "CA-O", "CA-CB",
+        "C-O",
+        "O-C", "O-O", "O-CB",
+        "CB-CA", "CB-C", "CB-O", "CB-CB",
+    }
+    # The exempt ten are the ones psi and omega fix, which
+    # ``peptide_bond_restraint`` already holds.
+    assert len(scored) == 15
+
+
+def test_bonded_pairs_scores_the_distant_pairs_and_only_those(ubiquitin):
+    """``bonded_pairs=True`` really does score the 15 distant pairs -- and on a
+    crystal backbone they charge NOTHING, which is the finding.
+
+    The default drops the bonded pair whole, so a bonded pair reads 0.0 however
+    it is deformed. Under ``bonded_pairs=True`` it still reads 0.0 at crystal
+    geometry, even at tolerance zero: the 15 pairs that are four or more bonds
+    apart sit comfortably outside their van der Waals bounds in a real
+    structure. Collapse the two residues onto each other and the switch charges
+    while the default stays silent, which is what proves the pairs are in the
+    sum at all.
+    """
+    topo, coords, links = ubiquitin
+    n_res = topo.n_residues
+
+    bonded = torch.zeros(n_res, dtype=torch.bool)
+    bonded[10] = True
+    bonded[11] = True
+    assert float(backbone_clash_loss(coords, topo, bonded, links)) == 0.0
+    assert float(
+        backbone_clash_loss(coords, topo, bonded, links, bonded_pairs=True)
+    ) == 0.0
+
+    # Residue 11's atoms dropped onto residue 10's CA. The peptide bond is
+    # nonsense here; the point is only that the pairs are scored.
+    squeezed = coords.clone()
+    squeezed[11] = coords[10, topo.frame_idx[10, 1]]
+    assert float(backbone_clash_loss(squeezed, topo, bonded, links)) == 0.0
+    assert float(
+        backbone_clash_loss(squeezed, topo, bonded, links, bonded_pairs=True)
+    ) > 0.1
+
+
+def test_bonded_pairs_leaves_non_bonded_pairs_alone(ubiquitin):
+    """The switch touches only pairs ``links`` calls bonded.
+
+    Residues 30 and 32 are not bonded, so every atom pair between them is a
+    steric observation under either setting and the two readings must agree
+    exactly. Without this, a bug in the separation mask could silently change
+    every pair in the protein.
+    """
+    topo, coords, links = ubiquitin
+    skip = torch.zeros(topo.n_residues, dtype=torch.bool)
+    skip[30] = True
+    skip[32] = True
+    assert float(backbone_clash_loss(coords, topo, skip, links)) == pytest.approx(
+        float(backbone_clash_loss(coords, topo, skip, links, bonded_pairs=True))
+    )
+
+
+def test_a_whole_crystal_structure_still_scores_near_zero_with_bonded_pairs(
+    ubiquitin,
+):
+    """The floor the term is read against, with the exemption narrowed.
+
+    ``clash_bonded`` changes what a reported `clash` MEANS, so the floor has to
+    be on the record beside the default's 0.0258 A. Measured at tolerance 0 and
+    at the arm's 0.5.
+    """
+    topo, coords, links = ubiquitin
+    alive = _all_alive(topo)
+    strict = float(
+        backbone_clash_loss(coords, topo, alive, links, 0.0, bonded_pairs=True)
+    )
+    forgiving = float(
+        backbone_clash_loss(coords, topo, alive, links, 0.5, bonded_pairs=True)
+    )
+    assert strict < 0.1
+    assert forgiving < 1e-3
