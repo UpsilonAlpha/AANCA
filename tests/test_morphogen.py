@@ -11,6 +11,14 @@ a positional encoding
 So these tests pin the opposite, and the first two are the ones that matter: the
 field is **zero until the rule secretes**, and it spreads over **spatial**
 neighbours rather than bonded ones.
+
+The third arrived a day later. The first spatial version recomputed each
+residue's concentration from its neighbourhood every step, which is a relay: one
+hop around a *persistent* source, and nothing carried through a region that is
+not itself secreting. Ulban, 15 Nov, chose real diffusion, so the field now
+retains and relaxes -- ``c <- (1 - lambda)(c + D(mean - c)) + secretion`` -- and
+:func:`test_a_pulse_travels_because_the_field_has_memory` is what pins the
+difference.
 """
 
 from __future__ import annotations
@@ -19,8 +27,9 @@ import torch
 
 from aanca.model import FIELD_NODE_EXTRA
 from aanca.morphogen import (
+    DEGRADATION,
+    DIFFUSION_RATE,
     EMIT_CHANNELS,
-    EMIT_DECAY,
     FIELD_CHANNELS,
     FIELD_FEATURE_DIM,
     diffuse,
@@ -148,12 +157,15 @@ def test_a_masked_edge_does_not_conduct():
     assert float(field[2, 0]) == 0.0
 
 
-def test_one_hop_arrives_at_the_decay_and_a_second_at_its_square():
-    """The spreading is a fixed local operator, with a known rate.
+def test_one_step_moves_d_of_the_gap_and_the_source_keeps_the_rest():
+    """The spreading is a fixed local operator, with a known rate, and it keeps.
 
-    Residue 0 secretes once and stops. Residue 1 perceives only 0 and residue 2
-    perceives only 1, so the concentration at step h is ``EMIT_DECAY ** h``
-    exactly -- a mean over one neighbour is that neighbour.
+    Residue 0 secretes once and stops; residue 1 perceives only 0, so a mean
+    over one neighbour is that neighbour and the arithmetic is exact. Both
+    halves are asserted, because the second is the whole change: residue 0 does
+    not drop to zero the moment it stops secreting, it retains ``1 - D`` of
+    what it held. Residue 0 perceives nobody, so its own mean is zero and it
+    reads back exactly the number residue 1 receives.
     """
     n = 3
     neighbours = torch.zeros(n, 1, dtype=torch.long)
@@ -164,10 +176,11 @@ def test_one_hop_arrives_at_the_decay_and_a_second_at_its_square():
     field = initial_field(n)
     field = diffuse(field, neighbours, mask, _emit(n, {0: 1.0}))
     assert float(field[0, 0]) == 1.0
+
     field = diffuse(field, neighbours, mask)
-    assert abs(float(field[1, 0]) - EMIT_DECAY) < 1e-6
-    field = diffuse(field, neighbours, mask)
-    assert abs(float(field[2, 0]) - EMIT_DECAY**2) < 1e-6
+    one_step = (1.0 - DEGRADATION) * DIFFUSION_RATE
+    assert abs(float(field[1, 0]) - one_step) < 1e-6
+    assert abs(float(field[0, 0]) - one_step) < 1e-6  # retained, not forgotten
 
 
 def test_transport_uses_the_receivers_list_and_is_not_symmetrised():
@@ -185,38 +198,98 @@ def test_transport_uses_the_receivers_list_and_is_not_symmetrised():
     neighbours[1, 0], mask[1, 0] = 0, True
 
     field = initial_field(n)
-    emission = _emit(n, {0: 1.0})
-    for _ in range(5):
+    emission = _emit(n, {0: 0.5})
+    for _ in range(200):
         field = diffuse(field, neighbours, mask, emission)
-    assert abs(float(field[1, 0]) - EMIT_DECAY) < 1e-6
-    assert float(field[0, 0]) == 1.0
+
+    # And the comparison that makes it an asymmetry rather than an inequality:
+    # a lone residue with no neighbours at all, secreting the same amount,
+    # arrives at the same concentration residue 0 does. So residue 0 read
+    # nothing back from residue 1 -- a symmetrised transport would have left it
+    # higher.
+    lone_n, lone_e = torch.zeros(1, 1, dtype=torch.long), _emit(1, {0: 0.5})
+    lone_mask = torch.zeros(1, 1, dtype=torch.bool)
+    alone = initial_field(1)
+    for _ in range(200):
+        alone = diffuse(alone, lone_n, lone_mask, lone_e)
+    assert float(field[1, 0]) > 0.5
+    assert abs(float(field[0, 0]) - float(alone[0, 0])) < 1e-6
 
 
-def test_the_field_has_no_memory_so_a_pulse_dies(capsys):
-    """Each step RECOMPUTES the concentration; it does not accumulate.
+def test_a_pulse_travels_because_the_field_has_memory():
+    """The property Ulban chose on 15 Nov, and the reason for the second term.
 
-    ``field_new = EMIT_DECAY * mean(neighbours) + secretion``, so one residue
-    secreting once produces a single hop and then nothing -- the chemical is a
-    steady state around persistent sources, not a travelling wave. The old
-    chain-transported module had the same structure, so this is not a
-    regression, but it IS the open design question: real diffusion is
-    ``c + D * (mean - c)``, which keeps memory and would need a degradation
-    term to stay bounded. Recorded in
-    ``docs/claims/the-emitted-chemical-diffuses-over-the-perception-graph.md``.
+    One residue secretes once, at step 0, and nothing secretes again. Twelve
+    hops away the concentration is nonzero by step 40 -- a front propagating
+    through residues that are not themselves secreting, which is the thing a
+    relay cannot do: recomputing each residue's concentration from its
+    neighbourhood gives one hop and then silence (``git show 247d068`` for that
+    version, and the claim node for why it went).
+
+    Degradation is asserted in the same test, because a travelling signal that
+    is not bounded is the other failure: the total falls at every step and the
+    pulse is gone after 400 of them.
+
+    That total is a line-graph property and is stated as one. Transport is a
+    gather, so a residue read by fifteen neighbours is counted fifteen times
+    and the *sum* is not conserved -- on 1UBQ's real k=16 graph a single pulse's
+    total rises from 1.116 to 1.124 before it falls. What is bounded whatever
+    the degree is each residue's own concentration, because the relaxation is a
+    convex combination; and the sum is not a quantity anything reads.
     """
-    n = 4
+    n = 16
     neighbours, mask = _line_graph(n)
     field = initial_field(n)
     field = diffuse(field, neighbours, mask, _emit(n, {0: 1.0}))
-    assert float(field[0, 0]) == 1.0
-    # One hop with nothing secreting: residue 1 receives, and residue 0 -- whose
-    # only neighbour is the empty residue 1 -- is already back to zero.
-    field = diffuse(field, neighbours, mask)
-    assert abs(float(field[1, 0]) - EMIT_DECAY / 2) < 1e-6
-    assert float(field[0, 0]) == 0.0
-    # And a second hop leaves nothing anywhere upstream of it.
-    field = diffuse(field, neighbours, mask)
-    assert float(field[1, 0]) < 1e-6
+
+    totals = [float(field[:, 0].sum())]
+    reach = []
+    for step in range(1, 401):
+        field = diffuse(field, neighbours, mask)
+        totals.append(float(field[:, 0].sum()))
+        if step in (1, 40):
+            reach.append(float(field[12, 0]))
+
+    assert reach[0] == 0.0        # one step: the front has not got there yet
+    assert reach[1] > 1e-5        # forty: it has, with nothing secreting since
+    assert all(b < a for a, b in zip(totals, totals[1:]))
+    assert totals[-1] < 1e-3
+
+
+def test_a_persistent_source_reaches_a_gradient_not_a_saturated_graph():
+    """What degradation buys: a steady state that still carries information.
+
+    Diffusion alone conserves, so a source that keeps secreting into a finite
+    graph would raise every residue to the same concentration and the channel
+    would say nothing. With ``DEGRADATION`` the steady state falls off
+    geometrically, at the rate the module's own docstring predicts from ``D``
+    and ``lambda``: on a chain ``1 / (1 - lambda) = (1 - D) + D(1/r + r)/2``,
+    which is ``r = 0.519494`` at the current constants against 0.51949
+    measured, constant to five figures over residues 4 to 14.
+
+    Forty residues, not sixteen, because the prediction is for a half-infinite
+    chain and the far end reflects; the ratio is checked in the middle for the
+    same reason. The assertion is written against the constants rather than
+    against 0.5195, so retuning ``DEGRADATION`` moves the prediction with it
+    and the test keeps checking the physics instead of a number.
+    """
+    n = 40
+    neighbours, mask = _line_graph(n)
+    field = initial_field(n)
+    emission = _emit(n, {0: 1.0})
+    for _ in range(4000):
+        field = diffuse(field, neighbours, mask, emission)
+
+    column = [float(field[i, 0]) for i in range(n)]
+    assert abs(column[0] - 1.0) < 1e-6
+    assert all(b < a for a, b in zip(column, column[1:]))  # a gradient
+    assert column[-1] < 0.05                               # a finite reach
+
+    gap = (1.0 / (1.0 - DEGRADATION)) - (1.0 - DIFFUSION_RATE)
+    root = gap * 2.0 / DIFFUSION_RATE
+    predicted = (root - (root**2 - 4.0) ** 0.5) / 2.0
+    for i in range(4, 13):
+        assert abs(column[i + 1] / column[i] - predicted) < 0.001
 
 
 def test_emission_carries_gradient_to_the_residues_that_read_it():

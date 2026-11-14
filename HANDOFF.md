@@ -215,17 +215,34 @@ deliverable, and not a number to chase on its own.
 7. **The `[environment]` block** in `snapshot()`. A fourth undiagnosed
    per-update rate: 3.2 s/update on mi300x against 0.85 on mi355x.
 
-**Replaced 14 Nov, on Ulban's instruction:** the morphogen is now one secreted
-chemical spreading over the perception graph -- `field_new = EMIT_DECAY * mean
-over perceived neighbours + secretion`, with `diffuse` taking
-`graph.neighbours` and `edge_mask` instead of `links`. Both chain-transported
-groups are gone; they converged to `decay ** index` and were a positional
-encoding. `FIELD_NODE_EXTRA` 20 -> 4, one mechanism rather than three, no
-sources and no alive mask required. Verified end to end on 1UBQ: 33 alive, 33
-carrying, 0 outside alive, 0.90-0.92. **Open choice:** the field has no memory,
-so a pulse dies and only persistent sources hold a concentration; real
-diffusion is `c + D * (mean - c)` plus a degradation term
-(`docs/claims/the-emitted-chemical-diffuses-over-the-perception-graph.md`).
+**Replaced 14-15 Nov, on Ulban's instruction:** the morphogen is now one
+secreted chemical **diffusing** over the perception graph, with `diffuse`
+taking `graph.neighbours` and `edge_mask` instead of `links`:
+
+    field <- (1 - lambda) * (field + D * (neighbourhood mean - field))  soft-or  secretion
+    DIFFUSION_RATE D = 0.5    DEGRADATION lambda = 0.10
+
+Both chain-transported groups are gone; they converged to `decay ** index` and
+were a positional encoding. `FIELD_NODE_EXTRA` 20 -> 4, one mechanism rather
+than three, no sources and no alive mask required, 12,482 parameters. Verified
+end to end on 1UBQ: 33 alive, 33 carrying, 0 outside alive, finite.
+
+**The open choice is closed** -- Ulban chose real diffusion over the relay on 15
+Nov, so the field has memory and a pulse travels: twelve hops out on a chain it
+reads 3.6e-05 at step 40 with nothing secreting since step 0, where the relay
+read exactly zero. Degradation is what keeps the steady state a gradient rather
+than a saturated constant, and the chain reach is analytic --
+`1/(1-lambda) = (1-D) + D(1/r + r)/2` gives `r = 0.519494` against 0.51949
+measured.
+
+**And `lambda` is set by the graph's diameter, not by taste**, which is the new
+finding. A kNN graph over a compact protein is small-world: 1UBQ at `k=16` has
+mean degree 15.5 and a **diameter of three hops**, so a reach longer than that
+leaves a near-constant field. Hop-shell contrast `hop1/hop3`: **1.52x at
+lambda=0.02**, **4.32x at 0.10**, **20.5x at 0.30** -- the first says nothing,
+the third duplicates one message-passing hop, so 0.10. Unmeasured on anything
+but ubiquitin, and a larger protein has a larger diameter.
+(`docs/claims/the-emitted-chemical-diffuses-over-the-perception-graph.md`.)
 `morphogen = false` in every arm, so nothing is waiting on it.
 
 **Demoted by the rescope**, and recorded as such rather than dropped:

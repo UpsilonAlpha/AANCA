@@ -9,7 +9,7 @@ neighbourhood the chemical spreads over is the **spatial graph the rule already
 perceives** -- within the cutoff, selected from the model's own coordinates,
 rebuilt every step as the structure moves.
 
-Three properties, each a constraint rather than a nicety:
+Four properties, each a constraint rather than a nicety:
 
 * **Local.** A residue reads its own value and its current spatial neighbours'.
   Nothing sees the molecule as a whole and no step costs more than the
@@ -21,6 +21,16 @@ Three properties, each a constraint rather than a nicety:
 * **Emergent.** The rule chooses what to secrete; the spreading is fixed. So a
   cell can manufacture a gradient nobody specified, and the chain can develop
   coordinates of its own -- or not, and then this costs four node features.
+* **A concentration, so it has memory.** The step is
+  ``c <- (1 - lambda) * (c + D * (mean - c)) + secretion``: a residue retains
+  what it is carrying and exchanges a fraction of it with its neighbourhood,
+  which is the explicit Euler step of the diffusion equation on a graph. The
+  consequence is that a pulse *travels* -- a residue that secretes once sends a
+  front outward over many steps -- where a rule that recomputed the
+  concentration from the neighbourhood each step could only hold a steady state
+  around a *persistent* source and could carry nothing through a region that was
+  not itself secreting. Ulban, 15 Nov, asked for the diffusion rather than the
+  relay.
 
 **What was here before, and why it went.** Two groups transported along the
 covalent chain, sourced at the termini of each alive run and decaying per
@@ -49,11 +59,36 @@ from torch import Tensor
 #: Channels the rule secretes into. Two, so a cell can make a gradient and a
 #: second signal that is not a function of the first.
 EMIT_CHANNELS = 2
-#: Fraction of a neighbourhood's mean concentration that arrives in one hop.
-#: Not a tuple, unlike the length scales the old transported groups carried: the
-#: rule modulates the amplitude it secretes, not the distance the chemical
-#: travels, which keeps this one mechanism rather than four.
-EMIT_DECAY = 0.90
+#: ``D``: the fraction of the gap to the neighbourhood mean that is closed in
+#: one step. This is the explicit Euler step of the diffusion equation on a
+#: graph -- ``c + D * (mean - c)``, a discrete Laplacian relaxation -- and it is
+#: below one so that a residue keeps most of what it is carrying. That retained
+#: term is the memory, and it is the whole difference from what was here before.
+DIFFUSION_RATE = 0.5
+#: ``lambda``: the fraction degraded per step. Diffusion alone conserves, so a
+#: persistent source would fill the graph and the field would saturate to a
+#: constant, which carries no information. Degradation is what makes the steady
+#: state a *gradient* with a finite reach, and the reach is what this constant
+#: sets: on a chain the steady state decays by ``r`` per hop, where
+#: ``1 / (1 - lambda) = (1 - D) + D * (1 / r + r) / 2``.
+#:
+#: **Set from the graph's diameter rather than from taste**, which is the one
+#: place the perception graph's topology enters this module. A kNN graph over a
+#: compact protein is small-world: 1UBQ at ``k=16`` and a 10 A cutoff has a mean
+#: degree of 15.5 and a diameter of **three hops**, so every residue is within
+#: three of every other. A reach much longer than that leaves a field that is
+#: nearly constant and says nothing. Measured there, as the mean concentration
+#: of the one-, two- and three-hop shells around a single secreting residue:
+#:
+#:     lambda    hop1     hop2     hop3    hop1/hop3
+#:       0.02   0.3826   0.2883   0.2516      1.52
+#:       0.10   0.1448   0.0590   0.0335      4.32
+#:       0.30   0.0558   0.0102   0.0027     20.52
+#:
+#: 0.02 is flat and 0.30 decays to a one-hop indicator, which the rule's own
+#: message passing already supplies. 0.10 keeps a gradient across the molecule
+#: and still delivers 0.03 to the far side, well above the log feature's floor.
+DEGRADATION = 0.10
 
 FIELD_CHANNELS = EMIT_CHANNELS
 #: Raw amplitude and log-amplitude per channel. The log is kept because a
@@ -87,7 +122,7 @@ def diffuse(
     emission: Tensor | None = None,
     alive: Tensor | None = None,
 ) -> Tensor:
-    """One hop of diffusion over the perception graph. Returns ``(R, C)``.
+    """One diffusion step over the perception graph. Returns ``(R, C)``.
 
     ``neighbours`` ``(R, k)`` and ``edge_mask`` ``(R, k)`` are the graph's own,
     so the chemical spreads over exactly the pairs the rule can perceive and
@@ -103,6 +138,15 @@ def diffuse(
     uses. The consequence to be aware of is that mass is not conserved -- this
     is a sensing rule, not a continuity equation, and it was never conservative
     anyway because secretion is free.
+
+    **It has memory, and that costs a second constant.** The concentration is
+    retained and relaxed toward the neighbourhood mean rather than recomputed
+    from it, so a front propagates and the field is a state of the structure
+    rather than an instantaneous readout of it. Diffusion alone conserves,
+    though, so a persistent source would fill the graph and saturate the channel
+    to a constant: ``DEGRADATION`` is what keeps the steady state a gradient
+    with a finite reach. Two fixed constants rather than one, which is the price
+    of a travelling signal.
 
     **A masked mean, not a distance weighting.** The neighbour list already
     says "within the cutoff", and weighting by distance would put a coordinate
@@ -133,7 +177,17 @@ def diffuse(
     # written -- which is what makes this the receiver's rule.
     neighbour_field = field[neighbours] * mask
     count = mask.sum(dim=1).clamp(min=1.0)
-    arrived = EMIT_DECAY * (neighbour_field.sum(dim=1) / count)
+    mean = neighbour_field.sum(dim=1) / count
+
+    # ``c + D * (mean - c)`` is ``(1 - D) * c + D * mean``: a convex
+    # combination, so the channel cannot leave [0, 1] whatever the graph does,
+    # and the ``c`` term is the memory. A residue keeps what it holds and
+    # exchanges a fraction of it with its neighbourhood, rather than
+    # recomputing its concentration from the neighbourhood from scratch -- so a
+    # pulse travels, and a residue that stops secreting does not instantly
+    # forget. Degradation then bounds it: without the ``1 - lambda`` a
+    # persistent source saturates the graph to a constant.
+    arrived = (1.0 - DEGRADATION) * (field + DIFFUSION_RATE * (mean - field))
 
     if emission is None:
         new_field = arrived

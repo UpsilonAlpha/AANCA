@@ -21,7 +21,8 @@ chemical spreads over is the spatial graph the rule already perceives --
 selected from the model's own coordinates, rebuilt every step as the structure
 moves.
 
-    field_new = EMIT_DECAY * mean over perceived neighbours  +  secretion
+    field_new = (1 - lambda) * (field + D * (mean over perceived neighbours - field))
+                 soft-or  secretion
 
 `diffuse` now takes `graph.neighbours` and `edge_mask` instead of `links`, so
 the chemical spreads over exactly the pairs the rule can see and nothing has to
@@ -86,30 +87,71 @@ pins all four rows; its old assertion was *"one residue per hop from the run's
 N-terminus, so twenty steps carries it twenty residues"*, which was the
 positional encoding written down as a requirement.
 
-## The open question, and it is a real one
+## It has memory, which was the open question and is now closed
 
-**The field has no memory.** Each step recomputes the concentration from the
-neighbourhood rather than accumulating, so a residue that secretes once produces
-one hop and then nothing -- the chemical is a steady state around *persistent*
-sources, not a travelling wave. The old module had the same structure, so this
-is not a regression, but it is also not diffusion.
+**Ulban, 15 Nov: real diffusion.** The first spatial version recomputed each
+residue's concentration from its neighbourhood every step, which is a relay --
+one hop around a *persistent* source, and nothing carried through a region that
+is not itself secreting. It is now the explicit Euler step of the diffusion
+equation on a graph, with a degradation term:
 
-Checked rather than assumed: the perception graph carries **no self-edge** --
-`((neighbours == row) & edge_mask).any()` is `False` on 1UBQ at k=16 -- so a
-residue reads none of its own concentration back and the no-memory property
-holds on the real graph and not only in the tests' hand-built one.
+    DIFFUSION_RATE  D       = 0.5    fraction of the gap to the mean closed per step
+    DEGRADATION     lambda  = 0.10   fraction degraded per step
 
-Real diffusion is `c_new = c + D * (mean - c)`, which keeps memory, and would
-need a degradation term to stay bounded: `c_new = (1 - lambda) * (c + D * (mean
-- c)) + secretion`. That is three fixed constants instead of one and is closer
-to a physical concentration field, which is the stated direction -- *"we want a
-simple AANCA model that can hopefully learn real physics"*. Whether a pulse
-should be able to travel is the choice, and it is Ulban's: a relay reaches a
-steady state in one hop and cannot carry a signal through a region that is not
-secreting, while a diffusing field can.
+Two constants instead of one, which is the price. What they buy is that a pulse
+**travels**: one secretion at step 0, nothing after, and on a 40-residue chain
+the concentration twelve hops out is 8.5e-06 at step 20 and 3.6e-05 at step 40 --
+a front moving through residues that are not secreting. The relay's reading at
+every one of those residues was exactly zero, and
+`test_a_pulse_travels_because_the_field_has_memory` is the assertion.
 
-Deliberately not changed in the same commit as the topology, so the one variable
-is the topology. `morphogen = false` in every arm, so nothing is waiting on it.
+Degradation is not decoration. Diffusion alone conserves, so a persistent source
+fills a finite graph and saturates the channel to a constant; `1 - lambda` is
+what makes the steady state a gradient with a finite reach. And the reach is
+analytic on a chain -- the steady state decays by `r` per hop where
+`1 / (1 - lambda) = (1 - D) + D(1/r + r)/2` -- which predicts **0.519494** at
+these constants against **0.51949** measured, constant to five figures over ten
+residues. The test asserts the formula rather than the number, so retuning
+`lambda` keeps it checking the physics.
+
+## lambda is set by the graph's diameter, and that is the finding
+
+A kNN graph over a compact protein is **small-world**, which the first choice of
+`lambda = 0.02` ran straight into. 1UBQ at `k = 16` and a 10 A cutoff has a mean
+degree of **15.5** and a **diameter of three hops** -- every residue is within
+three of every other, 19 A away. A reach much longer than three hops therefore
+leaves a field that is nearly constant and carries nothing. Steady state around
+one secreting residue, as the mean concentration of each hop shell:
+
+    lambda    hop1     hop2     hop3    hop1/hop3   max/min
+      0.02   0.3826   0.2883   0.2516      1.52       4.1
+      0.10   0.1448   0.0590   0.0335      4.32      34.1
+      0.30   0.0558   0.0102   0.0027     20.52      516
+
+0.02 is flat; 0.30 decays to a one-hop indicator, which the rule's own message
+passing already supplies and so is a channel that duplicates perception. 0.10
+keeps a gradient across the whole molecule and still delivers 0.03 to the far
+side, well above the log feature's 1e-6 floor. **So the one free constant in
+this module is fixed by the perception graph's topology rather than by taste**,
+and on a larger protein, whose diameter is larger, the same `lambda` reaches
+proportionally less far -- which is the right direction and is not yet measured
+on anything but ubiquitin.
+
+## Mass is not conserved, and on a real graph the total briefly rises
+
+Transport is a gather, so a residue that appears in fifteen neighbour lists is
+read fifteen times and never written. On 1UBQ a single pulse's **total**
+concentration rises from 1.116 to 1.124 before it falls. That is not a bug and
+it is not hidden: what is bounded whatever the degree is each residue's own
+concentration, because `c + D(mean - c)` is a convex combination of two numbers
+in `[0, 1]`; the sum is not a quantity anything reads. A conservative diffusion
+would need the graph symmetrised, which would stop it being the receiver's rule.
+
+**What a travelling field still cannot do** is cross a gap that has no edge.
+Two fronts that have drifted apart are not neighbours, so nothing diffuses
+between them whatever the memory. That is the bootstrap problem the old chain
+transport existed for, it is unsolved, and it is the right kind of unsolved: a
+field over the geometry as it is, becoming right as the structure does.
 
 ## Supports
 - [[a-local-per-residue-rule-can-build-a-protein-backbone]]
