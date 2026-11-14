@@ -38,6 +38,25 @@ the map is combinatorially out of reach for a global model.
 That is the honest form of "in a way pairwise diffusion can't", and it is an
 argument about cost scaling rather than about expressive power.
 
+**That cost-scaling argument was read against the primary source on 14 Nov and
+does not survive intact.** PLACER (Anishchenko *et al.*, *PNAS* 2025) is a local
+conformational-ensemble model by construction, and RFD4-Proteina reproduces its
+preorganisation readout -- 16 conformers for each of 406 retroaldolase designs,
+scored as sidechain-atom spread after backbone alignment -- while reporting
+42-fold the throughput of the next-best binder method. So a dense sweep is not
+out of reach for a global model, and **the local ensemble as a readout of
+preorganisation is published prior art, twice over**
+([[what-an-aanca-can-learn-that-a-pairformer-cannot-and-the-reverse]] carries the
+quotes and the AUROCs).
+
+What this claim keeps is narrower and still unoccupied: their deliverable is a
+**number**, a spread, while the claim here is a **model** -- explicit `h_i` and
+`J_ij` over discrete basins, ablatable term by term. The RFD4-Proteina preprint
+contains no occurrence of `potts`, `statistical potential` or `free energy`. So
+the Potts form is the surviving contribution, and "a map of local potentials" has
+to mean a map of *fitted couplings* rather than a map of variances, or it is a
+replication.
+
 ## Potts is the right summary, and the machinery is already here
 
 A Potts model is `E = sum_i h_i(s_i) + sum_ij J_ij(s_i, s_j)` over discrete

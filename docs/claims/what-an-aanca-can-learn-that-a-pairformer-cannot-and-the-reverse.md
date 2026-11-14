@@ -44,6 +44,17 @@ has twice mistaken an inherited design choice for a result.
     one here, and it should itself track flexibility.
   * **One small function to interpret.** The point of the whole constraint.
 
+**Two of these four no longer hold, as of reading the RFD4-Proteina preprint on
+14 Nov; see the section below.** *Dense local conditionals* is weakened, not
+refuted: PLACER is a local ensemble model by construction, and RFD4-Proteina
+scored 16 conformers for each of 406 retroaldolase designs at 42-fold the
+throughput of the next-best binder method, so "out of reach" was wrong about
+cost. *An exact conditional* is refuted: the model takes per-atom conditioning
+masks and supports "arbitrary combinations of fixed and flexible coordinates",
+so conditioned atoms are held exactly, not approximately. *Settling time* and
+*one small function* stand, and settling time arguably gains -- their recurrent
+pass count is chosen by schedule, never emergent.
+
 ## Side chains are what decide whether any of this is worth having
 
 **Correction to this record, 13 Nov: ProteinEBM is backbone-only in its
@@ -106,109 +117,151 @@ Per-residue spread was not flat -- 0.10 to 0.82 A across the window at the
 noise floor, higher in the middle -- which is the shape a real signal would
 have and is worth nothing at n=2. A larger run is in flight.
 
-## Our corruption operator is not noise, which is the whole comparison with differential denoising
+## RFD4-Proteina has no per-region noise, and the ensemble-spread measurement is already published twice
 
-Asked 14 Nov: how does this compare to re-noising one region -- an interface --
-after a good backbone is already in hand? That is **partial diffusion with a
-per-residue noise level**: hold `sigma_i` near zero on the scaffold, raise it on
-the target region, denoise, and the region resamples while the rest stays put.
-Our damage mask looks like the same operator with a binary schedule. Read the
-code and it is not the same operator at all.
+Read 14 Nov from the preprint itself -- Corley, Didi, Kazman, Brent *et al.*,
+"Biomolecular design through latent reasoning with RFD4-Proteina", 2026, at
+`https://rfd4-proteina.org/assets/paper/RFD4-Proteina.pdf` (not peer reviewed;
+no DOI or arXiv id as of reading). The model is **flow matching in a learned
+latent space**, not coordinate-space denoising diffusion: an autoencoder gives
+each residue an anchor-atom coordinate plus a **32-dimensional latent**, and the
+flow model generates both. ~435M stored parameters across flow model and
+autoencoder.
 
-`growth.damage_window` picks the window and `growth_objective` then sets
-`anchors = ~damaged` and calls `baseline_coords(...growth.initial...)`. So the
-window's native pose is **discarded** and the window is **regrown in torsion
-space off the intact flanks** at ideal `(phi, psi, omega)`. `BASELINE_MODES` is
-`("helix", "extended", "random")`, every arm has run `initial = "helix"`, and
-**no mode perturbs a pose** -- there is no path in the training code that keeps
-a structure and displaces it.
+### The premise of "differential denoising" does not hold, and the mechanism is the shape of ours
 
-Four consequences, and the first two were invisible until the operator was read
-as an operator:
+Table S7, the flow model's complete input inventory, settles it. Every
+per-residue feature carries an `[N, ...]` shape. The noise levels do not:
 
-  1. **The prior is informative, not maximum-entropy.** Gaussian noise at high
-     sigma is the least committal corruption there is. An ideal helix is one
-     conformation class, handed over identically every time. Given the window,
-     the start state has near-zero entropy, so each window is trained on
-     essentially one trajectory -- the same deficiency the pool and the length
-     jitter were added for ([[update-probability-is-a-result-affecting-setting-that-no-config-records]] is the fix from
-     the other end), and it is a reason to expect memorisation of a correction
-     rather than a learned basin.
-  2. **Local geometry is ideal at t=0 and wrong only globally.** Cartesian noise
-     breaks bonds and the denoiser learns to repair them; a NeRF walk cannot.
-     So `bond` and `clash` only ever see damage the *rule itself* produced, and
-     the rule has never been asked to repair bad local geometry presented as
-     input. Against a partial-diffusion model that is a capability we do not
-     train.
-  3. **No `sigma` input, by design, so no temperature and no reliability
-     label.** A diffusion model is *told* which residues to trust. This rule
-     infers it from geometry. That is the liability and the feature at once: it
-     is why there is no calibrated `p_sigma` to take a log of
-     ([[destruction-and-regrowth-yields-a-local-statistical-potential]] on the
-     honest limit), and why an external scorer at a matched sigma is the only
-     route to a temperature ([[question-can-proteinebm-be-reused-and-in-which-of-three-ways]]).
-  4. **The region control is binary, and the context is fully mobile.** A
-     per-residue sigma lets the scaffold relax *a little*. Ours is on/off at a
-     hard seam, and intact residues are not frozen during the rollout -- they
-     are correct at t=0 and free to drift, which is a third regime neither
-     model has, and they do drift.
+    Coordinate time embedding   [256]   adaLN   "Coordinate noise level"
+    Latent time embedding       [256]   adaLN   "Latent noise level"
+    Recycle indicator           [1]     adaLN
 
-**And for an interface specifically the operator cannot express the task.**
-`damage_window` draws a contiguous run *inside a single covalent run and never
-spanning a chain break*, for a good reason of its own -- a window across a break
-is two holes and a failure would not say which. But an interface is defined by
-**spatial** proximity to another chain, not by sequence contiguity, so the
-current damage can only ever hit one side of it. A binder window would need a
-mask drawn from the inter-chain contact set.
+Two **global scalars**, entering by adaptive layer normalisation, and the text
+confirms "Time embeddings condition both the single track and initial pair
+representation". There is no per-residue or per-region noise level in the model.
 
-### Read as prior art, not as a to-do list
+**The differential axis is coordinates versus latents -- structure versus
+sequence -- not region versus region.** Inverse folding runs "partial diffusion
+from the input backbone (t = 0.99) with the sequence latents at t = 0", which is
+the two knobs used against each other, and the docs' `partial_t_backbone` /
+`partial_t_latent` are exactly those two.
 
-Ulban's reason for asking, stated immediately after: **this is prior art, and
-the rule stays simple.** The operator difference above is descriptive -- it says
-our conditional is a different object from theirs -- and is explicitly *not* a
-list of features to add. A noise mode, a soft seam and a spatial mask would each
-make this rule more like the model it is supposed to be an alternative to, which
-is the wrong direction.
+Spatial control is a **binary mask plus a radius**, not a noise profile: the
+model supports "arbitrary combinations of fixed and flexible coordinates"
+through per-atom conditioning masks (`Absolute coordinates and masks
+[N, 37 x (3 + 1)]`, `Hotspots [N, 37]`), and the interface protocol reads
+"Sequence changes were allowed within 8 A of the interface for fixed
+RFD4-Proteina and 12 A for flexible RFD4-Proteina; backbone flexibility was
+restricted to 8 A."
 
-**What it pre-empts.** "Locally resample a region conditioned on surviving
-structure" is now first-class in a production model, not a trick. Any claim of
-the form "only a local rule can regrow a chosen region" is dead -- it was
-already dead via motif scaffolding and inpainting, and this closes the door
-louder. So the damage protocol is an **instrument**, never a contribution, and
-the interpretability pitch cannot rest on it. It has to be carried entirely by
-the shared local rule and the explicit fields and couplings of the Potts
-summary.
+So the real mechanism is **one global corruption magnitude times a binary
+spatial mask** -- which is the shape of our damage protocol, not a contrast with
+it. The earlier version of this section claimed theirs was a continuous
+per-residue sigma against our binary mask, and drew a difference from it. That
+difference does not exist and the claim was wrong.
 
-**What it does not pre-empt**, and this is where the novelty actually sits:
+### What of the operator comparison survives
 
-  * **The sweep.** Per-region noise still runs all-pairs attention over the
-    whole complex at every step, however few residues were noised. One window's
-    conditional is affordable; a dense map over every window at N samples each
-    is not. Prior art on the operation, not on the scaling.
-  * **Spread as a measurement rather than a setpoint.** `sigma` is *chosen*, and
-    training calibrates the output variance to it, so the local diversity of a
-    partial-diffusion sample is a hyperparameter. Our damage sets the initial
-    condition only and the rule is never told how bad it was, so the spread is a
-    **response**. That difference is the entire reason "regrow a loop N times
-    and the spread is its conformational freedom" is a measurement at all. The
-    weaker honest form: rigidity read off a diffusion model at fixed `sigma` is
-    *confounded* -- it mixes the model's noise calibration with the structure's
-    freedom, and there is no principled `sigma` -- not impossible.
-  * **Refusing the reliability label.** They condition on `sigma`; this rule has
-    no way to be told which residues to trust. Opposite designs, so their work
-    leaves the architectural question untouched.
+  * **The corruption is still a different operator.** They noise toward the
+    prior at `partial_t`; we discard the window and rebuild it as an ideal
+    helix in torsion space. Informative prior against uninformative one, and
+    local geometry ideal at t=0 because a NeRF walk cannot break a bond. Both
+    stand.
+  * **Conditioning on the corruption still differs.** Theirs reads the noise
+    level, globally, through adaLN. Ours reads nothing. Still the architectural
+    fork.
+  * **The pair representation went the other way.** They "strengthened the pair
+    representation through triangle multiplicative updates every other
+    transformer block, more expressive communication from single to pair
+    features, and a wider hidden dimension". The no-pairformer thesis is now
+    contrarian against an actively strengthening trend, which raises both its
+    value if it works and the burden of showing that it does.
+  * **And they generate in a latent space.** Theirs is a learned 32-d code per
+    residue; ours is explicit coordinates. This is a real interpretability
+    advantage of ours and was under-weighted before.
 
-**Where it hurts.** The comparison on quality is unfavourable and will stay that
-way: a flagship model does this operation well, and ours does it at 7.78 A with
-no attractor. The case can never be "we do this better". It is "we do it in a
-form that can be read, at a cost that permits doing it everywhere" -- and that
-case is only worth making once the rule stops drifting.
+### The hard part: local-ensemble spread as a preorganisation readout is prior art
 
-**Where it helps.** It establishes that region-local resampling against a fixed
-context is an operation worth having, so the framing is de-risked rather than
-speculative. And it supplies a **fair baseline**: differential denoising at
-matched displacement is the comparison for any claim about what regrowth spread
-measures, which is sharper than "versus pairformers".
+Not adjacent work -- the same measurement, benchmarked, twice.
+
+**PLACER** (Anishchenko *et al.*, *PNAS* 122, e2427161122, 2025, "Modeling
+protein-small molecule conformational ensembles with PLACER") is the direct
+precedent, and this preprint calls it "the current state-of-the-art".
+RFD4-Proteina then reproduces it: "Following PLACER, we sample local
+conformational ensembles for designed enzyme active sites, **using the
+consistency of independent outputs as a proxy for catalytic motif
+preorganization**." Seven highly active retroaldolases against 399 inactive, 16
+conformers per design, and the score is "**negative intermediate sidechain-atom
+spread after backbone alignment**".
+
+That is the quantity `scripts/regrowth_dispersion.py` computes, applied to the
+question the flexibility hypothesis asks, against a functional label. AUROCs,
+RFD4 against PLACER: 0.84 [0.74, 0.93] vs 0.88 [0.82, 0.95]; 0.62 [0.56, 0.67]
+vs 0.60 [0.55, 0.66]; 0.90 [0.81, 0.98] vs 0.82 [0.52, 0.98]. Their own caveats
+are worth keeping: "paired intervals do not establish a method advantage" and
+"the main-panel intermediate was selected retrospectively".
+
+**So the ensemble-dispersion programme is not novel as a measurement.** It is
+validated, which is worth something -- the hypothesis that spread tracks
+preorganisation and preorganisation tracks function is now supported by two
+published models and a functional assay, so the project is not betting on an
+unproven premise. But a result of the form "our spread correlates with
+B-factors" is a replication, and has to be presented as one.
+
+### The confound I raised is real and is handled by convention
+
+Confirmed: spread **is** a dial. "Diversity was tuned by the scale of the
+sampling noise: 12 values from 0 to 5.0"; "Greater sampling noise broadened mean
+pairwise side-chain variation from 0.31 to 1.20 A, while the mean MolProbity
+score rose only from 1.70 to 1.77". Fig. 3a is a quality-diversity Pareto
+frontier over "eight sampling-noise settings".
+
+And the practice is to **fix the dial and only rank** -- the retroaldolase run
+used "sidechain noise 1.0" throughout. So "confounded, not impossible" was
+right, and the confound does not bite in the application, because ranking
+designs against each other at one setting is all the use case needs. This is not
+an opening for us.
+
+### What is actually left, and it is narrow
+
+  * **Potts appears nowhere.** Zero occurrences of `potts`, `statistical
+    potential` or `free energy` in the whole preprint; one `interpret`, about
+    the sampler's `k` parameter as a temperature-like control. Their readout is
+    a **number** -- a spread -- where ours would be a **model**, explicit `h_i`
+    and `J_ij` over discrete basins, ablatable term by term. On this axis the
+    ground is still open, and it is now the *only* open ground in the
+    flexibility programme.
+  * **The sweep argument is weakened and must be measured, not asserted.** They
+    report 42-fold throughput over BindCraft at 10.6% clustered pass rate on
+    protein binding, and binder rescue "in a fraction of the time". A dense
+    sweep is cheaper for them than the cost-scaling argument assumed.
+  * **Explicit coordinates against a learned latent**, as above.
+
+### The convergence nobody planned
+
+"We enabled intrinsic reasoning within trajectories by performing **recycling at
+each diffusion time step** rather than as an upstream feature-processing stage.
+The number of recurrent passes can **vary across timesteps**, allowing greater
+refinement at critical stages" -- and the abstract's "recurrent refinement to
+**adaptively allocate computation**".
+
+Repeated application of the same update until the state settles, with a variable
+number of passes. That is an NCA-shaped inner loop, reached from the diffusion
+side, and it is the strongest evidence yet that iterative local refinement is the
+right instinct. It also means the architectural gap is closing from their end,
+and their inner loop terminates by schedule where ours does not
+([[the-rule-has-no-attractor-past-its-training-horizon]]).
+
+### Where this leaves the positioning
+
+Dead: the damage protocol as a contribution, regrowth spread as a novel
+measurement, and any claim that a pairformer cannot resample a region locally.
+Alive: no pairwise module at all, explicit coordinates rather than a learned
+code, and the fields-and-couplings form of the potential. The bar is 10.6%
+clustered pass rate with wet-lab validation against our 7.78 A with no
+attractor, so the case is never "better" -- it is "readable, and cheap enough to
+run everywhere" -- and it cannot be made at all until the rule stops drifting.
 
 ## Requires
 - [[question-does-regrowth-dispersion-measure-conformational-freedom]]
