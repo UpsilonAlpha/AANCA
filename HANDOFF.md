@@ -171,11 +171,20 @@ deliverable, and not a number to chase on its own.
    past the trained horizon is a protocol problem or an architectural one, and
    either answer redirects the project. *Blocked while Bunya login is
    disabled.*
-3. **The ideal-helix relaxation control.** `baseline_coords(..., "helix", ...)`
-   is an informative prior, so 7.78 A from 12.23 A is only a capability if a
-   dumb relaxation of that prior against fixed flanks cannot get there. Nothing
-   in the repository answers this and it is a strong reviewer question. Cheap:
-   no training, no queue.
+3. **`g22_random` -- take the helix away.** Pre-registered 14 Nov on Ulban's
+   objection that the model should learn to form helices and sheets rather than
+   be handed one. Every arm from g1 to g21 ran `initial = "helix"`, so the
+   damaged window has always *started* as an ideal helix and the rule has only
+   ever been asked to move one -- which makes "it learns secondary structure"
+   untestable. Measured cost of `random`: 3.35 A further out, FAPE 87.1 % live,
+   bond 5.49 against 4.50, well inside the 36 A reach ceiling
+   (`docs/claims/the-start-state-hands-the-rule-its-secondary-structure.md`).
+   One variable against `g20_orient`. Two buckets, and the second -- what
+   fraction of natively-helical window residues land in the helical
+   Ramachandran basin from a uniform start -- is the result to lead with, not
+   `rmsd_dmg`. **This replaces the helix-relaxation control**: from a random
+   start there is no secondary structure to inherit, so the null needs no
+   separate defence.
 4. **The joint arm, `identity_weight` on.** Regrowing a window means regrowing
    its sequence, and no arm since the equivariance fix has asked for both at
    once, so the rescoped question has never actually been put to the rule in

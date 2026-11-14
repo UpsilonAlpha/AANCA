@@ -383,3 +383,73 @@ inherits = "g20_orient"
 [g21_pool.inputs]
 pool_probability = 0.5
 steps_min = 40
+
+# ---------------------------------------------------------------------------
+# g22_random -- take the helix away and ask the rule to produce one.
+#
+# Ulban, 14 Nov: the model should learn to form helices and sheets, so it
+# should not be handed one. Every arm from g1 to g21 ran `initial = "helix"`,
+# which is the default, so the damaged window has always STARTED as an ideal
+# helix and the rule has only ever been asked to MOVE one. About a third of PDB
+# residues are helical, so that is a third of the answer handed over for free,
+# and it makes the claim this project now wants to make -- that a local rule
+# learns secondary structure -- untestable, because a learned helix and the one
+# in the start state are indistinguishable.
+#
+# `initial = "random"` draws phi/psi uniformly, so there is no secondary
+# structure in the start state at all. Measured cost on the laptop pool, 12
+# crops, 12-residue window (scripts/baseline_probe.py --damage 12):
+#
+#   start state   rmsd_dmg   bond     live
+#   helix           10.77   4.5043   90.1%
+#   random          14.12   5.4872   87.1%
+#   extended        21.30  17.9454   86.6%
+#
+# So 3.35 A further out and nothing else: inside the 36 A reach ceiling, FAPE
+# still 87% live, bond barely moved because the walk's covalent geometry is
+# ideal whatever the torsions are. `extended` is the mode that would have been
+# a problem and is probably why helix stuck.
+#
+# RE-MEASURE THE BASELINE ON BUNYA BEFORE READING THIS ARM. Those are laptop
+# numbers on a 954-structure pool; the same code reads 12.23 for helix on
+# Bunya's 24k. The comparison is against Bunya's own random baseline, not
+# against 14.12.
+#
+# PRE-REGISTERED, two buckets, and the second is the one that matters.
+#
+#   1. PLACEMENT, against its own baseline. g20 beat the helix baseline by
+#      4.45 A. Does this arm beat the RANDOM baseline by a comparable margin?
+#        > 3.5 A of progress   the rule places a window without being handed
+#            its secondary structure, and g20's result was not the prior.
+#        1.5 - 3.5 A           partial; report as a weaker capability from a
+#            harder start, and do not quote g20's 7.78 as comparable.
+#        < 1.5 A               most of g20's 4.45 A was the helix. That is a
+#            finding and it retires the headline number.
+#
+#   2. LEARNED SECONDARY STRUCTURE, which is the actual question. On window
+#      residues whose NATIVE torsions are helical, what fraction does the rule
+#      place in the helical Ramachandran basin at step 120? Against two
+#      references: the random start state's own rate (chance, ~5-10% for a
+#      uniform draw into one basin) and g20's rate (uninformative by
+#      construction, since it starts at 100%).
+#        well above chance   DIRECT evidence of learned secondary structure,
+#            which is a stronger and more legible result than any rmsd_dmg and
+#            is the thing to lead with.
+#        at chance           the rule moves windows without learning local
+#            conformational preference, so "learns physics" is not supported
+#            however good the RMSD is.
+#      Needs measure_backbone_torsions on the rollout output; backbone.py
+#      already returns (phi, psi, omega) per residue, so this is a readout and
+#      not a code change to the trainer.
+#
+# VOID if the run does not complete, or if `twist` leaves the 9-12 band --
+# g20's orientation term is inherited and this arm does not retest it.
+#
+# ONE VARIABLE against g20_orient. Deliberately NOT inheriting g21_pool: the
+# pool is a separate open question and stacking them would confound the start
+# state with persistence.
+[g22_random]
+inherits = "g20_orient"
+
+[g22_random.inputs]
+initial = "random"

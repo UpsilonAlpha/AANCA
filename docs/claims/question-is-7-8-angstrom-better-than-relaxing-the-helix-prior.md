@@ -53,5 +53,21 @@ relax it against the fixed flanks under `bond` and `clash` only, report
 no training, no queue. Until it exists, 7.78 A is a number against a null that
 nobody has defended.
 
+## Answered 14 Nov by removing the prior rather than defending it
+
+Ulban's response was that there should not be a prior at all. Measured the same
+day: `initial = "random"` costs 3.35 A of start distance and nothing else --
+FAPE 87.1 % live, bond 5.49 against 4.50, far inside the 36 A reach ceiling
+([[the-start-state-hands-the-rule-its-secondary-structure]]). So `g22_random` is
+pre-registered instead of the non-learned relaxation baseline this node asked
+for: from a uniform start there is no secondary structure in the start state to
+inherit, and the null needs no separate defence.
+
+This node stays **open** for one reason only. g20's 7.78 A was measured from a
+helix, and if `g22_random` makes little progress from `random` then most of
+g20's 4.45 A *was* the prior -- which is bucket 1 of that arm, and it would
+retire the headline number. The question is therefore answered by the arm, not
+by this node.
+
 ## Supports
 - [[a-local-rule-can-regenerate-a-damaged-region-from-its-surviving-context]]
