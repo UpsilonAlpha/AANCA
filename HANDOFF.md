@@ -6,52 +6,114 @@ journal is `docs/JOURNAL.md`; the claims and their evidence are one note each in
 
 ---
 
-## 0. Current state — 2026-11-09
+## 0. Current state — 2026-11-14
 
-### The question
+### The question, rescoped 14 Nov
 
-**Can one shared local rule, applied per residue in parallel with no global
-coordinator and no pooling, cofold a protein — sequence and structure together?**
+**Can a very simple shared local rule — one function, 229,588 parameters,
+applied per residue in parallel with no global coordinator, no pooling and no
+attention — regrow a damaged region of a protein from the context that
+survived?**
 
-Inverse folding is **done**: 38.0 % held-out sequence recovery from structure,
-converged, against a ~9 % composition background. The open problem is the joint
-direction, which is the setting RFD4 and the other diffusion models work in,
-minus the pairformer's all-pairs global mixing.
+That is the whole central argument. Not a design method, not a competitor to
+diffusion: a study of whether a local update rule can learn enough real physics
+from structure data to put destroyed atoms back where they belong.
 
-**The payoff is interpretability, and as of 13 Nov it has a deliverable.** One
-small shared local function — 229,588 parameters — can be ablated channel by
-channel; a pairformer conditioned on a noise level cannot. But the stronger
-version is that the rule can be made to *emit* a potential rather than be
-probed for one: destroy a window, regrow it N times, and `-log` of the
-conformational distribution is a **local statistical potential**, summarised as
-Potts fields and couplings. `potts.py` already fits that shape and is agnostic
-to whether the states are amino acids or backbone basins.
+### What this is explicitly not
 
-What a pairwise diffusion model cannot do is not the single conditional — it can
-inpaint — but the **dense sweep**: every sample costs a full global denoising
-trajectory, so a map of local potentials over a whole structure is
-combinatorially out of reach, while the AANCA's sampling cost is local.
+Read against the RFD4-Proteina preprint on 14 Nov
+([[what-an-aanca-can-learn-that-a-pairformer-cannot-and-the-reverse]] carries
+the head-to-head). They are ~435M parameters across a flow model and an
+autoencoder, a 147-class chemical vocabulary, seven benchmark tasks, and
+wet-lab-validated binders at a 10.6 % clustered pass rate and 42-fold the
+throughput of BindCraft. This is ~1/1900 the size and does a fraction of one of
+their tasks, worse.
 
-And it makes the binder hypothesis computable: **pre-organisation is low
-conformational entropy of the local potential**, readable from coupling
-strength. See
-`docs/claims/destruction-and-regrowth-yields-a-local-statistical-potential.md`.
-`rmsd_dmg` is instrumental throughout — how we know the rule works, not what we
-want from it.
+So "which designs better" is settled and was never the question. The question
+is **what is the least information a rule needs**, and the useful framing is
+that this rule is roughly RFD4's own inner recycling loop — they recycle at
+every diffusion timestep, with a variable pass count — **with everything around
+it deleted**. Theirs reads the pair track and the global time while it iterates;
+ours reads one hop of a 10 A heavy-atom graph and nothing else. That is the
+ablation, and that is the project.
+
+Two things therefore stop being contributions and are recorded as such:
+
+  * **Design performance.** Not attempted, and should not be claimed.
+  * **Local-ensemble spread as a readout.** Published twice — PLACER
+    (Anishchenko *et al.*, *PNAS* 2025) and RFD4's reproduction of it. The
+    downstream programmes (a fitted Potts potential, CDR pre-organisation, the
+    binder hypothesis) stay in `docs/claims/` as what regeneration would *buy*,
+    and they are strictly downstream of the central claim. Nothing there is
+    worth running while the central claim is unsettled.
+
+### Where the central claim actually stands
+
+Two tracks, and only one is finished.
+
+    track                        state
+    ---------------------------  -------------------------------------------
+    inverse folding              DONE, 38.0 % held-out, converged, against a
+                                 ~9 % composition background. The architecture
+                                 works and can learn from local context.
+    regeneration                 PARTIAL AND UNREPLICATED. See below.
+    joint sequence + structure   NEVER RUN since the equivariance fix.
+
+**13 Nov was the first capability rather than a bound.** `g20_orient` placed a
+damaged 12-residue window at **7.78 A** from its 12.23 A baseline on 12 held-out
+crops, with no teacher forcing and no target graph
+([[with-no-ceiling-at-all-the-rule-places-a-damaged-window-to-7-8-angstrom]]).
+Nine earlier arms without teacher forcing had sat at their own baselines to two
+decimal places, so this is a real signal and not a readout artefact.
+
+**And it does not persist.** The same rule read at 600 steps is at 16.4–16.9 A,
+worse than the 12.23 A untrained baseline — there is no attractor past the
+trained horizon ([[the-rule-has-no-attractor-past-its-training-horizon]]). Every
+number this project reports is a snapshot of a transient at step 120.
+
+### The three things that decide the central claim
+
+In this order, and nothing downstream matters until they are answered.
+
+  1. **Is 7.78 A real?** No arm in this project has been replicated at a second
+     seed, because `seed` also chooses the held-out set, so the one replicate
+     attempted measured different proteins
+     ([[question-has-any-arm-been-replicated-at-a-second-seed]]). This needs
+     `eval_ids` as a config key pinning PDB ids rather than integer indices, and
+     one run. It is the cheapest thing in the queue and it gates everything.
+  2. **Does the rule hold what it builds?** `g21_pool` (32904055) is the
+     cheapest test of whether divergence is a protocol problem or an
+     architectural one — the rule having no way to represent "I have arrived".
+     Pre-registered in three buckets, primary the 600-step reading.
+  3. **Is 7.78 A better than the prior it starts from?** The damage operator is
+     **not noise**: `baseline_coords(..., initial="helix", ...)` discards the
+     window's native pose and regrows it in torsion space off the intact flanks
+     at ideal (phi, psi, omega). So the start state is an informative prior, and
+     the honest question is how much of the 4.45 A of progress is the rule and
+     how much is reachable by relaxing an ideal helix against fixed flanks. That
+     control has not been run and it should be.
+
+The interpretability payoff — one small shared function that can be ablated
+channel by channel, where a pairformer conditioned on a noise level cannot — is
+why the answer is worth having. It is not evidence for the claim, and it does
+not substitute for the three runs above.
 
 Locality is not a small receptive field. At the measured mean degree of 28–33, a
 120-step rollout crosses the molecule many times, so the fixed point depends on
 everything. What is local is the **function**, not its reach.
-
 ### How it differs from diffusion
 
     diffusion (RFD4, Chroma, RFdiffusion)   this rule
     ------------------------------------    ---------------------------------
     timestep is an INPUT to every cell      time exists; no cell can read it
-    noise is the corruption                 destroyed sections are
+    noise is the corruption                 damage is a PRIOR, not noise:
+                                            an ideal helix regrown off
+                                            the intact flanks
     all-pairs attention each step           one hop per step, every step
     one-step denoising at sampled noise     BPTT through a truncated rollout
-    stops because the schedule ends         settles into a realistic basin
+    stops because the schedule ends         has no schedule and, measured,
+                                            does NOT settle -- 16.4-16.9 A
+                                            at 600 steps
 
 Not "no timestep": global time exists and the trajectory has a direction, but no
 cell can read it, which is what stops the rule learning the index instead of the
@@ -60,28 +122,22 @@ the property the degenerate identity map has, so an objective that rewards
 stopping rewards what four arms did. A bounded basin is physical and
 distinguishable from never having moved.
 
-### Where the measurements stand
+### The arm details behind those numbers
 
-    track                        state
-    ---------------------------  -------------------------------------------
-    inverse folding              DONE, 38.0 % held-out, converged
-    structure, sequence given    7.78 A with NO ceiling in the rollout
-                                 (6.69 A under two ceilings)
-    sequence + structure jointly  NEVER RUN since the equivariance fix
-
-**13 Nov: the first capability rather than a bound.** `g20_orient` placed a
-damaged 12-residue window at **7.78 A** from the 12.23 A baseline with no
-teacher forcing and no target graph, on the same 12 held-out crops as every
-comparator (verified from the checkpoints). Nine earlier arms without teacher
-forcing had sat at their own baselines. Removing both ceilings costs 1.09 A
-against `g17_long` at matched budget. `twist` settled at 11.24 against g19's
-14.26, so the orientation term built on 5 Nov controls the quantity it was
-built for. `g19_nomove`'s placement number is void by its own pre-registration
-(twist left the 9-12 band) and stands as that control.
+Removing both rollout ceilings costs 1.09 A against `g17_long` at matched budget,
+so 7.78 A with no ceiling sits against 6.69 A under two. `twist` settled at
+11.24 against g19's 14.26, so the orientation term built on 5 Nov controls the
+quantity it was built for. `g19_nomove`'s placement number is void by its own
+pre-registration — twist left the 9-12 band — and stands as that control. The
+12 held-out crops are the same ones every comparator used, verified from the
+checkpoints.
 
 `identity_weight = 0.0` is the config base, so every arm from g9 to g18 had the
 sequence half switched off. The last joint arm is `g7_regen`, which predates the
-equivariance fix and froze 1.5 A the wrong way.
+equivariance fix and froze 1.5 A the wrong way. **The joint arm is the test of
+the rescoped question that has not been run**: regrowing a window means
+regrowing its sequence too, and nothing since the equivariance fix has asked for
+both at once.
 
 ### What was removed, and why it matters
 
@@ -96,45 +152,51 @@ still express.
 
 ### Next
 
-Reordered 13 Nov against the flexibility hypothesis
-(`docs/claims/question-does-regrowth-dispersion-measure-conformational-freedom.md`).
-`rmsd_dmg` is no longer the thing being chased: it is how we know the rule
-works, and a rule that collapses to one tight answer is the *worst* possible
-flexibility instrument.
+Reordered 14 Nov by the rescope. The ordering rule is now: **anything that
+decides whether the rule can regrow damage comes before anything that uses the
+fact that it can.** `rmsd_dmg` is how we know the rule works — not the
+deliverable, and not a number to chase on its own.
 
-1. **Ensemble dispersion, on checkpoints that already exist.** N regrowths of
-   the same window from one checkpoint, differing only in the rollout
-   generator; per-residue RMSF over the N settled poses. `g20_orient` first,
-   then `g17_long` for the paired ceiling comparison. Inference only, CPU, no
-   queue. **Then Spearman against per-residue backbone B-factor** on the same
-   12 crops — which would be the first `experimental` observation under the
-   thesis, and the cheapest external anchor this project has.
-2. **Cofolding**, `identity_weight` on. **Moved up 13 Nov** on the argument
-   from the deliverable, not from curiosity: ProteinEBM is backbone-only as
-   implemented, so a backbone-only local potential is a better-localised
-   version of what it already does. Explicit side chains are the whole
-   advantage, binding is side-chain packing, and the growth track has never
-   had them (`docs/claims/what-an-aanca-can-learn-that-a-pairformer-cannot-and-the-reverse.md`).
-   Without this the potential inherits the limitation it exists to escape.
-3. **`eval_ids` as a config key** — note the rename from `eval_indices`, and it
-   matters. A flexibility map is per-residue on *named* structures, so
-   comparing residue 47 across runs is meaningless while `seed` also chooses
-   which proteins are held out. But pinning integer **indices** would only half
-   fix it: the pool is `available[:412]` over whatever is on disk, so the same
-   index is a different protein on a 954-structure laptop and a
-   23,760-structure Bunya — which is what voided the 10.77 Å baseline. **Pin
-   PDB ids, not indices.**
-4. **The replicate arm** — same section, `seed` moved, `eval_ids` pinned.
-   Turns the regeneration claim from `open` to supported.
-5. **The missing evaluations.** Updates 5750 and 9750 absent from
-   `history.json` in g17, g19 and g20 — three runs, three objectives, the same
-   two updates. Reproducible, so cheap to find, and it has silently broken the
-   pre-registered `settled` pair three times.
-6. **The `[environment]` block** in `snapshot()`. Now a fourth undiagnosed
+1. **The replicate arm, with `eval_ids` pinned.** The one run that turns the
+   central claim from `open` to supported, and it is the cheapest thing in the
+   queue. Note the rename from `eval_indices`: pinning integer **indices** only
+   half fixes it, because the pool is `available[:412]` over whatever is on
+   disk, so the same index is a different protein on a 954-structure laptop and
+   a 23,760-structure Bunya — which is what voided the 10.77 A baseline. **Pin
+   PDB ids.** Then move `seed` with the held-out set held fixed.
+2. **Read `g21_pool` (32904055) against its three pre-registered buckets.**
+   Primary is the 600-step reading from `scripts/regrowth_dispersion.py`;
+   second is `settled` at step 120 within 1.0 A of g20's 7.78; third is the
+   step-120 ensemble spread against g20. This is the test of whether divergence
+   past the trained horizon is a protocol problem or an architectural one, and
+   either answer redirects the project. *Blocked while Bunya login is
+   disabled.*
+3. **The ideal-helix relaxation control.** `baseline_coords(..., "helix", ...)`
+   is an informative prior, so 7.78 A from 12.23 A is only a capability if a
+   dumb relaxation of that prior against fixed flanks cannot get there. Nothing
+   in the repository answers this and it is a strong reviewer question. Cheap:
+   no training, no queue.
+4. **The joint arm, `identity_weight` on.** Regrowing a window means regrowing
+   its sequence, and no arm since the equivariance fix has asked for both at
+   once, so the rescoped question has never actually been put to the rule in
+   full. Also the only route to side chains in the growth track, which is where
+   everything downstream needs them.
+5. **The eval-gating fix, two parts**, once 32904055 is done: ungate the
+   held-out score from the training step at `scripts/train_growth.py:1327`, and
+   make the pool's two new failure paths fall back to a fresh baseline draw
+   rather than `continue`
+   (`docs/claims/a-skipped-update-silently-skips-its-evaluation.md`).
+6. **The `[environment]` block** in `snapshot()`. A fourth undiagnosed
    per-update rate: 3.2 s/update on mi300x against 0.85 on mi355x.
 
-Demoted: driving `rmsd_dmg` lower on its own, and `g16_localrot`, which was
-already dropped as a third ceiling arm.
+**Demoted by the rescope**, and recorded as such rather than dropped:
+ensemble-dispersion spread and the B-factor Spearman. A positive result there
+is a **replication** of PLACER and RFD4's reproduction of it, not a finding, so
+its value is as a validation check on the regrowth distribution — not as a
+result. The fitted-Potts programme, CDR pre-organisation and the binder
+hypothesis stay downstream of items 1–4 and are not worth a slot until those
+answer. Also still demoted: driving `rmsd_dmg` lower on its own, and
+`g16_localrot`.
 
 ### Environment
 
