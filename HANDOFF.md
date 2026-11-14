@@ -195,6 +195,16 @@ deliverable, and not a number to chase on its own.
    make the pool's two new failure paths fall back to a fresh baseline draw
    rather than `continue`
    (`docs/claims/a-skipped-update-silently-skips-its-evaluation.md`).
+6. **The clash term's i/i+1 exemption, which is Ulban's call.** `clash` drops
+   the whole bonded residue pair, so the 11 atom pairs at or beyond
+   `CLASH_MIN_SEPARATION` -- the ones phi and psi control -- are not scored, and
+   a single-residue (phi, psi) scan reads flat over the entire plane against the
+   crystal floor. **Nothing in the objective forbids an impossible backbone**,
+   and the 7 Nov argument that clash subsumes Ramachandran is overturned
+   (`docs/claims/the-clash-term-does-not-see-the-ramachandran-plot.md`).
+   Narrowing the exemption makes Ramachandran emerge from sterics, which is the
+   right shape; a tabulated (phi, psi) potential is not. It changes every future
+   arm's objective, so it is pre-registered nowhere yet.
 6. **The `[environment]` block** in `snapshot()`. A fourth undiagnosed
    per-update rate: 3.2 s/update on mi300x against 0.85 on mi355x.
 

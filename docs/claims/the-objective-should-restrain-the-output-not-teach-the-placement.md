@@ -50,6 +50,17 @@ against the native, which is the thing to avoid. It has been weighted 0 in
 every g5, g6 and g7 arm already, so there is nothing to remove; it stays as the
 reported `twist` diagnostic.
 
+**OVERTURNED 14 Nov.** The physics in the paragraph below is right and the
+claim that `backbone_clash_loss` delivers it is not: the term drops the whole
+i/i+1 residue pair, and 11 of those 25 atom pairs are at or beyond
+`CLASH_MIN_SEPARATION` and are exactly the contacts phi and psi control. A
+single-residue (phi, psi) scan reads flat -- 2.4 to 16.7 milli-A over the whole
+plane against a 2.59 crystal floor, with (0, 180) *lower* than ordinary
+conformations ([[the-clash-term-does-not-see-the-ramachandran-plot]]). So
+nothing in the objective forbids an impossible backbone. The fix is to narrow
+the exemption rather than to add a tabulated restraint, which keeps the
+reasoning below intact.
+
 **A Ramachandran restraint was considered and rejected as redundant.** The
 Ramachandran plot is the empirical shadow of backbone sterics -- the disallowed
 regions are disallowed because adjacent atoms collide -- so a proper clash term
