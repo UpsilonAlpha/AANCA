@@ -161,29 +161,54 @@ is two holes and a failure would not say which. But an interface is defined by
 current damage can only ever hit one side of it. A binder window would need a
 mask drawn from the inter-chain contact set.
 
-### What follows, cheapest first
+### Read as prior art, not as a to-do list
 
-  * **A noise damage mode.** Keep the found pose, displace it by amplitude
-     sigma, rather than deleting it. This already exists in the measurement
-     path -- `scripts/regrowth_dispersion.py:perturb` rotates the window about
-     its centroid under `topo.atom_mask` -- and not in the training path. Adding
-     it as a `growth.initial` mode plus an amplitude key is the single change
-     that makes partial-diffusion-style refinement expressible here at all.
-  * **A soft seam.** Full displacement at the window centre tapering to nothing
-     at the flanks, instead of a step. The hard boundary is a discontinuity in
-     input reliability with no analogue in the real problem.
-  * **A spatial mask option**, for when there is a second chain.
+Ulban's reason for asking, stated immediately after: **this is prior art, and
+the rule stays simple.** The operator difference above is descriptive -- it says
+our conditional is a different object from theirs -- and is explicitly *not* a
+list of features to add. A noise mode, a soft seam and a spatial mask would each
+make this rule more like the model it is supposed to be an alternative to, which
+is the wrong direction.
 
-The honest framing is that the helix prior suits the thesis as stated -- can a
-local rule build structure from *nothing* -- and is wrong for the binder
-application, which is perturbing something already good. Those are two tasks and
-only the first has ever been trained. **Both, though, run into the same wall
-first:** re-noising a region and re-settling presupposes that the re-settling
-*stops*, and it does not
-([[the-rule-has-no-attractor-past-its-training-horizon]]). A diffusion schedule
-terminates by construction. This is the third independent argument for
-persistence being the blocking prerequisite, and the first that comes from the
-application rather than from the metric.
+**What it pre-empts.** "Locally resample a region conditioned on surviving
+structure" is now first-class in a production model, not a trick. Any claim of
+the form "only a local rule can regrow a chosen region" is dead -- it was
+already dead via motif scaffolding and inpainting, and this closes the door
+louder. So the damage protocol is an **instrument**, never a contribution, and
+the interpretability pitch cannot rest on it. It has to be carried entirely by
+the shared local rule and the explicit fields and couplings of the Potts
+summary.
+
+**What it does not pre-empt**, and this is where the novelty actually sits:
+
+  * **The sweep.** Per-region noise still runs all-pairs attention over the
+    whole complex at every step, however few residues were noised. One window's
+    conditional is affordable; a dense map over every window at N samples each
+    is not. Prior art on the operation, not on the scaling.
+  * **Spread as a measurement rather than a setpoint.** `sigma` is *chosen*, and
+    training calibrates the output variance to it, so the local diversity of a
+    partial-diffusion sample is a hyperparameter. Our damage sets the initial
+    condition only and the rule is never told how bad it was, so the spread is a
+    **response**. That difference is the entire reason "regrow a loop N times
+    and the spread is its conformational freedom" is a measurement at all. The
+    weaker honest form: rigidity read off a diffusion model at fixed `sigma` is
+    *confounded* -- it mixes the model's noise calibration with the structure's
+    freedom, and there is no principled `sigma` -- not impossible.
+  * **Refusing the reliability label.** They condition on `sigma`; this rule has
+    no way to be told which residues to trust. Opposite designs, so their work
+    leaves the architectural question untouched.
+
+**Where it hurts.** The comparison on quality is unfavourable and will stay that
+way: a flagship model does this operation well, and ours does it at 7.78 A with
+no attractor. The case can never be "we do this better". It is "we do it in a
+form that can be read, at a cost that permits doing it everywhere" -- and that
+case is only worth making once the rule stops drifting.
+
+**Where it helps.** It establishes that region-local resampling against a fixed
+context is an operation worth having, so the framing is de-risked rather than
+speculative. And it supplies a **fair baseline**: differential denoising at
+matched displacement is the comparison for any claim about what regrowth spread
+measures, which is sharper than "versus pairformers".
 
 ## Requires
 - [[question-does-regrowth-dispersion-measure-conformational-freedom]]
