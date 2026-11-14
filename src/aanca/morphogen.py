@@ -1,5 +1,28 @@
 """Fields that travel along the chain, not through space.
 
+**Superseded 14 Nov, and nothing uses it.** Ulban: transport should not run
+along the chain, because the residue graph is spatial. The measurement that
+settles it is in
+``docs/claims/the-chain-transported-morphogen-is-a-positional-encoding.md``:
+``_live_bonds`` below makes the whole design conditional on ``alive`` varying,
+and under ``birth="none"`` -- what ``configs/regeneration.toml`` sets and every
+arm since g9 has run -- nothing is dormant, every bond conducts, and the
+transported groups converge to ``decay ** index`` to 1.2e-07. By this module's
+own stated test that is a positional encoding handed to the rule, and
+``field_features`` feeds its logarithm, which is a linear sequence coordinate at
+four resolutions mirrored from both termini.
+
+What survives is the **emitted** group, because the rule chooses what to
+secrete. Diffusing it over the perception graph's own edges instead of along
+``links`` drops both decay groups -- 8 of 10 channels -- and needs no second
+topology. ``morphogen = false`` in every arm ever run, so there is no recorded
+result to reproduce and this module can be replaced rather than deprecated.
+
+The original rationale follows, kept because the bootstrap problem it names is
+real; the answer is that a spatially diffused field is wrong in the same way the
+geometry is wrong, which is the right kind of wrong, while a chain field is
+robust to the geometry being wrong because it carries no geometry at all.
+
 The deficit this exists for is recorded in docs/JOURNAL.md under "Rethink": every
 edge a growth rollout perceives is selected from ``coords.detach()`` within a
 10 A cutoff, so two residues that ought to touch and currently do not have no

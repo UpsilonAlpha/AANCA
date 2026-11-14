@@ -215,6 +215,18 @@ deliverable, and not a number to chase on its own.
 7. **The `[environment]` block** in `snapshot()`. A fourth undiagnosed
    per-update rate: 3.2 s/update on mi300x against 0.85 on mi355x.
 
+**Superseded by the rescope, and recorded rather than deleted:** the
+chain-transported morphogen. Under `birth="none"`, which every arm since g9
+runs, nothing is dormant, every bond conducts, and the transported groups
+converge to `decay ** index` to 1.2e-07 -- a positional encoding by the module's
+own stated test, whose logarithm is a linear sequence coordinate at four
+resolutions from both termini. Ulban, 14 Nov: transport should not run along the
+chain, because the residue graph is spatial. What survives is the emitted group
+diffused over the perception graph's existing edges, which drops 8 of the 10
+channels and needs no second topology
+(`docs/claims/the-chain-transported-morphogen-is-a-positional-encoding.md`).
+`morphogen = false` in every arm, so nothing is locked and it is not queued.
+
 **Demoted by the rescope**, and recorded as such rather than dropped:
 ensemble-dispersion spread and the B-factor Spearman. A positive result there
 is a **replication** of PLACER and RFD4's reproduction of it, not a finding, so
