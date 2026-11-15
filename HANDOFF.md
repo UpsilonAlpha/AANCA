@@ -266,6 +266,14 @@ residue's own frame -- Growing NCA's Sobel pair, on a graph -- for 3,456
 parameters. `FIELD_NODE_EXTRA` 4 -> 10. Invariance checked on real geometry at
 3.6e-08.
 
+**The field now has four channels, not two (15 Nov).** Two was a *signed pair*
+and so declared the field to be electrostatics; four declares nothing, which is
+the Growing NCA position -- a signed pair still fits inside four, and so does a
+hydrophobic signal, which has no sign and cannot share a pair. `EMIT_CHANNELS`
+2 -> 4, `FIELD_NODE_EXTRA` 10 -> 20, parameters 245,270 -> 251,160, node_dim 76,
+all 951 tests pass with the dimension guard unchanged because the tests assert
+the relation rather than the number.
+
 **Why this matters beyond the morphogen.** `g10_equiv_ceil` ran regeneration
 *with* the equivariance fix and its move was still not aimed: align **-0.096**
 against a +0.206 null. The chemotaxis number says that was never an

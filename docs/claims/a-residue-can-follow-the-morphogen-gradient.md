@@ -107,11 +107,20 @@ functional form electrostatics takes in salt water. So:
   * **`field_gradient` is the force, not the potential.** `grad phi` is what a
     charge responds to, and it is exactly what the block supplies, in the frame
     the translation is read in. "Follow the gradient" is one linear map.
-  * **The rule can learn signed charge**, because `EMIT_CHANNELS = 2` and the
-    node block carries the residue one-hot: one channel for positive, one for
-    negative, and their difference is a signed potential. Nothing is tabulated,
+  * **The rule can learn signed charge**, because the node block carries the
+    residue one-hot and a pair of channels gives a signed potential: one
+    positive, one negative, their difference the sign. Nothing is tabulated,
     which is the condition from
     [[the-clash-term-does-not-see-the-ramachandran-plot]].
+  * **`EMIT_CHANNELS` is now 4, not 2** (15 Nov, Ulban's call). Two channels
+    *was* the signed pair and therefore said the field is electrostatics. Four
+    says the field is whatever the rule finds useful to secrete -- the signed
+    pair still fits inside it, and so does a hydrophobic signal, which has no
+    sign and so cannot share the pair. This is the Growing NCA position, where
+    a cell's chemicals carry no assigned meaning at all. `FIELD_NODE_EXTRA`
+    10 -> 20, parameters 245,270 -> 251,160, node_dim 76. Nothing asserts the
+    rule will use all four; an unused channel decays to nothing, which is a
+    cheaper failure than a channel the rule needed and did not have.
 
 A graph is not R^3 and the discrete field has no `1/r`, so this is an analogy
 with the right form rather than an implementation of Coulomb's law.

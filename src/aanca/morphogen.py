@@ -63,9 +63,23 @@ from __future__ import annotations
 import torch
 from torch import Tensor
 
-#: Channels the rule secretes into. Two, so a cell can make a gradient and a
-#: second signal that is not a function of the first.
-EMIT_CHANNELS = 2
+#: Channels the rule secretes into. **Four, and the number is the design
+#: choice.** Two was chosen as a signed pair -- one channel positive, one
+#: negative, their difference a signed potential -- which makes the diffused
+#: field electrostatics and nothing else
+#: (``docs/claims/a-residue-can-follow-the-morphogen-gradient.md``). Four says
+#: instead that the field is *whatever the rule finds useful to secrete*: a
+#: signed pair still fits inside it if that is what the rule wants, and so does
+#: a hydrophobic signal, which has no sign and so cannot share the pair. This
+#: is the Growing NCA position, where a cell's chemicals carry no assigned
+#: meaning at all and the only thing fixed is how many there are.
+#:
+#: The cost is ``5 * EMIT_CHANNELS`` node features (two amplitude, three
+#: gradient per channel) and about 3.5k parameters. Nothing here asserts the
+#: rule will use all four; an unused channel costs its features and decays to
+#: nothing, which is a cheaper failure than a channel the rule needed and
+#: did not have.
+EMIT_CHANNELS = 4
 #: ``D``: the fraction of the gap to the neighbourhood mean that is closed in
 #: one step. This is the explicit Euler step of the diffusion equation on a
 #: graph -- ``c + D * (mean - c)``, a discrete Laplacian relaxation -- and it is

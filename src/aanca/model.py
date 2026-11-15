@@ -80,7 +80,7 @@ DENSITY_NODE_EXTRA = 16
 #:
 #: Asserted equal to ``morphogen.FIELD_FEATURE_DIM + FIELD_GRADIENT_DIM`` in
 #: the tests, the same guard the two blocks above have.
-FIELD_NODE_EXTRA = 10
+FIELD_NODE_EXTRA = 20
 EDGE_FEATURE_DIM = 575
 
 #: Ceiling on ``log kappa``. A likelihood loss can be reduced by claiming
