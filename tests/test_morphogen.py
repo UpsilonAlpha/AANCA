@@ -501,12 +501,17 @@ def test_the_gradient_block_shapes_are_checked():
 
 # -- the polarity source ---------------------------------------------------
 #
-# A source at every hanging covalent end, so a growing chain has something to
-# grow *towards*. The tests that matter here are the last two, and they are the
-# caveat rather than the feature: a field with sources at the termini is what
-# the retired chain-transported module had, and on a straight chain this one
-# reproduces it exactly. What rescues it is the structure folding, not anything
-# in the function.
+# A source at every hanging covalent end, in two opposing channels whose ratio
+# is a position along the axis joining them -- the French flag readout. The
+# last two tests are the ones that matter, and what they pin is that the
+# readout tracks the *body axis*: on a straight chain the body axis and the
+# residue index are the same thing, and adding one spatial edge separates them.
+# The field is a spatial coordinate throughout; only the geometry decides
+# whether that coordinate happens to equal the index.
+#
+# Why this is tested at all: a field with sources at the termini is what the
+# retired chain-transported module had, and that one was `decay ** index`
+# whatever the geometry.
 
 
 def _spearman(a: torch.Tensor, b: torch.Tensor) -> float:
@@ -587,22 +592,23 @@ def test_compose_emission_puts_the_polarity_channels_first():
         compose_emission(learned, terminus_emission(torch.ones(2, dtype=torch.bool), 3))
 
 
-def test_the_polarity_field_is_a_positional_encoding_on_a_straight_chain():
-    """**The caveat, pinned as a number rather than left as a worry.**
+def test_on_a_straight_chain_the_body_axis_is_the_residue_index():
+    """The degeneracy, pinned as a number, and it belongs to the geometry.
 
     On a chain whose spatial graph is its sequence -- which is what an extended
     or helical start state very nearly is -- the two polarity channels are
-    monotone in the residue index, rank correlation exactly -1 and +1. That is
-    the property that retired the chain-transported module
+    monotone in the residue index, rank correlation exactly -1 and +1. This is
+    **not** the field behaving like the retired chain-transported module
     (``docs/claims/the-chain-transported-morphogen-is-a-positional-encoding.md``),
-    and this function reproduces it, because on a straight chain graph distance
-    *is* sequence distance.
+    which reported ``decay ** index`` whatever the geometry. It is the field
+    reporting position along the body axis correctly, on a structure where the
+    body axis *is* the index.
 
-    Measured on 1UBQ the same way: rho is -1.00 and +1.00 on the helix
-    baseline and -0.21 and +0.16 on the native fold. So the field stops being
-    a coordinate as the structure folds, and the thing that rescues it is the
-    structure rather than anything here. A growth rollout starts at the
-    baseline, so it starts with a coordinate.
+    Measured on 1UBQ: the French flag readout correlates -0.92 to -1.00 with
+    the spatial body-axis coordinate in every start state tried, and -0.19 with
+    the index on the native fold. What changes between start states is whether
+    the two are the same thing -- 1.000 on a torsion walk, 0.241 on the native
+    fold, 0.404 with a 12-residue window damaged.
     """
     n = 21
     neighbours, mask = _line_graph(n)
@@ -617,8 +623,8 @@ def test_the_polarity_field_is_a_positional_encoding_on_a_straight_chain():
     assert _spearman(field[:, 1].to(torch.float64), index) == 1.0
 
 
-def test_folding_the_chain_breaks_the_positional_encoding():
-    """And the other half of the caveat: the fold is what undoes it.
+def test_folding_the_chain_separates_the_body_axis_from_the_index():
+    """The other half: geometry is what decides, so changing it changes this.
 
     Same chain, one extra *spatial* edge joining the two ends, which is what a
     fold is. The field is then a function of distance around the ring, so it

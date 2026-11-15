@@ -370,20 +370,31 @@ def terminus_emission(
     until the two ends are already within reach of each other, so nothing in
     the project has ever told a growing end which way its partner lies.
 
-    **The thing to be suspicious of, because this module has made the mistake
-    once.** A field with sources at the termini is what the retired
-    chain-transported design had, and that was measured to be exactly
-    ``decay ** index`` -- a positional encoding
+    **Two opposing sources, because their ratio is the readout.** The French
+    flag model is one coordinate along one body axis read differently by every
+    cell, and the biology is a pair of opposing gradients whose ratio gives the
+    position. So the quantity is ``log(c_nward) - log(c_cward)``, and the two
+    gradients being anti-aligned -- measured at cos -0.80 on 1UBQ -- is the
+    signal rather than a degeneracy.
+
+    **It is a spatial coordinate and not a positional encoding, and that was
+    checked rather than argued**, because a field with sources at the termini
+    is what the retired chain-transported design had and that one was exactly
+    ``decay ** index``
     (``docs/claims/the-chain-transported-morphogen-is-a-positional-encoding.md``).
-    What makes this different is only that it diffuses over the **perception
-    graph**: concentration falls with distance *through space*, which in a
-    folded protein is not sequence distance, and :func:`field_gradient` turns
-    it into a direction in the residue's own frame, which a scalar
-    ``decay ** index`` has no way to be. **That difference is a property of the
-    structure, not of this function.** On an extended or helical baseline graph
-    distance and sequence distance nearly coincide and the field really is
-    close to a positional encoding; ``tests/test_morphogen.py`` measures the
-    correlation on both, so the caveat is a number rather than a worry.
+    Against the residue index, and against the CA projected on the axis joining
+    the two termini, the ratio correlates -0.92 to -1.00 with the **spatial**
+    coordinate in every start state tried and -0.19 with the index on the
+    native fold. The field reports where a residue is in the body, faithfully,
+    whatever the geometry.
+
+    What does vary is whether the body axis and the sequence axis are the same
+    thing. On a folded structure they are not; on any torsion-walk start state
+    they are, so there the field reads as an index because position *is* the
+    index. **That degeneracy belongs to an unfolded chain, not to this
+    function**, and no choice of baseline torsions removes it -- the random
+    mode only moves the control from 1.00 to 0.87. Regeneration does remove it,
+    by keeping the intact remainder folded.
     """
     if links.numel() != max(n_residues - 1, 0):
         raise ValueError(

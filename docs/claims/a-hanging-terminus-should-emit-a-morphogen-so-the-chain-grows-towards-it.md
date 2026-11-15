@@ -41,24 +41,32 @@ are exactly 0.0; with it on they span **0.0003 to 1.0000**, while the learned
 channels sit at 0.907 -- saturated and flat, which is the initialisation
 problem this was meant to route around, visible in the same tensor.
 
-## Two sources, because one fixes a bearing and two fix an orientation -- and that claim is weaker than it sounds
+## Two sources give one axis, and the anti-alignment is the signal
 
-The argument for a *pair* of sources is that an orientation needs two
-independent directions, where a bearing needs one. Measured on 1UBQ at steady
-state, with both gradients taken in each residue's own frame:
+Ulban, 15 Nov: *"two gradients should be anti-aligned, they're coming from
+different termini - exactly french flag style."* Correct, and it corrects a
+claim made here a few hours earlier. Measured on 1UBQ at steady state, both
+gradients in each residue's own frame:
 
     cos(grad_nward, grad_cward)        -0.8030   mean over all 76 residues
     both gradients non-degenerate       76/76
-    |cos| < 0.90                        46/76
-    |cos| < 0.99                        72/76
 
-**So they are mostly anti-aligned, not independent.** One source points up the
-chain and the other down it, so the pair spans a line plus a perpendicular
-component of about 0.6 of the magnitude -- real, but a long way from a frame.
-Forty-six of seventy-six residues have enough independence to span a plane.
-The honest statement is that two sources give one strong axis and a weak second
-direction, not a coordinate frame, and a third source would be needed before
-"the frame reads its angles off the field" is literally true.
+They are anti-aligned, and **that is what an opposing pair is for.** The
+French flag model is one coordinate along one body axis, read differently by
+every cell according to its own identity, and the biology is a pair of
+opposing gradients -- anterior and posterior -- whose *ratio* is the readout.
+So the quantity to measure is not the angle between them but
+
+    r = log(c_nward) - log(c_cward)
+
+which is a signed position along the axis joining the two sources.
+
+**What this retracts.** An earlier draft of this node said two sources were
+meant to fix an *orientation*, and read the anti-alignment as that claim
+failing. Two opposing gradients do not fix an orientation and were never going
+to: they fix a **position along an axis**, which is both what the French flag
+needs and what the next section measures. The 0.6 perpendicular component is
+incidental, not the point.
 
 ## And it cannot turn yet, whatever the field says
 
@@ -73,32 +81,51 @@ alternative to it.** Position can follow the field today; orientation cannot,
 and the measured bearing failure ([[the-equivariance-fix-did-not-release-a-bearing]],
 align -0.096 against a +0.206 null) is about orientation.
 
-## The thing to be suspicious of, measured rather than argued
+## It is a spatial coordinate, not a positional encoding, and the degeneracy belongs to the start state
 
-A field with sources at the termini is **exactly what the retired
-chain-transported design was**, and that was measured to be `decay ** index` --
-a positional encoding ([[the-chain-transported-morphogen-is-a-positional-encoding]]).
-The defence is that this one diffuses over the perception graph, so
-concentration falls with distance *through space*. Spearman correlation of each
-polarity channel against the residue index, 1UBQ, 60 steps to steady state:
+A field with sources at the termini is **what the retired chain-transported
+design was**, and that one was measured to be `decay ** index`
+([[the-chain-transported-morphogen-is-a-positional-encoding]]). So the test is
+whether `r` tracks **where a residue is in the folded body** or **what its
+index is**. Against the residue index, and against `x`, the CA projected on the
+unit vector from the first CA to the last, with `rho(x, index)` as the control:
 
-    start state        rho(nward, i)   rho(cward, i)   |grad| mean
-    native fold            -0.2120         +0.1596        0.0832
-    helix baseline         -1.0000         +1.0000        0.0604
+    start state         rho(r, index)   rho(r, x)   rho(x, index)   end-to-end
+    native                    -0.189      -0.972          +0.241       37.1 A
+    12-residue window         -0.319      -0.925          +0.404       37.1 A
+    24-residue window         +0.109      -0.970          -0.066       37.1 A
+    helix baseline            -1.000      -1.000          +1.000      113.9 A
+    random baseline           -0.934      -0.953          +0.871       49.4 A
+    extended baseline         -1.000      -1.000          +1.000      273.2 A
 
-**On the native fold it is not a coordinate; on the helix baseline it is
-exactly one.** Rank correlation 1.00, which is the retired module's failure
-reproduced in full.
+**`rho(r, x)` is -0.92 to -1.00 in every row.** The field reports position
+along the body axis, faithfully, whatever the geometry -- which is what a cell
+can actually sense and is *not* what the retired module did, because that one
+reported the index regardless of geometry.
 
-That is a real finding and it cuts against the premise, because **a growth
-rollout starts at the helix baseline**. So the field begins as a positional
-encoding and stops being one only as the structure folds -- which is the "right
-kind of wrong" the retired node argued for, now with numbers on both ends
-rather than an assurance. Whether a rule that reads a coordinate early learns
-to stop relying on it later is not something this measurement answers.
-`tests/test_morphogen.py` pins both halves on a synthetic chain: rho is exactly
--1 and +1 on a straight graph, and adding one spatial edge between the ends
-breaks monotonicity.
+What varies down the table is the **control**. On a folded structure the body
+axis and the sequence axis are different things (`rho(x, index)` = 0.24), so a
+spatial coordinate is not an index. On any torsion-walk baseline they are the
+same thing (1.000), and the field reads as an index because *on that start
+state position is the index*. The degeneracy is a property of an unfolded
+chain, not of this function.
+
+**So "don't use a helix baseline" is right as a direction and does not fix
+it.** The random mode only moves the control from 1.000 to 0.871, because any
+walk with ideal covalent geometry is extended -- 49 A end to end against the
+native 37 A -- and every extended chain has this degeneracy. No choice of
+torsions removes it.
+
+**What removes it is the task.** Regeneration keeps the intact remainder at its
+crystal pose, so the structure is folded from step 0 and the control sits at
+0.40 and -0.07 for a 12- and a 24-residue window. The problem is confined to
+whole-structure growth, which the record already holds to be harder than and
+different from the goal
+([[whole-structure-growth-is-a-harder-and-different-task-than-regeneration]]).
+
+`tests/test_morphogen.py` pins the mechanism on a synthetic chain: on a
+straight graph the readout is exactly monotone in the index, and adding one
+spatial edge between the ends breaks it.
 
 ## Two objections the polarity framing dissolves
 

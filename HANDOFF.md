@@ -314,24 +314,38 @@ to `LEARNED_EMIT_CHANNELS = 4` rather than a tax on it, so `EMIT_CHANNELS = 6`,
 are exactly zero with it off, while the learned channels sit at 0.907 --
 saturated and flat, the initialisation problem visible in the same tensor.
 
-**Two measurements that bound it, and both cut against the enthusiasm.**
-*First*, two sources were supposed to fix an orientation where one fixes a
-bearing. Measured, the two gradients are **anti-aligned at cos -0.803**, with
-only 46 of 76 residues below |cos| 0.90 -- one strong axis plus a perpendicular
-component around 0.6, not a frame. A third source would be needed before "the
-frame reads its angles off the field" is literally true. *Second*, and more
-seriously, a terminus-sourced field is **exactly what the retired
-chain-transported design was**, and the Spearman against residue index says:
+**The field is a spatial coordinate, not a positional encoding, and the
+earlier reading of this was wrong.** Ulban, 15 Nov: *"two gradients should be
+anti-aligned, they're coming from different termini - exactly french flag
+style."* Right, and it reframes everything. An opposing pair is not two
+independent directions and was never going to fix an orientation; its **ratio**
+is the readout, `r = log(c_nward) - log(c_cward)`, a signed position along the
+axis joining the sources. So the test is whether `r` tracks the **body axis**
+or the **residue index**, with `x` = CA projected on the first-to-last-CA unit
+vector and `rho(x, index)` as the control:
 
-    start state        rho(nward, i)   rho(cward, i)
-    native fold            -0.2120         +0.1596
-    helix baseline         -1.0000         +1.0000
+    start state         rho(r, index)   rho(r, x)   rho(x, index)   end-to-end
+    native                    -0.189      -0.972          +0.241       37.1 A
+    12-residue window         -0.319      -0.925          +0.404       37.1 A
+    24-residue window         +0.109      -0.970          -0.066       37.1 A
+    helix baseline            -1.000      -1.000          +1.000      113.9 A
+    random baseline           -0.934      -0.953          +0.871       49.4 A
+    extended baseline         -1.000      -1.000          +1.000      273.2 A
 
-On the native fold it is not a coordinate; **on the helix baseline it is
-exactly one**, which is the retired module's failure reproduced in full -- and
-a growth rollout starts at the helix baseline. So the field begins as a
-positional encoding and stops being one only as the structure folds. Pinned
-both ways in `tests/test_morphogen.py` on a synthetic chain.
+**`rho(r, x)` is -0.92 to -1.00 in every row**, so the field faithfully
+reports position along the body axis whatever the geometry -- which the retired
+module did not, because it reported the index regardless of geometry. What
+varies is the control: on a folded structure body axis and sequence axis are
+different (0.241), on any torsion walk they are the same (1.000), and there the
+field reads as an index because position *is* the index.
+
+**So "don't use a helix baseline" is right as a direction and does not fix
+it.** Random only moves the control 1.000 -> 0.871, because any walk with ideal
+covalent geometry is extended (49 A against the native 37 A) and every extended
+chain is degenerate. **The task is what fixes it**: regeneration keeps the
+remainder at its crystal pose, so the control is 0.40 and -0.07 for a 12- and a
+24-residue window. The problem is confined to whole-structure growth, already
+held to be harder than and different from the goal.
 
 **It also cannot turn yet.** `lab_rotation = true` everywhere means the
 rotation is applied in the lab frame while perception is invariant, so a
