@@ -39,7 +39,7 @@ is the difference between a stochastic rollout and a deterministic one** --
 and in a `birth = none`, `identity_weight = 0` regeneration rollout it is the
 *only* remaining source of nondeterminism once the damaged window is fixed.
 Which means it silently decided the design of the dispersion measurement
-([[question-does-regrowth-dispersion-measure-conformational-freedom]]).
+([[regrowth-dispersion-measures-conformational-freedom]]).
 
 ## And its Growing-NCA justification may not transfer
 
@@ -85,7 +85,7 @@ than 0.5**, so whether asynchrony helps, hurts or does nothing here is
 unmeasured. The Growing-NCA argument above is a reason to test it, not a result.
 
 ## Supports
-- [[question-does-regrowth-dispersion-measure-conformational-freedom]]
+- [[regrowth-dispersion-measures-conformational-freedom]]
 
 ## Requires
-- [[question-is-two-thousand-updates-enough-for-any-arm-to-have-converged]]
+- [[two-thousand-updates-is-enough-for-an-arm-to-converge]]

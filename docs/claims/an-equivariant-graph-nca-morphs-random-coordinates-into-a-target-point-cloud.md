@@ -68,4 +68,4 @@ not a quoted RMSD.** Recorded that way deliberately.
 
 ## Supports
 - [[placing-a-node-from-local-distances-needs-a-globally-rigid-neighbourhood]]
-- [[question-can-the-architecture-place-residues-under-any-supervision]]
+- [[the-architecture-can-place-residues-under-some-supervision]]

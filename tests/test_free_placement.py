@@ -31,6 +31,7 @@ from aanca.growth import (
     park_coords,
 )
 from aanca.model import AANCARule
+from aanca.morphogen import TERMINUS_CHANNELS
 from aanca.rollout import RolloutConfig, initial_state, rollout
 from aanca.structure import load_protein
 from aanca.torch_graph import feature_topology
@@ -259,7 +260,12 @@ def test_the_field_is_carried_and_reaches_beyond_the_perception_cutoff(ubiquitin
     assert bool(torch.isfinite(field).all())
 
     grown = result.state.alive
-    carrying = field[:, 0] > 0
+    # The FIRST LEARNED channel, not channel 0. Since the polarity source
+    # landed, ``[:TERMINUS_CHANNELS]`` is the structural field injected at
+    # hanging covalent ends and is exactly zero unless
+    # ``RolloutConfig.terminus_source`` is on, which it is not here. What this
+    # test is about is the emit head's own secretion.
+    carrying = field[:, TERMINUS_CHANNELS] > 0
     # Confined to the grown structure: a dormant slot has no atoms in
     # perception and must not hold a concentration anything could read.
     assert int((carrying & ~grown).sum()) == 0

@@ -148,5 +148,5 @@ gradient window is the one change that lets a residue be differentiated through
 its own arrival, so if the request falls there, saturation was downstream.
 
 ## Supports
-- [[question-does-a-trained-rule-use-its-movement-budget]]
+- [[a-trained-rule-spends-its-movement-budget-coherently]]
 - [[the-gradient-window-is-a-third-of-the-journey-the-window-must-travel]]

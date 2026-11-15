@@ -78,7 +78,7 @@ In this order, and nothing downstream matters until they are answered.
   1. **Is 7.78 A real?** No arm in this project has been replicated at a second
      seed, because `seed` also chooses the held-out set, so the one replicate
      attempted measured different proteins
-     ([[question-has-any-arm-been-replicated-at-a-second-seed]]). This needs
+     ([[no-growth-arm-has-been-run-twice-so-no-difference-has-an-error-bar]]). This needs
      `eval_ids` as a config key pinning PDB ids rather than integer indices, and
      one run. It is the cheapest thing in the queue and it gates everything.
   2. **Does the rule hold what it builds?** `g21_pool` (32904055) is the
@@ -293,10 +293,57 @@ to learn to read the field only at a frontier.
 (`docs/claims/a-hanging-terminus-should-emit-a-morphogen-so-the-chain-grows-towards-it.md`.)
 
 **Argmap convention, corrected by Ulban 15 Nov: entries are premises, stated as
-assertions.** `the-backbone-should-be-grown-sequentially` was restated from a
-question title. The eleven `question-*.md` nodes still carry interrogative
-titles and are against this convention; converting them churns inbound
-wikilinks in several nodes and has not been done.
+assertions.** Done. `the-backbone-should-be-grown-sequentially` was restated,
+and the nine `question-*.md` nodes were renamed to premise form -- 34 files
+rewritten, no broken wikilinks, finding count unchanged at 4. `type: question`
+stays in the frontmatter, because that is what gates dependent claims at check
+3; only the title and the slug changed.
+
+**BUILT 15 Nov: the polarity source.** Ulban's correction is the design --
+*"frame angles place themselves influenced by an N-C gradient"* -- so this is a
+**local coordinate system a frame reads its angles against**, not an attractor
+pulling residues at a cut end. `morphogen.terminus_emission` secretes 1.0 into
+channel 0 at every residue whose N side has no covalent neighbour and channel 1
+where the C side has none; `compose_emission` fixes the order, structural
+first; `RolloutConfig.terminus_source` gates it, default **off** so arms stay
+comparable, and the source is **re-injected every step** because it is a
+boundary condition, not an initial one. `TERMINUS_CHANNELS = 2` is an addition
+to `LEARNED_EMIT_CHANNELS = 4` rather than a tax on it, so `EMIT_CHANNELS = 6`,
+`FIELD_NODE_EXTRA` 20 -> 30, node_dim 86, parameters 251,160 -> 256,920. On
+1UBQ at 20 steps the polarity channels span 0.0003-1.0000 with the flag on and
+are exactly zero with it off, while the learned channels sit at 0.907 --
+saturated and flat, the initialisation problem visible in the same tensor.
+
+**Two measurements that bound it, and both cut against the enthusiasm.**
+*First*, two sources were supposed to fix an orientation where one fixes a
+bearing. Measured, the two gradients are **anti-aligned at cos -0.803**, with
+only 46 of 76 residues below |cos| 0.90 -- one strong axis plus a perpendicular
+component around 0.6, not a frame. A third source would be needed before "the
+frame reads its angles off the field" is literally true. *Second*, and more
+seriously, a terminus-sourced field is **exactly what the retired
+chain-transported design was**, and the Spearman against residue index says:
+
+    start state        rho(nward, i)   rho(cward, i)
+    native fold            -0.2120         +0.1596
+    helix baseline         -1.0000         +1.0000
+
+On the native fold it is not a coordinate; **on the helix baseline it is
+exactly one**, which is the retired module's failure reproduced in full -- and
+a growth rollout starts at the helix baseline. So the field begins as a
+positional encoding and stops being one only as the structure folds. Pinned
+both ways in `tests/test_morphogen.py` on a synthetic chain.
+
+**It also cannot turn yet.** `lab_rotation = true` everywhere means the
+rotation is applied in the lab frame while perception is invariant, so a
+perceivable reference axis does not help an output read in the wrong frame.
+**`g16_localrot` is a prerequisite for this premise, not an alternative**, and
+it has still never run.
+
+Two earlier objections are withdrawn by the polarity framing: partner identity
+is unnecessary because N-ward and C-ward are globally meaningful, and "a source
+attracts everything" was backwards -- every residue reading one gradient is the
+French flag model, which is the mechanism rather than a side effect.
+(`docs/claims/a-hanging-terminus-should-emit-a-morphogen-so-the-chain-grows-towards-it.md`.)
 
 **Why this matters beyond the morphogen.** `g10_equiv_ceil` ran regeneration
 *with* the equivariance fix and its move was still not aimed: align **-0.096**

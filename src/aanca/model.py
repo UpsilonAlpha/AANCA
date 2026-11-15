@@ -27,7 +27,7 @@ from torch import Tensor, nn
 
 from . import residue_constants as rc
 from .identity import LIBRARY_SIZE
-from .morphogen import EMIT_CHANNELS
+from .morphogen import EMIT_CHANNELS, LEARNED_EMIT_CHANNELS
 
 #: Dimensions of the NumPy featuriser's output, from ``graph.build_graph``.
 NODE_FEATURE_DIM = 32
@@ -80,7 +80,7 @@ DENSITY_NODE_EXTRA = 16
 #:
 #: Asserted equal to ``morphogen.FIELD_FEATURE_DIM + FIELD_GRADIENT_DIM`` in
 #: the tests, the same guard the two blocks above have.
-FIELD_NODE_EXTRA = 20
+FIELD_NODE_EXTRA = 30
 EDGE_FEATURE_DIM = 575
 
 #: Ceiling on ``log kappa``. A likelihood loss can be reduced by claiming
@@ -364,7 +364,7 @@ class AANCARule(nn.Module):
             # acts on what other residues can perceive, which is the only kind
             # of output a cell in a developing tissue actually has.
             self.emit_head = nn.Sequential(
-                nn.Linear(state_dim, 64), nn.GELU(), nn.Linear(64, EMIT_CHANNELS)
+                nn.Linear(state_dim, 64), nn.GELU(), nn.Linear(64, LEARNED_EMIT_CHANNELS)
             )
         if hole:
             self.hole_head = nn.Sequential(
@@ -577,7 +577,11 @@ class AANCARule(nn.Module):
         return out[:, :3], out[:, 3]
 
     def emit(self, node_features: Tensor, hidden: Tensor) -> Tensor | None:
-        """``(R, EMIT_CHANNELS)`` in ``[0, 1]``: what each residue secretes.
+        """``(R, LEARNED_EMIT_CHANNELS)`` in ``[0, 1]``: what a residue secretes.
+
+        **Narrower than the field.** The first ``TERMINUS_CHANNELS`` of the
+        field are the polarity source, which no head predicts; the caller
+        widens this with :func:`aanca.morphogen.compose_emission`.
 
         ``None`` when the rule has no field, so the caller can pass the result
         straight to :func:`aanca.morphogen.diffuse`, which takes ``None`` to

@@ -94,7 +94,7 @@ diagnosed**.
     it is a ceiling but that the thing it hands over -- who contacts whom -- is
     the structural-interaction topology the project's interpretability payoff
     needs the rule to learn for itself. The replacement proposal is
-    [[question-can-the-rule-learn-its-own-perception-graph]], and **this number
+    [[the-rule-should-learn-its-own-perception-graph]], and **this number
     is its sharpest counter-evidence**: given the native selection and live
     distances, the rule still only reached 6.69 A, so recovering the graph may
     not be sufficient.
@@ -103,7 +103,7 @@ diagnosed**.
     The budget question is reopened one order of magnitude up, not closed.
   * Constant learning rate, no sample pool, fixed 120-step rollout: all three
     neural-cubes levers are still absent
-    ([[question-is-two-thousand-updates-enough-for-any-arm-to-have-converged]]).
+    ([[two-thousand-updates-is-enough-for-an-arm-to-converge]]).
     This result is what budget alone bought.
   * 0.85 s/update, against g15's 1.12 and the single-lever arms' 2.0-2.4 on the
     same configuration. Three rates, no recorded card, thread count or torch
@@ -115,4 +115,4 @@ diagnosed**.
 - [[the-rotation-half-of-the-equivariance-fix-is-still-switched-off]]
 
 ## Requires
-- [[question-is-two-thousand-updates-enough-for-any-arm-to-have-converged]]
+- [[two-thousand-updates-is-enough-for-an-arm-to-converge]]

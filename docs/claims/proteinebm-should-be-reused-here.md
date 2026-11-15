@@ -4,7 +4,7 @@ status: open
 sources: [Du 2020, ProteinEBM 2025]
 ---
 
-# Can ProteinEBM be reused here, and is it as weights, as a scorer, or as a term in the loss?
+# ProteinEBM should be reused here, as weights, as a scorer, or as a term in the loss
 
 Asked 13 Nov. Three modes of reuse get conflated by the word "reuse", and they
 have different answers: **no, yes, and probably-not-if-the-interpretability-claim-matters.**
@@ -82,7 +82,7 @@ the pmhc work records about SKEMPI being out of regime.
 
 **And (a) is worth more than it looks, because of the dispersion programme.**
 The ensemble measurement gives N regrown poses of one window
-([[question-does-regrowth-dispersion-measure-conformational-freedom]]). An
+([[regrowth-dispersion-measures-conformational-freedom]]). An
 energy per pose turns that set into a **Boltzmann-weighted ensemble**, which is
 the step from a geometric spread to a conformational *entropy* -- the quantity
 Ulban's binder hypothesis is actually about. Geometric RMSF says how far the
@@ -136,7 +136,7 @@ ablations tell you about proteins.
   3. Only then consider (b), and only with EBM-DDG's decomposition.
 
 ## Supports
-- [[question-does-regrowth-dispersion-measure-conformational-freedom]]
+- [[regrowth-dispersion-measures-conformational-freedom]]
 
 ## Requires
 - [[a-local-per-residue-rule-can-build-a-protein-backbone]]

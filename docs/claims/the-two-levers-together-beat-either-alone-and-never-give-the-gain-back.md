@@ -115,8 +115,8 @@ The bucket g15 landed in reads *"the next arm is a weight sweep, not another
 lever"*, and the body of this node then named the window-to-window weight as
 the indicated arm. That reading rested on the second prediction, which is
 withdrawn above, so **the rule no longer points at a specific weight** -- and
-with [[question-is-two-thousand-updates-enough-for-any-arm-to-have-converged]]
-and [[question-has-any-arm-been-replicated-at-a-second-seed]] both open, a
+with [[two-thousand-updates-is-enough-for-an-arm-to-converge]]
+and [[no-growth-arm-has-been-run-twice-so-no-difference-has-an-error-bar]] both open, a
 sweep over a boundary with no error bar on either side would be measuring the
 wrong thing first.
 
@@ -151,8 +151,8 @@ and does not climb.
   * 12 held-out crops. Per-crop spread is in the log, not in this node.
 
 ## Requires
-- [[question-is-two-thousand-updates-enough-for-any-arm-to-have-converged]]
-- [[question-has-any-arm-been-replicated-at-a-second-seed]]
+- [[two-thousand-updates-is-enough-for-an-arm-to-converge]]
+- [[no-growth-arm-has-been-run-twice-so-no-difference-has-an-error-bar]]
 
 ## Refutes
 - [[placement-and-internal-shape-are-traded-against-each-other]]

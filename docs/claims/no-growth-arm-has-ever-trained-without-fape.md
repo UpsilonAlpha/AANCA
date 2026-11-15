@@ -30,8 +30,8 @@ here, so this trains the machinery without needing the distribution growth does
 not have."
 
 So the project has occupied exactly one rung of the information ladder, which
-is what [[question-can-the-architecture-place-residues-under-any-supervision]]
+is what [[the-architecture-can-place-residues-under-some-supervision]]
 is about.
 
 ## Supports
-- [[question-can-the-architecture-place-residues-under-any-supervision]]
+- [[the-architecture-can-place-residues-under-some-supervision]]

@@ -3,7 +3,7 @@ type: question
 status: open
 ---
 
-# Can this architecture place residues correctly under *any* amount of supervision?
+# The architecture can place residues correctly under *some* amount of supervision
 
 **The gap the map was hiding, written as a question so it is visible at check 3
 rather than absent.** Seven arms have failed and not one of them establishes

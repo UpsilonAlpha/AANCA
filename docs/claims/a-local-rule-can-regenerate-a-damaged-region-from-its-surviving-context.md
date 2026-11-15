@@ -44,7 +44,7 @@ Three gaps keep it `open`, and they are specific rather than cautious.
   1. **Unreplicated.** No arm in this project has been replicated at a second
      seed, because `seed` also chooses the held-out set, so the one replicate
      attempted measured different proteins
-     ([[question-has-any-arm-been-replicated-at-a-second-seed]]). One
+     ([[no-growth-arm-has-been-run-twice-so-no-difference-has-an-error-bar]]). One
      `eval_ids` config key and one run away.
   2. **It does not persist.** 16.4-16.9 A at 600 steps against a 12.23 A
      untrained baseline, so 7.78 A is a snapshot of a transient at step 120
@@ -80,4 +80,4 @@ shape elsewhere.
 ## Requires
 - [[a-residue-can-be-placed-without-a-parent-placing-it]]
 - [[the-damaged-region-must-start-within-reach-of-where-it-belongs]]
-- [[question-is-7-8-angstrom-better-than-relaxing-the-helix-prior]]
+- [[the-helix-prior-is-responsible-for-some-of-the-7-78-angstrom]]

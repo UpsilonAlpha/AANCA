@@ -3,7 +3,7 @@ type: question
 status: open
 ---
 
-# Does a trained rule spend its 36 A of movement budget, and does it spend it coherently?
+# A trained rule spends its 36 A of movement budget, and spends it coherently
 
 The ceiling in [[the-per-step-translation-cap-is-0-3-angstrom]] is arithmetic
 and settles `g6_ext` outright. What it cannot say is whether the 17.45 A arms

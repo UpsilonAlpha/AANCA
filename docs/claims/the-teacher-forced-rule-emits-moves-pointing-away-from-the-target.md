@@ -40,7 +40,7 @@ looks like here**, and the trained rule sits on it:
 
 **Training left the bearing statistically indistinguishable from a randomly
 initialised head.** That is the answer to
-[[question-can-the-architecture-place-residues-under-any-supervision]], and it
+[[the-architecture-can-place-residues-under-some-supervision]], and it
 is `supported` rather than `open` because the null is now measured instead of
 assumed.
 
@@ -106,11 +106,11 @@ and the fix is architectural rather than a reweighting -- which
 [[g6-noid-never-left-the-helix-baseline]] already shows cannot work alone,
 since with identity gone and FAPE the only driver the rule asked for 0.3 % of
 its budget. If `align` stays negative,
-[[question-can-the-architecture-place-residues-under-any-supervision]] answers
+[[the-architecture-can-place-residues-under-some-supervision]] answers
 no.
 
 ## Supports
-- [[question-can-the-architecture-place-residues-under-any-supervision]]
+- [[the-architecture-can-place-residues-under-some-supervision]]
 - [[both-arms-park-at-12-23-angstrom-by-update-250]]
 
 ## Refutes

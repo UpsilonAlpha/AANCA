@@ -43,7 +43,7 @@ the update schedule and by divergence, **not** by conformational multiplicity.
 **It blocks it.** `-log` of a distribution requires a distribution, and what is
 here is a diverging trajectory: the spread at 600 steps measures how fast
 members come apart, not how many ways the loop can sit
-([[question-does-regrowth-dispersion-measure-conformational-freedom]],
+([[regrowth-dispersion-measures-conformational-freedom]],
 [[destruction-and-regrowth-yields-a-local-statistical-potential]]). A Potts
 model fitted to this would be a confident model of drift.
 

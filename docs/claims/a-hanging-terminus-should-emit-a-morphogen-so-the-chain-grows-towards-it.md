@@ -1,114 +1,129 @@
 ---
 type: claim
 status: open
-sources: [growth.py, morphogen.py, a-residue-can-follow-the-morphogen-gradient]
+sources: [morphogen.py, rollout.py, growth.py, a-residue-can-follow-the-morphogen-gradient]
 ---
 
-# A hanging terminus should emit a morphogen, so the chain grows towards it
+# A hanging terminus should emit a morphogen, and the frame reads its angles off the N-C gradient
 
 Ulban's premise, 15 Nov: *"a hanging N terminus should probably emit a
-morphogen so that the chain can 'grow towards' it."*
+morphogen so that the chain can 'grow towards' it"*, then the correction that
+matters: *"it would mean that frame angles place themselves influenced by an
+N-C gradient."*
 
-Open, and it is the first proposal in this project that attacks loop closure
-with the machinery that already exists rather than with a new restraint.
+**Built on 15 Nov. Nothing has trained with it.** The correction is the whole
+design: this is not an attractor pulling residues towards a cut end, it is a
+**local coordinate system** that a frame reads its angles against. That is
+Wolpert's positional information rather than a tractor beam -- every cell reads
+the same gradient and does something different with it -- and it dissolves two
+of the four objections the first version of this node raised.
 
-## It lands on a problem that was already named and deferred
+## What exists
 
-`growth.py`'s docstring lists what the module does not claim to have solved:
-*"two segments that meet are not covalently closed, which is the loop-closure
-problem and is left to the bond restraint."* Left to the bond restraint means
-left to a penalty that acts only once the two ends are already within reach of
-each other -- a restraint on a bond that does not yet exist cannot say which
-way to walk to make it exist.
+  * `morphogen.terminus_emission(links, n)` -- 1.0 in channel 0 at every
+    residue whose **N side** has no covalent neighbour, 1.0 in channel 1 at
+    every residue whose **C side** has none. A given input, not a prediction.
+  * `TERMINUS_CHANNELS = 2`, `LEARNED_EMIT_CHANNELS = 4`,
+    `EMIT_CHANNELS = 6`. The polarity pair is an **addition** to the four
+    learned channels rather than a tax on them, so the signed-charge and
+    unsigned-hydrophobicity budget survives. `FIELD_NODE_EXTRA` 20 -> 30,
+    node_dim 86, parameters 251,160 -> 256,920.
+  * `morphogen.compose_emission` fixes the channel order -- structural first,
+    secreted after -- so a field tensor means the same thing in every arm.
+  * `RolloutConfig.terminus_source`, default **off** so an arm with it is
+    comparable against one without. The source is **re-injected every step**,
+    because it is a boundary condition and not an initial condition:
+    degradation would erase it, and an end that stops hanging must stop
+    secreting.
 
-A gradient can. This is **chemotactic closure** rather than analytic closure
-(CCD, kinematic closure): the growing end is not constructed to arrive at its
-partner, it is attracted to it.
+Measured end to end on 1UBQ, 20 steps: with the flag off the polarity channels
+are exactly 0.0; with it on they span **0.0003 to 1.0000**, while the learned
+channels sit at 0.907 -- saturated and flat, which is the initialisation
+problem this was meant to route around, visible in the same tensor.
 
-## The measurement that bears on it already exists, and was almost this experiment
+## Two sources, because one fixes a bearing and two fix an orientation -- and that claim is weaker than it sounds
 
-[[a-residue-can-follow-the-morphogen-gradient]] put a persistent source on one
-residue of 1UBQ and asked every other residue for a translation pointing at it,
-with the structure identical in every example so the field was the only input
-carrying the answer. Held-out cosine on unseen sources:
+The argument for a *pair* of sources is that an orientation needs two
+independent directions, where a bearing needs one. Measured on 1UBQ at steady
+state, with both gradients taken in each residue's own frame:
 
-    concentration only   +0.709
-    + the gradient block +0.960
+    cos(grad_nward, grad_cward)        -0.8030   mean over all 76 residues
+    both gradients non-degenerate       76/76
+    |cos| < 0.90                        46/76
+    |cos| < 0.99                        72/76
 
-The source there was arbitrary. **Make it a hanging terminus and the probe
-becomes this premise.** So the rule's ability to follow such a source is not
-the open part; what it would be following is.
+**So they are mostly anti-aligned, not independent.** One source points up the
+chain and the other down it, so the pair spans a line plus a perpendicular
+component of about 0.6 of the magnitude -- real, but a long way from a frame.
+Forty-six of seventy-six residues have enough independence to span a plane.
+The honest statement is that two sources give one strong axis and a weak second
+direction, not a coordinate frame, and a third source would be needed before
+"the frame reads its angles off the field" is literally true.
 
-## It also fixes the initialisation problem that gates the whole field
+## And it cannot turn yet, whatever the field says
 
-Gap 3 of that node: an untrained sigmoid emit head secretes about 0.5
-*everywhere*, so after 20 steps the concentration on 1UBQ is 0.8935-0.9038 and
-the gradient block reads |value| 0.0032 mean. The field is saturated and flat,
-the rule must learn to secrete **differentially** before the block carries
-anything, and nothing in the objective rewards that.
+`lab_rotation = true` in `[base.inputs]` and in every arm ever run: the
+translation is read in the residue's own frame and the **rotation is still
+applied in the lab frame**, which an invariant encoder cannot represent
+([[the-emitted-move-was-applied-in-the-lab-frame-and-perception-is-invariant]],
+[[the-rotation-half-of-the-equivariance-fix-is-still-switched-off]]). A
+perceivable reference axis does not help an output that is interpreted in the
+wrong frame. **`g16_localrot` is a prerequisite for this premise, not an
+alternative to it.** Position can follow the field today; orientation cannot,
+and the measured bearing failure ([[the-equivariance-fix-did-not-release-a-bearing]],
+align -0.096 against a +0.206 null) is about orientation.
 
-A terminus source is differential **from step 0 with no learning at all**,
-because it is placed by the topology rather than predicted. That is the
-difference between a field the rule has to bootstrap and a field it can start
-reading immediately.
+## The thing to be suspicious of, measured rather than argued
 
-## The design decision this forces: given or learned
+A field with sources at the termini is **exactly what the retired
+chain-transported design was**, and that was measured to be `decay ** index` --
+a positional encoding ([[the-chain-transported-morphogen-is-a-positional-encoding]]).
+The defence is that this one diffuses over the perception graph, so
+concentration falls with distance *through space*. Spearman correlation of each
+polarity channel against the residue index, 1UBQ, 60 steps to steady state:
 
-  * **Given** -- the rollout injects a source at every unsatisfied covalent
-    valence. The field carries real signal from update 0. It is a hand-placed
-    input, but it is a **boundary condition rather than a potential**, and the
-    precedent is exact: a Growing NCA cell is handed its seed state, and the
-    seed is given while the pattern is learned. Nothing is tabulated, so the
-    condition from [[the-clash-term-does-not-see-the-ramachandran-plot]] holds.
-  * **Learned** -- the rule must discover that a hanging end should secrete.
-    Purer, and it walks straight into the chicken-and-egg above: the field is
-    flat until the rule secretes differentially, and the rule has no gradient
-    towards differential secretion until the field is informative.
+    start state        rho(nward, i)   rho(cward, i)   |grad| mean
+    native fold            -0.2120         +0.1596        0.0832
+    helix baseline         -1.0000         +1.0000        0.0604
 
-**Given is the recommendation**, on the Growing NCA precedent. Stated as a
-choice because it is one.
+**On the native fold it is not a coordinate; on the helix baseline it is
+exactly one.** Rank correlation 1.00, which is the retired module's failure
+reproduced in full.
 
-## Hanging ends are plentiful here, not an edge case
+That is a real finding and it cuts against the premise, because **a growth
+rollout starts at the helix baseline**. So the field begins as a positional
+encoding and stops being one only as the structure folds -- which is the "right
+kind of wrong" the retired node argued for, now with numbers on both ends
+rather than an assurance. Whether a rule that reads a coordinate early learns
+to stop relying on it later is not something this measurement answers.
+`tests/test_morphogen.py` pins both halves on a synthetic chain: rho is exactly
+-1 and +1 on a straight graph, and adding one spatial edge between the ends
+breaks monotonicity.
 
-Crops are not single chains. `growth.py` measures *"a 128-residue crop at
-measured link density of 0.92-1.00 contains about nine covalent runs"*, while
-[[a-residue-can-be-placed-without-a-parent-placing-it]] reports *"15.7 anchors
-in a 128-residue crop"* at one anchor per run. **Those two figures disagree and
-should be reconciled before either is used**, but either way it is ten to
-sixteen runs and therefore twenty to thirty-two hanging ends per crop. The
-premise applies to most of the structure, not to two residues.
+## Two objections the polarity framing dissolves
 
-## Four objections to settle before building it
+  1. **"A scalar source says *towards a terminus*, not towards *your*
+     terminus."** Withdrawn. The field is not asked to identify a partner --
+     N-ward and C-ward are globally meaningful, so a residue reads *which way
+     the chain runs* rather than *where my partner is*. Partner identity was
+     only ever needed by the attractor reading.
+  2. **"A source attracts everything, not only its partner."** Withdrawn, and
+     it was backwards. Every residue reading the same gradient is the
+     mechanism, not a side effect: a morphogen gradient is positional
+     information, and the French flag model is exactly one gradient read
+     differently by every cell according to its own identity -- which the node
+     block already carries.
 
-  1. **A scalar source says "towards a terminus", not "towards *your*
-     terminus".** Every run has two ends and a crop has dozens. A growing
-     C-ward end must find the N-ward end of the next run and not the nearest
-     end of any run. This needs either N-ward and C-ward ends in separate
-     channels -- now affordable, `EMIT_CHANNELS` is 4 -- or a partner identity
-     the field cannot carry, in which case the field gets the window close and
-     something else pairs it.
-  2. **The reach may be shorter than the gap.** `DEGRADATION = 0.10` was set
-     from the perception graph's three-hop diameter and gives a screening
-     length near 9 A; the three-hop shell reads 0.0335. Whether that is enough
-     signal across a window that must travel several Angstrom is unmeasured,
-     and lambda was tuned on ubiquitin only.
-  3. **A source attracts everything, not only its partner.** Every residue
-     reads the same gradient, so the naive version pulls the whole structure
-     towards the cut ends. The rule would have to learn to ignore the field
-     unless it is itself at a frontier -- which the closure block (24 features,
-     `frontier` is already gated on `links`) is the natural thing to gate on,
-     and that gating is the part that is genuinely new work.
-  4. **A gradient is a bearing, not a bond.** It gets the ends near each other
-     and cannot close them. So this is **complementary to a relaxation step
-     per birth, not a replacement for it** -- it solves the half of loop
-     closure that the bond restraint cannot see, and the bond restraint still
-     has to finish.
+## What is left
 
-## Status
-
-Nothing has run. `morphogen = false` in every arm, so the field has never been
-on during training at all, and this premise additionally needs a source
-injector that does not exist yet.
+  * **The reach is unmeasured outside ubiquitin.** `DEGRADATION = 0.10` was set
+    from a three-hop diameter on 1UBQ and gives a screening length near 9 A.
+    A larger protein has a larger diameter.
+  * **A gradient is a bearing, not a bond.** It gets ends near each other and
+    cannot close them, so this is complementary to a relaxation step per birth
+    rather than a replacement for it.
+  * **Nothing has trained.** `morphogen = false` in every arm, and
+    `terminus_source` defaults off, so every number above is a probe.
 
 ## Supports
 - [[a-local-per-residue-rule-can-build-a-protein-backbone]]
@@ -116,3 +131,4 @@ injector that does not exist yet.
 
 ## Requires
 - [[a-residue-can-follow-the-morphogen-gradient]]
+- [[the-rotation-half-of-the-equivariance-fix-is-still-switched-off]]

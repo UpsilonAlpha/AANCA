@@ -81,4 +81,4 @@ At ~2.4 s/update the run needs ~6.7 h against a 24 h segment, so it should not
 chain; the fix waits anyway, because "should not" is not "cannot".
 
 ## Supports
-- [[question-is-two-thousand-updates-enough-for-any-arm-to-have-converged]]
+- [[two-thousand-updates-is-enough-for-an-arm-to-converge]]

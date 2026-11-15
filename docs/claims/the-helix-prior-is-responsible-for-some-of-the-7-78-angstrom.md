@@ -3,7 +3,7 @@ type: question
 status: open
 ---
 
-# The regrowth starts from an ideal helix, so nobody has checked how much of 7.78 A the rule is responsible for
+# The helix prior is responsible for some of the 7.78 A, and nobody has checked how much
 
 Raised 14 Nov as part of the rescope, and it is the first question a reviewer
 would ask of the project's one capability result.

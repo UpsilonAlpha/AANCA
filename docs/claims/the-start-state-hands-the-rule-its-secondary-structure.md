@@ -78,7 +78,7 @@ choice, and `random` was never measured against it until today.
 
 ## And it replaces the control this needed rather than defending it
 
-[[question-is-7-8-angstrom-better-than-relaxing-the-helix-prior]] asked how much
+[[the-helix-prior-is-responsible-for-some-of-the-7-78-angstrom]] asked how much
 of g20's 4.45 A of progress was the rule and how much was the helix. From a
 `random` start that question does not arise: there is no secondary structure in
 the start state to inherit, so the null is defensible without a separate

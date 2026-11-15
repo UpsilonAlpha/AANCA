@@ -74,4 +74,4 @@ them either.
 - [[identity-supplies-the-trunk-that-geometry-reads]]
 
 ## Supports
-- [[question-can-the-architecture-place-residues-under-any-supervision]]
+- [[the-architecture-can-place-residues-under-some-supervision]]

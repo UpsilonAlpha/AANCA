@@ -98,7 +98,7 @@ produce a point.** FAPE plus restraints against a *single* native structure,
 scored at one fixed step, pushes the regrowth distribution toward a delta
 function. The better the arm gets at `rmsd_dmg`, the less of a distribution
 there is to take the log of
-([[question-does-regrowth-dispersion-measure-conformational-freedom]]).
+([[regrowth-dispersion-measures-conformational-freedom]]).
 
 So the missing Growing-NCA ingredients stop being housekeeping and become
 load-bearing: the **sample pool** and a **sampled or convergence-determined
@@ -188,10 +188,10 @@ programme.
 ProteinEBM's weights are on Bunya and are useful here in the **scorer** role --
 Boltzmann reweighting of the ensemble at a sigma matched to our displacement --
 which is the one way to put a temperature on this without training against it
-([[question-can-proteinebm-be-reused-and-in-which-of-three-ways]]).
+([[proteinebm-should-be-reused-here]]).
 
 ## Supports
 - [[a-local-per-residue-rule-can-build-a-protein-backbone]]
 
 ## Requires
-- [[question-does-regrowth-dispersion-measure-conformational-freedom]]
+- [[regrowth-dispersion-measures-conformational-freedom]]

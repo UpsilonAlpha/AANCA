@@ -79,7 +79,20 @@ from torch import Tensor
 #: rule will use all four; an unused channel costs its features and decays to
 #: nothing, which is a cheaper failure than a channel the rule needed and
 #: did not have.
-EMIT_CHANNELS = 4
+#: Channels reserved for the **polarity source**, which no head predicts:
+#: channel 0 is secreted by every residue whose N side has no covalent
+#: neighbour and channel 1 by every residue whose C side has none. See
+#: :func:`terminus_emission`. Two, because **two gradients fix an orientation
+#: where one fixes only a bearing** -- a single source gives each residue a
+#: direction to walk, and a frame needs two independent directions before
+#: "which way am I turned" is a question the field can answer at all.
+TERMINUS_CHANNELS = 2
+#: Channels the emit head predicts. Four, which was Ulban's call on 15 Nov and
+#: is preserved here: the polarity pair is an addition to that budget and not a
+#: tax on it, so the rule still has four channels of its own to put a signed
+#: charge and an unsigned hydrophobicity in.
+LEARNED_EMIT_CHANNELS = 4
+EMIT_CHANNELS = TERMINUS_CHANNELS + LEARNED_EMIT_CHANNELS
 #: ``D``: the fraction of the gap to the neighbourhood mean that is closed in
 #: one step. This is the explicit Euler step of the diffusion equation on a
 #: graph -- ``c + D * (mean - c)``, a discrete Laplacian relaxation -- and it is
@@ -328,3 +341,107 @@ def field_features(field: Tensor) -> Tensor:
     amplitude = field.clamp(min=0.0, max=1.0)
     logged = torch.log(amplitude + _LOG_FLOOR) / _LOG_SCALE
     return torch.cat([amplitude, logged], dim=-1)
+
+
+def terminus_emission(
+    links: Tensor,
+    n_residues: int,
+    *,
+    device: torch.device | None = None,
+    dtype: torch.dtype = torch.float32,
+) -> Tensor:
+    """``(R, TERMINUS_CHANNELS)``: 1.0 at each hanging covalent end.
+
+    Channel 0 is secreted by every residue with **no covalent neighbour on its
+    N side**, channel 1 by every residue with none on its C side. ``links`` is
+    the ``(R - 1,)`` bool the rest of the code uses -- ``links[i]`` means
+    residue ``i`` is bonded to ``i + 1`` -- so a run boundary is a ``False``
+    and the two real chain ends are the first and last residue.
+
+    **This is a given input, not a prediction, and that is the design
+    decision.** It is a *boundary condition* rather than a potential: the
+    precedent is a Growing NCA cell being handed its seed state, where the seed
+    is given and the pattern is learned. Two things follow and both are the
+    point. The field is **differential from step 0**, where a learned source
+    starts flat and saturated -- an untrained sigmoid secretes about 0.5
+    everywhere -- and has no gradient towards secreting differentially until
+    the field is already informative. And loop closure acquires a **bearing**:
+    ``growth.py`` deferred closure to the bond restraint, which cannot act
+    until the two ends are already within reach of each other, so nothing in
+    the project has ever told a growing end which way its partner lies.
+
+    **The thing to be suspicious of, because this module has made the mistake
+    once.** A field with sources at the termini is what the retired
+    chain-transported design had, and that was measured to be exactly
+    ``decay ** index`` -- a positional encoding
+    (``docs/claims/the-chain-transported-morphogen-is-a-positional-encoding.md``).
+    What makes this different is only that it diffuses over the **perception
+    graph**: concentration falls with distance *through space*, which in a
+    folded protein is not sequence distance, and :func:`field_gradient` turns
+    it into a direction in the residue's own frame, which a scalar
+    ``decay ** index`` has no way to be. **That difference is a property of the
+    structure, not of this function.** On an extended or helical baseline graph
+    distance and sequence distance nearly coincide and the field really is
+    close to a positional encoding; ``tests/test_morphogen.py`` measures the
+    correlation on both, so the caveat is a number rather than a worry.
+    """
+    if links.numel() != max(n_residues - 1, 0):
+        raise ValueError(
+            f"links must be (R - 1,) for R = {n_residues}, got "
+            f"{tuple(links.shape)}"
+        )
+    if device is None:
+        device = links.device
+    emission = torch.zeros(n_residues, TERMINUS_CHANNELS, device=device, dtype=dtype)
+    if n_residues == 0:
+        return emission
+    bonded = links.to(device=device, dtype=torch.bool)
+    # No neighbour N-ward: residue 0 always, plus any residue whose link back
+    # is absent. Mirror for C-ward.
+    nward_free = torch.ones(n_residues, dtype=torch.bool, device=device)
+    cward_free = torch.ones(n_residues, dtype=torch.bool, device=device)
+    if n_residues > 1:
+        nward_free[1:] = ~bonded
+        cward_free[:-1] = ~bonded
+    emission[nward_free, 0] = 1.0
+    emission[cward_free, 1] = 1.0
+    return emission
+
+
+def compose_emission(learned: Tensor | None, terminus: Tensor | None) -> Tensor | None:
+    """``(R, EMIT_CHANNELS)``: the polarity channels first, then the rule's.
+
+    The channel order is fixed rather than configurable, so a field tensor
+    means the same thing in every arm: ``[:TERMINUS_CHANNELS]`` is structural
+    and the rest is secreted. Either side may be ``None``, which contributes
+    zeros, and both ``None`` gives ``None`` so the caller can hand the result
+    straight to :func:`diffuse`.
+    """
+    if learned is None and terminus is None:
+        return None
+    if learned is not None and learned.shape[1] != LEARNED_EMIT_CHANNELS:
+        raise ValueError(
+            f"learned emission must be (R, {LEARNED_EMIT_CHANNELS}), got "
+            f"{tuple(learned.shape)}"
+        )
+    if terminus is not None and terminus.shape[1] != TERMINUS_CHANNELS:
+        raise ValueError(
+            f"terminus emission must be (R, {TERMINUS_CHANNELS}), got "
+            f"{tuple(terminus.shape)}"
+        )
+    reference = learned if learned is not None else terminus
+    n_res = reference.shape[0]
+    if terminus is None:
+        terminus = torch.zeros(
+            n_res, TERMINUS_CHANNELS, device=reference.device, dtype=reference.dtype
+        )
+    if learned is None:
+        learned = torch.zeros(
+            n_res, LEARNED_EMIT_CHANNELS, device=reference.device, dtype=reference.dtype
+        )
+    if learned.shape[0] != terminus.shape[0]:
+        raise ValueError(
+            f"learned emission has {learned.shape[0]} residues and terminus "
+            f"emission has {terminus.shape[0]}"
+        )
+    return torch.cat([terminus.to(learned.dtype), learned], dim=-1)

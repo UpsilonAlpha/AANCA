@@ -37,7 +37,7 @@ mechanical excuse for those arms and leaves the direction of FAPE's gradient as
 the only candidate.
 
 ## Requires
-- [[question-does-a-trained-rule-use-its-movement-budget]]
+- [[a-trained-rule-spends-its-movement-budget-coherently]]
 
 ## Supported by
 - [[the-reach-probes-split-the-three-frozen-arms]]

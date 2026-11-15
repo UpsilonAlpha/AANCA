@@ -35,7 +35,7 @@ has to make.
 
 This is pre-positioning rather than a result: it says which rollout
 hyperparameter to test first if
-[[question-can-the-architecture-place-residues-under-any-supervision]] comes
+[[the-architecture-can-place-residues-under-some-supervision]] comes
 back saying the architecture is the constraint. `--truncate` is already a
 trainer flag, so the ablation costs nothing to express.
 
@@ -53,5 +53,5 @@ rule is. That is a property of the sampling, not of the rule, and it puts a
 floor under `rmsd_dmg` that no objective can lift.
 
 ## Supports
-- [[question-can-the-architecture-place-residues-under-any-supervision]]
-- [[question-should-a-secondary-model-calibrate-the-rollout-parameters]]
+- [[the-architecture-can-place-residues-under-some-supervision]]
+- [[a-secondary-model-should-calibrate-the-rollout-parameters]]

@@ -33,10 +33,14 @@ from aanca.morphogen import (
     FIELD_CHANNELS,
     FIELD_GRADIENT_DIM,
     FIELD_FEATURE_DIM,
+    LEARNED_EMIT_CHANNELS,
+    TERMINUS_CHANNELS,
+    compose_emission,
     diffuse,
     field_features,
     field_gradient,
     initial_field,
+    terminus_emission,
 )
 
 
@@ -493,3 +497,159 @@ def test_the_gradient_block_shapes_are_checked():
     # The one that broadcasts instead of failing, which is why it is checked.
     with pytest.raises(ValueError, match="residues and neighbours"):
         field_gradient(initial_field(5), neighbours, direction, weight)
+
+
+# -- the polarity source ---------------------------------------------------
+#
+# A source at every hanging covalent end, so a growing chain has something to
+# grow *towards*. The tests that matter here are the last two, and they are the
+# caveat rather than the feature: a field with sources at the termini is what
+# the retired chain-transported module had, and on a straight chain this one
+# reproduces it exactly. What rescues it is the structure folding, not anything
+# in the function.
+
+
+def _spearman(a: torch.Tensor, b: torch.Tensor) -> float:
+    ra = a.argsort().argsort().to(torch.float64)
+    rb = b.argsort().argsort().to(torch.float64)
+    ra, rb = ra - ra.mean(), rb - rb.mean()
+    return float((ra @ rb) / (ra.norm() * rb.norm()))
+
+
+def test_the_polarity_source_marks_every_hanging_covalent_end():
+    """Two runs, four hanging ends, and the channels keep N and C apart.
+
+    ``links[i]`` means residue ``i`` is bonded to ``i + 1``, so ``T T F T T``
+    over six residues is the runs 0-2 and 3-5. The N-ward ends are 0 and 3,
+    the C-ward ends 2 and 5, and nothing else secretes.
+    """
+    links = torch.tensor([True, True, False, True, True])
+    emission = terminus_emission(links, 6)
+    assert emission.shape == (6, TERMINUS_CHANNELS)
+    assert emission[:, 0].tolist() == [1.0, 0.0, 0.0, 1.0, 0.0, 0.0]
+    assert emission[:, 1].tolist() == [0.0, 0.0, 1.0, 0.0, 0.0, 1.0]
+
+
+def test_an_unbroken_chain_has_exactly_two_sources():
+    """The ordinary case, and the one the whole design is aimed at.
+
+    One run means one hanging end each way, which is what makes the two
+    channels a *polarity* rather than a list of cut points.
+    """
+    n = 12
+    emission = terminus_emission(torch.ones(n - 1, dtype=torch.bool), n)
+    assert int(emission[:, 0].sum()) == 1 and bool(emission[0, 0] == 1.0)
+    assert int(emission[:, 1].sum()) == 1 and bool(emission[-1, 1] == 1.0)
+
+
+def test_a_single_residue_is_hanging_at_both_ends():
+    """Degenerate but reachable: a run of length one secretes into both."""
+    emission = terminus_emission(torch.zeros(0, dtype=torch.bool), 1)
+    assert emission.tolist() == [[1.0, 1.0]]
+
+
+def test_the_polarity_source_shape_is_checked():
+    """``links`` is ``(R - 1,)``; anything else is a caller bug, loudly."""
+    import pytest
+
+    with pytest.raises(ValueError, match="links must be"):
+        terminus_emission(torch.ones(5, dtype=torch.bool), 12)
+
+
+def test_compose_emission_puts_the_polarity_channels_first():
+    """The channel order is part of the contract, not a detail.
+
+    ``[:TERMINUS_CHANNELS]`` is structural and the rest is secreted, in every
+    arm, so a saved field tensor means one thing. Either side may be ``None``
+    and contributes zeros; both ``None`` is no secretion at all.
+    """
+    n = 4
+    learned = torch.full((n, LEARNED_EMIT_CHANNELS), 0.25)
+    terminus = terminus_emission(torch.ones(n - 1, dtype=torch.bool), n)
+    both = compose_emission(learned, terminus)
+    assert both.shape == (n, EMIT_CHANNELS)
+    assert torch.equal(both[:, :TERMINUS_CHANNELS], terminus)
+    assert torch.equal(both[:, TERMINUS_CHANNELS:], learned)
+
+    assert compose_emission(None, None) is None
+    only_learned = compose_emission(learned, None)
+    assert float(only_learned[:, :TERMINUS_CHANNELS].abs().max()) == 0.0
+    only_terminus = compose_emission(None, terminus)
+    assert float(only_terminus[:, TERMINUS_CHANNELS:].abs().max()) == 0.0
+
+    import pytest
+
+    with pytest.raises(ValueError, match="learned emission must be"):
+        compose_emission(torch.zeros(n, LEARNED_EMIT_CHANNELS + 1), terminus)
+    with pytest.raises(ValueError, match="terminus emission must be"):
+        compose_emission(learned, torch.zeros(n, TERMINUS_CHANNELS + 1))
+    with pytest.raises(ValueError, match="residues"):
+        compose_emission(learned, terminus_emission(torch.ones(2, dtype=torch.bool), 3))
+
+
+def test_the_polarity_field_is_a_positional_encoding_on_a_straight_chain():
+    """**The caveat, pinned as a number rather than left as a worry.**
+
+    On a chain whose spatial graph is its sequence -- which is what an extended
+    or helical start state very nearly is -- the two polarity channels are
+    monotone in the residue index, rank correlation exactly -1 and +1. That is
+    the property that retired the chain-transported module
+    (``docs/claims/the-chain-transported-morphogen-is-a-positional-encoding.md``),
+    and this function reproduces it, because on a straight chain graph distance
+    *is* sequence distance.
+
+    Measured on 1UBQ the same way: rho is -1.00 and +1.00 on the helix
+    baseline and -0.21 and +0.16 on the native fold. So the field stops being
+    a coordinate as the structure folds, and the thing that rescues it is the
+    structure rather than anything here. A growth rollout starts at the
+    baseline, so it starts with a coordinate.
+    """
+    n = 21
+    neighbours, mask = _line_graph(n)
+    source = compose_emission(
+        None, terminus_emission(torch.ones(n - 1, dtype=torch.bool), n)
+    )
+    field = initial_field(n)
+    for _ in range(300):
+        field = diffuse(field, neighbours, mask, source)
+    index = torch.arange(n, dtype=torch.float64)
+    assert _spearman(field[:, 0].to(torch.float64), index) == -1.0
+    assert _spearman(field[:, 1].to(torch.float64), index) == 1.0
+
+
+def test_folding_the_chain_breaks_the_positional_encoding():
+    """And the other half of the caveat: the fold is what undoes it.
+
+    Same chain, one extra *spatial* edge joining the two ends, which is what a
+    fold is. The field is then a function of distance around the ring, so it
+    stops being monotone in the index and the rank correlation falls from
+    exactly 1.0 to 0.201. Nothing about the source changed -- only the geometry
+    it diffuses over, which is the whole difference from transporting along
+    bonds.
+
+    **0.201 is not zero, and the residual is worth naming.** A ring joined at
+    one point is still almost a line: the two sources sit next to each other,
+    so concentration still falls away from one end of the index range. The
+    non-monotonicity assertion below is the part that carries the claim, and
+    the 1UBQ figures in the previous test are what a real fold does.
+    """
+    n = 21
+    neighbours = torch.zeros(n, 3, dtype=torch.long)
+    mask = torch.zeros(n, 3, dtype=torch.bool)
+    for i in range(n):
+        neighbours[i, 0], mask[i, 0] = (i - 1) % n, True
+        neighbours[i, 1], mask[i, 1] = (i + 1) % n, True
+    source = compose_emission(
+        None, terminus_emission(torch.ones(n - 1, dtype=torch.bool), n)
+    )
+    field = initial_field(n)
+    for _ in range(300):
+        field = diffuse(field, neighbours, mask, source)
+    index = torch.arange(n, dtype=torch.float64)
+    for channel in (0, 1):
+        column = field[:, channel].to(torch.float64)
+        assert abs(_spearman(column, index)) < 0.25
+        # The property that actually matters: some interior residue is lower
+        # than both ends, so no monotone function of the index fits it. On the
+        # straight chain every interior value lies between its neighbours.
+        assert float(column[1:-1].min()) < min(float(column[0]), float(column[-1]))

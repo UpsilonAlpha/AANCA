@@ -3,7 +3,7 @@ type: question
 status: open
 ---
 
-# Can the rule learn its own perception graph, by pruning an over-complete one rather than being handed the native one?
+# The rule should learn its own perception graph, by pruning an over-complete one rather than being handed the native one
 
 Ulban's proposal, 9 Nov, in the same message that retired `native_edges`.
 Written down before anything is built, because it is the first idea in this
@@ -90,7 +90,7 @@ current wrong geometry and the structure is consistent by construction. This is
 the mirror of the cofolding co-adaptation failure, and it is the serious one.
 It needs a term that does not depend on the learned edges at all -- clash, bond
 and reach are exactly that, and they are built
-([[question-can-the-architecture-place-residues-under-any-supervision]], rung 2).
+([[the-architecture-can-place-residues-under-some-supervision]], rung 2).
 A pruning arm therefore cannot be run under FAPE alone; it requires the physical
 restraints that have never been switched on.
 
@@ -136,7 +136,7 @@ before a pruning arm, because pruning can only ever recover the graph -- and the
 graph was not sufficient.
 
 ## Requires
-- [[question-can-the-architecture-place-residues-under-any-supervision]]
+- [[the-architecture-can-place-residues-under-some-supervision]]
 - [[placing-a-node-from-local-distances-needs-a-globally-rigid-neighbourhood]]
 
 ## Supports

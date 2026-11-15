@@ -3,7 +3,7 @@ type: question
 status: open
 ---
 
-# Is 2,000 updates enough for any growth arm to have converged, or is the whole lever table a budget artefact?
+# Two thousand updates is enough for a growth arm to have converged
 
 Every growth arm in the record ran 2,000 updates at a **constant learning rate,
 with no sample pool and a fixed 120-step rollout**. None of those three is an

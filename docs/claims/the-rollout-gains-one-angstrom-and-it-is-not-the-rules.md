@@ -70,7 +70,7 @@ read 12.18-12.85 whatever was changed about them.
 
 That is the clearest statement of the project's position to date, and it is a
 statement about the measurement rather than about the architecture. The capacity
-question [[question-can-the-architecture-place-residues-under-any-supervision]]
+question [[the-architecture-can-place-residues-under-some-supervision]]
 cannot be answered with this quantity, because this quantity cannot tell a
 trained rule from an untrained one.
 
@@ -93,5 +93,5 @@ guessed. The readout now returns the start distance on both masks, uses the
 matched one for `gained`, and prints the other beside it.
 
 ## Supports
-- [[question-can-the-architecture-place-residues-under-any-supervision]]
+- [[the-architecture-can-place-residues-under-some-supervision]]
 - [[the-equivariance-fix-did-not-release-a-bearing]]

@@ -79,7 +79,7 @@ seeing which half of the curve looked better.
 **Why `+-0.34`:** it is deliberately wider than the 0.15 A adjacent-evaluation
 wobble and narrower than the 0.67 A g14-to-g15 gap. It is **not** an error bar
 -- no arm has ever been replicated
-([[question-has-any-arm-been-replicated-at-a-second-seed]]) -- so a reading
+([[no-growth-arm-has-been-run-twice-so-no-difference-has-an-error-bar]]) -- so a reading
 inside it must be reported as "no difference resolvable", never as "holds".
 
 ## Why it is not the next arm anyway
@@ -92,8 +92,8 @@ argued for first. Two things outrank it:
     whatever `g16` returns bounds the architecture and does not move the
     method.
   * **Its comparator is not yet known to be converged or reproducible**
-    ([[question-is-two-thousand-updates-enough-for-any-arm-to-have-converged]],
-    [[question-has-any-arm-been-replicated-at-a-second-seed]]). Judging a
+    ([[two-thousand-updates-is-enough-for-an-arm-to-converge]],
+    [[no-growth-arm-has-been-run-twice-so-no-difference-has-an-error-bar]]). Judging a
     +-0.34 A window against a point estimate taken at a budget where the arm
     was still improving at its second-to-last evaluation is the instrument
     fault, not the arm.

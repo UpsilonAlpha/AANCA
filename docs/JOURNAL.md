@@ -8472,7 +8472,7 @@ put it, not by what the rule does with it.
 **This is the clearest statement of the project's position so far, and it is
 about the measurement, not the architecture.** `rmsd_dmg` cannot distinguish a
 trained rule from an untrained one on this task, so it cannot answer
-`question-can-the-architecture-place-residues-under-any-supervision` either way.
+`the-architecture-can-place-residues-under-some-supervision` either way.
 Every "the arm is worse than doing nothing" and every "flat at 12.23" in this
 journal is a statement with that much less content than it appeared to have.
 
@@ -9747,7 +9747,7 @@ the snapshot written by this run can be fed straight back to the trainer, which
 yesterday's could not.
 
 g17's four exclusive buckets are pre-registered in
-`question-is-two-thousand-updates-enough-for-any-arm-to-have-converged`, written
+`two-thousand-updates-is-enough-for-an-arm-to-converge`, written
 four minutes into the run. The early evaluations had landed by then and were not
 read; `settled` is the mean at updates 9750 and 10000, about three hours out, so
 the prediction is blind with respect to what it predicts. Recorded that way
@@ -9992,7 +9992,7 @@ suggest otherwise.
 Ulban's: start from a ProteinMPNN-style graph, or in the limit an
 **over-complete** one where every residue is connected to every other, and let
 the rule **prune** until what remains supports a realistic placement. Written up
-as `docs/claims/question-can-the-rule-learn-its-own-perception-graph.md`, with
+as `docs/claims/the-rule-should-learn-its-own-perception-graph.md`, with
 the three objections that have to be settled first:
 
   1. **A complete graph is global information, which is the thesis.** One hop

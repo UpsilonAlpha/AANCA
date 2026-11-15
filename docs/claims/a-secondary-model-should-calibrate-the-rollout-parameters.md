@@ -3,7 +3,7 @@ type: question
 status: open
 ---
 
-# Should a secondary model or search calibrate the rollout parameters, rather than hand-tuning them?
+# A secondary model or search should calibrate the rollout parameters, rather than hand-tuning them
 
 Ulban's proposal, 7 Nov, recorded as a question because it is not yet a claim
 the project makes: **if parameters keep needing hand-calibration, that is itself
@@ -43,7 +43,7 @@ search against the wrong scalar would industrialise that confusion rather than
 resolve it.
 
 So the honest order is: answer
-[[question-can-the-architecture-place-residues-under-any-supervision]], decide
+[[the-architecture-can-place-residues-under-some-supervision]], decide
 what "good" means for a regenerated window, and only then automate the search
 for it. Recorded now so the idea is not lost, and so the parameter count above
 keeps being visible as it grows.

@@ -181,7 +181,7 @@ limitation stood and the record should show that the instrument was doubted
 before it was vindicated, not after.
 
 ## Supports
-- [[question-can-the-architecture-place-residues-under-any-supervision]]
+- [[the-architecture-can-place-residues-under-some-supervision]]
 - [[the-move-heads-magnitude-gradient-is-attenuated-three-thousandfold]]
 
 ## Requires

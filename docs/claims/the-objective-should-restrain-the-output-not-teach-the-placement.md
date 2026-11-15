@@ -27,7 +27,7 @@ reverted unused.
 whole point.** As the objective it kills the novelty. As **rung zero** -- a
 positive control answering whether the architecture can place residues at all
 -- it is what the information ladder requires before any looser result can be
-read ([[question-can-the-architecture-place-residues-under-any-supervision]]).
+read ([[the-architecture-can-place-residues-under-some-supervision]]).
 It is labelled a diagnostic in its own docstring, in `step_once`, in the
 `--move-weight` help text and in a banner line the run prints, because the one
 way it does damage is by quietly becoming the objective.

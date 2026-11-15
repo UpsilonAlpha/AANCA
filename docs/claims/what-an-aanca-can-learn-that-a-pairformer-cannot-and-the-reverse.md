@@ -60,7 +60,7 @@ pass count is chosen by schedule, never emergent.
 **Correction to this record, 13 Nov: ProteinEBM is backbone-only in its
 implementation.** An earlier note here inferred the opposite from its being
 built on AlphaFold3 and Boltz-1 diffusion modules, which are all-atom
-([[question-can-proteinebm-be-reused-and-in-which-of-three-ways]]). The
+([[proteinebm-should-be-reused-here]]). The
 architecture being all-atom-capable and the model as implemented being
 backbone-only are compatible, and the implementation is what one can actually
 score with.
@@ -302,7 +302,7 @@ attractor, so the case is never "better" -- it is "readable, and cheap enough to
 run everywhere" -- and it cannot be made at all until the rule stops drifting.
 
 ## Requires
-- [[question-does-regrowth-dispersion-measure-conformational-freedom]]
+- [[regrowth-dispersion-measures-conformational-freedom]]
 
 ## Supports
 - [[a-local-per-residue-rule-can-build-a-protein-backbone]]

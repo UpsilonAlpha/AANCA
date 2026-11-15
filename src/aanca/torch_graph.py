@@ -339,7 +339,7 @@ class FixedNeighbours:
     **The seam is kept deliberately.** A selection the rule *computes* -- scored
     candidate edges pruned to a per-residue budget -- arrives the same way, and
     is the open proposal in
-    ``docs/claims/question-can-the-rule-learn-its-own-perception-graph.md``. The
+    ``docs/claims/the-rule-should-learn-its-own-perception-graph.md``. The
     distinction that matters is where the selection comes from, not that it
     comes from outside ``step_once``.
 

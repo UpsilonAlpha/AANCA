@@ -61,4 +61,4 @@ so that the next summary of "every arm is worse than doing nothing" has to go
 past it.
 
 ## Supports
-- [[question-can-the-architecture-place-residues-under-any-supervision]]
+- [[the-architecture-can-place-residues-under-some-supervision]]

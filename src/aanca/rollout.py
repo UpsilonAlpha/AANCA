@@ -45,7 +45,14 @@ from torch import Tensor
 
 from . import residue_constants as rc
 from .blind import blind_coords
-from .morphogen import diffuse, field_features, field_gradient, initial_field
+from .morphogen import (
+    compose_emission,
+    diffuse,
+    field_features,
+    field_gradient,
+    initial_field,
+    terminus_emission,
+)
 from .growth import (
     GrowthConfig,
     alive_topology,
@@ -116,6 +123,20 @@ class RolloutConfig:
     #: together. Contact, not perception -- see ``aanca.update_schedule``.
     coupling_radius: float = 5.0
     truncate: int = 12
+    #: Inject the polarity source at every hanging covalent end, into the
+    #: field's first two channels (``morphogen.terminus_emission``). Off by
+    #: default so an arm with it on is comparable against one without.
+    #:
+    #: **What it is for.** ``growth.py`` deferred loop closure to the bond
+    #: restraint, and a restraint on a bond that does not exist yet cannot say
+    #: which way to walk to make it exist. A diffused source at the hanging
+    #: end can: the gradient block puts it in the residue's own frame, so
+    #: "grow towards my partner" becomes a direction a residue can perceive.
+    #: Two sources rather than one because two independent directions fix an
+    #: **orientation**, where one fixes only a bearing -- which is the half of
+    #: a frame that FAPE has never supplied
+    #: (``docs/claims/the-equivariance-fix-did-not-release-a-bearing.md``).
+    terminus_source: bool = False
     k: int = 64
     cutoff: float = 10.0
     feature_dtype: torch.dtype = torch.float32
@@ -667,11 +688,25 @@ def step_once(
     # until something secretes.
     morphogen = state.morphogen
     if morphogen is not None:
+        # The polarity source is re-injected every step rather than seeded
+        # once, because it is a boundary condition and not an initial
+        # condition: degradation would otherwise erase it, and a hanging end
+        # that stops hanging -- a birth closed the gap -- must stop secreting.
+        # So the source tracks the topology as it currently is, which is the
+        # same principle as rebuilding the perception graph every step.
+        source = None
+        if config.terminus_source:
+            source = terminus_emission(
+                links if alive is not None else growth_links(topo),
+                morphogen.shape[0],
+                device=morphogen.device,
+                dtype=morphogen.dtype,
+            )
         morphogen = diffuse(
             morphogen,
             graph.neighbours,
             edge_mask,
-            rule.emit(node, hidden),
+            compose_emission(rule.emit(node, hidden), source),
             alive,
         )
 

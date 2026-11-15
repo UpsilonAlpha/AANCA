@@ -49,11 +49,11 @@ distinction it would settle needs opposite fixes:
     rollout's composition: the bernoulli update schedule, moving a residue
     about its own CA, or moves being applied and undone.
   * `move` flat -- the placement gradient is not reaching the frame head, and
-    [[question-can-the-architecture-place-residues-under-any-supervision]]
+    [[the-architecture-can-place-residues-under-some-supervision]]
     answers no.
 
 Fixed, and the next arm is the same experiment made readable rather than a new
 one. `status: open` until it is.
 
 ## Supports
-- [[question-can-the-architecture-place-residues-under-any-supervision]]
+- [[the-architecture-can-place-residues-under-some-supervision]]

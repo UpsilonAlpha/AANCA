@@ -3,7 +3,7 @@ type: question
 status: open
 ---
 
-# Does the spread of repeated regrowths measure a loop's conformational freedom, and does it agree with anything outside this project?
+# The spread of repeated regrowths measures a loop's conformational freedom, and agrees with something outside this project
 
 Ulban's hypothesis, 13 Nov, and it reorders the queue. If low entropic cost is
 what makes a binder both good and *predictable*, the quantity worth measuring
@@ -159,4 +159,4 @@ and refinement choices.
 - [[a-local-per-residue-rule-can-build-a-protein-backbone]]
 
 ## Requires
-- [[question-has-any-arm-been-replicated-at-a-second-seed]]
+- [[no-growth-arm-has-been-run-twice-so-no-difference-has-an-error-bar]]

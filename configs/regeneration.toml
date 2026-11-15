@@ -174,7 +174,7 @@ pairwise_weight = 0.01
 # So the live objective is FOUR terms, of which two need no native structure.
 # That is rung 2 of the information ladder -- loose FAPE plus physical
 # restraints -- built since 7 Nov and never run.
-# docs/claims/question-can-the-architecture-place-residues-under-any-supervision.md
+# docs/claims/the-architecture-can-place-residues-under-some-supervision.md
 #
 # PRE-REGISTERED. `settled` is the mean of the last two evaluations, against
 # the 12.23 A untrained baseline and g14's teacher-forced 10.91. Four

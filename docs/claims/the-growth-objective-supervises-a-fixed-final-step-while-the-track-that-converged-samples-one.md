@@ -90,7 +90,7 @@ invitation to build one.
 
 Three further absences, all of them the same lever, and all already noted as
 the neural-cubes levers missing from the growth trainer
-([[question-is-two-thousand-updates-enough-for-any-arm-to-have-converged]]):
+([[two-thousand-updates-is-enough-for-an-arm-to-converge]]):
 
   * **No sample pool.** `train_growth.py`'s own docstring: *"the cheapest thing
     that can: one structure, one rollout, one backward pass per update, no
@@ -124,4 +124,4 @@ says the window does not hold.
 - [[a-local-rule-can-regenerate-a-damaged-region-from-its-surviving-context]]
 
 ## Requires
-- [[question-is-two-thousand-updates-enough-for-any-arm-to-have-converged]]
+- [[two-thousand-updates-is-enough-for-an-arm-to-converge]]
