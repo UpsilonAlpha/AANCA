@@ -274,6 +274,30 @@ hydrophobic signal, which has no sign and cannot share a pair. `EMIT_CHANNELS`
 all 951 tests pass with the dimension guard unchanged because the tests assert
 the relation rather than the number.
 
+**And the field now has a job to do: a hanging terminus should be a source
+(15 Nov, Ulban).** `growth.py` already listed loop closure as deferred -- *"two
+segments that meet are not covalently closed ... left to the bond restraint"* --
+and a bond restraint cannot say which way to walk to make a bond that does not
+yet exist. A gradient can, which makes this **chemotactic closure** rather than
+analytic (CCD/KIC). The chemotaxis probe was almost this experiment already: an
+arbitrary source, 0.96 held-out cosine with the gradient block; make the source
+a hanging end and it is the premise. It also fixes the initialisation problem
+that gates the whole field, because a topologically placed source is
+differential from step 0 while a learned one has to bootstrap out of a
+saturated flat field. Recommendation is a **given** source, on the Growing NCA
+precedent that a seed cell is handed its state. Four objections are written up,
+of which two matter: a scalar source says "towards a terminus" and not
+"towards *your* terminus" (two ends per run, ten to sixteen runs per crop), and
+a source attracts every residue rather than only its partner, so the rule has
+to learn to read the field only at a frontier.
+(`docs/claims/a-hanging-terminus-should-emit-a-morphogen-so-the-chain-grows-towards-it.md`.)
+
+**Argmap convention, corrected by Ulban 15 Nov: entries are premises, stated as
+assertions.** `the-backbone-should-be-grown-sequentially` was restated from a
+question title. The eleven `question-*.md` nodes still carry interrogative
+titles and are against this convention; converting them churns inbound
+wikilinks in several nodes and has not been done.
+
 **Why this matters beyond the morphogen.** `g10_equiv_ceil` ran regeneration
 *with* the equivariance fix and its move was still not aimed: align **-0.096**
 against a +0.206 null. The chemotaxis number says that was never an

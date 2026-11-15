@@ -1,19 +1,27 @@
 ---
-type: question
-status: open
-evidence: ours
+type: claim
+status: unsupported
 sources: [backbone.py, growth.py, a-residue-can-be-placed-without-a-parent-placing-it]
 ---
 
-# Why not place the frames in sequence from the N terminus, with the rest frozen?
+# The backbone should be grown sequentially
 
-Ulban, 15 Nov: *"why can't we do sequential growth with the backbone again?
-Each residue's frame placed in sequence with N terminal constrained. All other
-residues keep their frame fixed, but sidechains mobile."*
+Ulban's premise, 15 Nov: *"why can't we do sequential growth with the backbone
+again? Each residue's frame placed in sequence with N terminal constrained. All
+other residues keep their frame fixed, but sidechains mobile."*
 
-The honest answer is that **two of the three things this asks for are already
-true, the third is incompatible with the project's task, and the reason is loop
-closure rather than taste.**
+**Held unsupported, and the two halves separate.** Sequential *order* buys
+nothing the architecture does not already have and costs the project's task.
+Internal-coordinate *parameterisation* -- the thing the order was standing in
+for -- is a live option and gets the three options at the end of this node.
+The reason the order fails is loop closure rather than taste.
+
+`growth.py` already recorded the decision this premise would reverse, which is
+worth saying before the argument: *"the chain is held together by a
+peptide-bond restraint instead of by construction. No lever arm, and a global
+correction is a local parameter change, which is how AF2 and every structure
+diffusion model do it."* The lever arm is the cost of the premise and the
+module docstring named it before this node existed.
 
 ## The machinery exists and a version of this was the architecture
 
