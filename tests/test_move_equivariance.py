@@ -202,3 +202,75 @@ def test_the_local_form_still_caps_the_move(ubiquitin):
         ca0 = coords[torch.arange(n), topo.frame_idx[torch.arange(n), 1]]
         step = (ca - ca0).norm(dim=-1)
         assert float(step.max()) == pytest.approx(0.3, abs=1e-6)
+
+
+def test_a_lab_frame_rotation_is_not_equivariant_either(ubiquitin):
+    """**The rotation half, isolated, and it is the larger of the two.**
+
+    The record had the translation half measured (0.36 A per step against a
+    1.32 A move) and the full fix measured, but nothing isolating the rotation,
+    so the claim that ``lab_rotation = true`` leaves orientation inexpressible
+    was an argument rather than a number
+    (``docs/claims/the-rotation-half-of-the-equivariance-fix-is-still-switched-off.md``:
+    "the representation argument stands unmeasured"). This measures it.
+
+    Translation exactly zero, so the only thing moving an atom is the emitted
+    rotation. Then turn the whole structure 40 degrees and ask whether the move
+    turned with it:
+
+        form                               move     error    ratio
+        lab frame (local=False)           1.5014   0.680 A    0.453
+        translation local, rotation lab   1.5014   0.680 A    0.453
+        both local                        1.5355   6.2e-08    0.000
+
+    The last row is numerical noise at this fixture's precision -- 9.4e-15 in
+    float64 -- and is held to the same 1e-6 as
+    :func:`test_the_equivariant_form_rotates_with_the_structure`.
+
+    **0.68 A of equivariance error on a 1.50 A move, 45 % of the move**, worse
+    in proportion than the translation half's 27 %. And the middle row is the
+    current base: making the translation local changes nothing here, which is
+    the point -- the two halves are independent and only one is fixed.
+
+    Why this is a representation claim and not a numerical one: the emitted
+    ``axis_angle`` is a function of invariant perception, so it is *identical*
+    for a structure and its rotated copy. With ``lab_rotation = true`` that
+    vector is the axis in **lab** coordinates, so the same neighbourhood turns
+    a residue about the same lab direction whichever way the protein faces.
+    "Turn towards the gradient" is not a function the rule can express, however
+    it is trained.
+    """
+    topo, coords, _links = ubiquitin
+    n = topo.n_residues
+    moving = torch.ones(n, dtype=torch.bool)
+    turn = rotation(40.0, coords.dtype)
+
+    torch.manual_seed(1)
+    axis_angle = torch.randn(n, 3) * 0.05
+    zero = torch.zeros(n, 3, dtype=coords.dtype)
+
+    def error(**kwargs) -> tuple[float, float]:
+        plain = rigid_relax(coords, axis_angle, zero, topo, moving, **kwargs)
+        turned = rigid_relax(
+            coords @ turn.T, axis_angle, zero, topo, moving, **kwargs
+        )
+        gap = float((turned - plain @ turn.T).norm(dim=-1).mean())
+        move = float((plain - coords).norm(dim=-1).mean())
+        return gap, move
+
+    lab_gap, lab_move = error(local=False)
+    base_gap, base_move = error(local=True, lab_rotation=True)
+    both_gap, both_move = error(local=True, lab_rotation=False)
+
+    assert lab_move > 1e-3 and base_move > 1e-3 and both_move > 1e-3
+    # The current base is no better on the rotation than the unfixed form,
+    # because the translation being local cannot help a rotation.
+    assert abs(base_gap - lab_gap) < 1e-9
+    assert base_gap > 0.4 * base_move, (
+        f"the lab-frame rotation is supposed to break equivariance; error "
+        f"{base_gap:.3e} A on a {base_move:.3f} A move"
+    )
+    # And conjugating it into the residue's own frame is exact.
+    assert both_gap < 1e-6, (
+        f"equivariance error {both_gap:.3e} A on a {both_move:.3f} A move"
+    )

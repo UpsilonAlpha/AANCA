@@ -109,6 +109,8 @@ pairwise_weight = 0.01
 #   g13_natedge  32489939  native_edges                  settled 11.42
 #   g15_both     32494313  native_edges + pairwise        settled 10.24
 #   g16_localrot  (never run)  g15 + lab_rotation = false
+#                 -- re-registered 15 Nov as `g23_localrot` off g20_orient,
+#                    because this comparator can no longer be expressed.
 #   g17_long     32505354  g15 + updates = 10000          settled  6.69
 #   g18_seed1    32507434  g15 + seed = 1                 settled 10.21 (void)
 #
@@ -454,3 +456,62 @@ inherits = "g20_orient"
 
 [g22_random.inputs]
 initial = "random"
+
+# ======================================================================
+# NOT YET RUN. The rotation half of the 7 Nov equivariance fix, which has been
+# switched off in every arm ever run and is now measured rather than argued.
+#
+# `tests/test_move_equivariance.py::test_a_lab_frame_rotation_is_not_equivariant_either`
+# puts it at **0.68 A of equivariance error on a 1.50 A move, 45 % of the
+# move** -- larger in proportion than the translation half's 27 %, and
+# unchanged by `equivariant_move` because the two halves are independent. With
+# `lab_rotation = true` the emitted axis is an axis in LAB coordinates while
+# perception is invariant, so the same neighbourhood turns a residue about the
+# same lab direction whichever way the protein faces. "Turn towards the
+# gradient" is not expressible, however it is trained.
+#
+# WHY IT IS SAFE TO DROP NOW, which was not true in g10-g12. The reason
+# `lab_rotation = true` was kept is a four-arm table where the local
+# conjugation trebled the amplitude of the twist break -- 16.6 (g8) and 17.6
+# (g11) against 50.2 (g10) and 53.9 (g12). But that break belongs to the
+# IDENTITY term, not to the conjugation
+# (`docs/claims/the-twist-jump-at-update-1000-is-the-identity-head-leaving-its-floor.md`),
+# and `identity_weight = 0.0` in this base. There is nothing left for the
+# conjugation to amplify.
+#
+# PRE-REGISTERED, against `g20_orient`'s 7.78 A at its 120-step horizon, which
+# is this chain's head rather than the retired g15 the first draft of this
+# registration used. One setting differs.
+#
+#   * BETTER than 7.78  -- the lab-frame axis was costing the frame head real
+#     distance, the rotation half becomes the live direction, and
+#     `lab_rotation = false` should become the base.
+#   * NO RESOLVABLE DIFFERENCE -- a null, not a confirmation. The flag flips to
+#     false on the representation argument alone, because it then costs
+#     nothing and removes an inexpressibility, and the next arm is elsewhere.
+#   * WORSE -- the representation argument says this should be impossible, so
+#     either invariance is not the binding constraint or the conjugation has a
+#     cost of its own, and the rotation-half claim is refuted rather than
+#     merely unsupported.
+#   * TWIST TREBLES out of its band at any evaluation -- the amplitude effect
+#     did not need the identity break after all, the four-arm table attributed
+#     it to the wrong cause, and this is wrong whatever rmsd_dmg does. OVERRIDES
+#     the other three.
+#
+# NO +- WINDOW IS STATED, deliberately. The first draft of this registration
+# used +-0.34 A derived from the g14-to-g15 gap, and both of those arms are
+# retired. No arm has ever been replicated
+# (`docs/claims/no-growth-arm-has-been-run-twice-so-no-difference-has-an-error-bar.md`),
+# so there is no figure to justify a window with, and inventing one here would
+# be choosing the metric after the fact. A reading close to 7.78 must be
+# reported as "no difference resolvable" until a replicate exists.
+#
+# VOID if the run does not reach its update budget, or `bond` climbs above 4.5,
+# which is geometry breaking rather than rotating.
+# ======================================================================
+
+[g23_localrot]
+inherits = "g20_orient"
+
+[g23_localrot.inputs]
+lab_rotation = false

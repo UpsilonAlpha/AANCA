@@ -347,11 +347,40 @@ remainder at its crystal pose, so the control is 0.40 and -0.07 for a 12- and a
 24-residue window. The problem is confined to whole-structure growth, already
 held to be harder than and different from the goal.
 
-**It also cannot turn yet.** `lab_rotation = true` everywhere means the
-rotation is applied in the lab frame while perception is invariant, so a
-perceivable reference axis does not help an output read in the wrong frame.
-**`g16_localrot` is a prerequisite for this premise, not an alternative**, and
-it has still never run.
+**It also cannot turn yet, and the rotation half is now MEASURED (15 Nov).**
+Ulban asked for local rotation. It is one config key -- `lab_rotation = false`
+-- and the code already implements both sides, so the work was to measure what
+turning it on buys and to re-register the arm. Translation set to exactly zero
+so only the emitted rotation moves an atom, then the structure turned 40 deg:
+
+    form                               move     error    ratio
+    lab frame (local=False)           1.5014   0.680 A    0.453
+    translation local, rotation lab   1.5014   0.680 A    0.453
+    both local                        1.5355   6.2e-08    0.000
+
+**0.68 A of error on a 1.50 A move, 45 %, against the translation half's
+27 %** -- so the half still switched on is the *bigger* one, which the record
+did not know. The middle row is the current base and is identical to the
+unfixed form: `equivariant_move` touches only the translation, and the two
+halves are independent. Pinned as
+`test_a_lab_frame_rotation_is_not_equivariant_either`.
+
+**`g23_localrot` is registered and has not run.** `g20_orient` with
+`lab_rotation = false`, one setting, against g20_orient's 7.78 A at its
+120-step horizon. The old `g16_localrot` registration is void: its comparator
+was `g15_both`, which ran `native_edges`, a setting deleted from the schema on
+9 Nov, so no section can express it. **No +- window is stated** -- the first
+draft's +-0.34 A came from the g14-to-g15 gap and both arms are retired, no arm
+has ever been replicated, so a reading near 7.78 is reported as "no difference
+resolvable" and nothing stronger.
+
+**Why it is safe to drop the flag now, which was not true at g10-g12.** The
+reason it was kept is a four-arm table where the local conjugation trebled the
+twist break's amplitude (16.6 and 17.6 against 50.2 and 53.9). That break
+belongs to the identity term, and `identity_weight = 0.0` in this base, so
+there is nothing left to amplify. If that attribution is wrong, the arm's
+fourth bucket fires and the rotation-half claim is wrong whatever rmsd_dmg
+does.
 
 Two earlier objections are withdrawn by the polarity framing: partner identity
 is unnecessary because N-ward and C-ward are globally meaningful, and "a source

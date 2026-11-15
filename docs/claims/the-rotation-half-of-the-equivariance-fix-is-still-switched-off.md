@@ -23,6 +23,30 @@ error, unfixed: an invariant encoder cannot represent a lab-frame direction, and
 it cannot represent a lab-frame *axis* either. The rule's rotation output cannot
 depend on the structure's orientation, and a lab-frame axis-angle vector must.
 
+## Measured 15 Nov, and it is the larger of the two halves
+
+The claim above was an argument from `rigid_relax` until Ulban asked for local
+rotation. Translation set to **exactly zero**, so the only thing moving an atom
+is the emitted rotation, then the whole structure turned 40 degrees:
+
+    form                               move     error    ratio
+    lab frame (local=False)           1.5014   0.680 A    0.453
+    translation local, rotation lab   1.5014   0.680 A    0.453
+    both local                        1.5355   6.2e-08    0.000
+
+**0.68 A of equivariance error on a 1.50 A move -- 45 % of the move**, against
+the translation half's 0.36 A on 1.32 A, which is 27 %. So the half still
+switched on is the bigger one, which the record did not know.
+
+The middle row is the current base, and it is **identical to the unfixed
+form**: making the translation local does nothing for a rotation, because the
+two halves are independent and `equivariant_move` only touches one. Pinned in
+`tests/test_move_equivariance.py::test_a_lab_frame_rotation_is_not_equivariant_either`.
+
+This is an expressivity measurement, not a result on the task. What it
+establishes is that the inexpressibility is real and large, not that removing
+it improves anything.
+
 ## Why it was kept, and why that reason no longer applies
 
 `--lab-rotation` exists to isolate the two halves. What it established is that
@@ -44,11 +68,13 @@ twist while making the rotation half representable for the first time.**
 
 ## Pre-registration, if run
 
-One arm, `g16_localrot` = `g15_both` with `lab_rotation = false` and nothing
-else changed. Written here before submission so the arm can fail.
-
-**The metric is `settled` = the mean of `rmsd_dmg` at updates 1750 and 2000**,
-the same rule g13/g14/g15 were judged by, against **g15's settled 10.24**.
+**Re-registered 15 Nov, because the first draft's comparator is retired.**
+`g15_both` ran `native_edges`, the setting was deleted from the schema on
+9 Nov, and no section can express it any more -- so "against g15's settled
+10.24" is not a comparison anything can make. The arm is now
+**`g23_localrot` = `g20_orient` with `lab_rotation = false`** and nothing else,
+against **g20_orient's 7.78 A at its 120-step horizon**, which is the live head
+of this chain. Written down before submission so the arm can fail.
 Four exclusive buckets:
 
   * **`settled < 9.90`** -- the rotation was load-bearing and the lab-frame
@@ -76,11 +102,13 @@ above 4.5 (geometry breaking rather than rotating), `settled` is not read and
 the arm is reported as void. Without this the metric would be chosen after
 seeing which half of the curve looked better.
 
-**Why `+-0.34`:** it is deliberately wider than the 0.15 A adjacent-evaluation
-wobble and narrower than the 0.67 A g14-to-g15 gap. It is **not** an error bar
--- no arm has ever been replicated
-([[no-growth-arm-has-been-run-twice-so-no-difference-has-an-error-bar]]) -- so a reading
-inside it must be reported as "no difference resolvable", never as "holds".
+**No `+-` window is stated any more, and that is a withdrawal.** The first
+draft set `+-0.34 A` from the g14-to-g15 gap; both of those arms are retired, so
+the figure has nothing behind it. No arm has ever been replicated
+([[no-growth-arm-has-been-run-twice-so-no-difference-has-an-error-bar]]), so
+there is no quantity to build a window out of, and choosing one now would be
+picking the metric after the fact. A reading close to 7.78 is reported as **"no
+difference resolvable"** and nothing stronger until a replicate exists.
 
 ## Why it is not the next arm anyway
 
@@ -102,8 +130,10 @@ Both are cheap to remove and neither makes this node less true.
 
 ## Scope
 
-  * This is an argument from `rigid_relax` plus the identity attribution, not a
-    measurement. No arm at `--identity-weight 0` with a local rotation exists.
+  * **The inexpressibility is now measured** (0.68 A on a 1.50 A move, the
+    section above) and the *consequence* is not: no arm at
+    `--identity-weight 0` with a local rotation has ever been trained, so
+    nothing here says removing the inexpressibility improves the task.
   * **The premise it rests on is weakly held.** The attribution of the twist
     transition to the identity head is `supported` on our own arms only --
     check 1 of the validator flags it for exactly that -- and this node's whole

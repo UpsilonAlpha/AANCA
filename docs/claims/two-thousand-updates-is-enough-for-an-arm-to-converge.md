@@ -60,7 +60,7 @@ Judged against **g15's settled 10.24** over four exclusive buckets:
     stands; its absolute numbers do not, and future arms must be run at 10,000.
   * **`9.90 < settled <= 10.58`** -- inside g15's +-0.34 A band. **2,000 updates
     was already enough.** The table stands exactly as read, this question
-    closes, and `g16_localrot` becomes the right next arm with a comparator
+    closes, and `g23_localrot` becomes the right next arm with a comparator
     that has been shown to be converged.
   * **`settled > 10.58`** -- longer training makes it *worse*. With 400
     structures, no sample pool and a fixed rollout, that reads as overfitting

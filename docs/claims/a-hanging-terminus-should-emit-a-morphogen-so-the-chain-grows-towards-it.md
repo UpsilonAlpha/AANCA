@@ -76,8 +76,10 @@ applied in the lab frame**, which an invariant encoder cannot represent
 ([[the-emitted-move-was-applied-in-the-lab-frame-and-perception-is-invariant]],
 [[the-rotation-half-of-the-equivariance-fix-is-still-switched-off]]). A
 perceivable reference axis does not help an output that is interpreted in the
-wrong frame. **`g16_localrot` is a prerequisite for this premise, not an
-alternative to it.** Position can follow the field today; orientation cannot,
+wrong frame. **`g23_localrot` is a prerequisite for this premise, not an
+alternative to it**, and the inexpressibility it removes is now measured at
+0.68 A per step on a 1.50 A move -- 45 % of the move, larger in proportion
+than the translation half the project has already fixed. Position can follow the field today; orientation cannot,
 and the measured bearing failure ([[the-equivariance-fix-did-not-release-a-bearing]],
 align -0.096 against a +0.206 null) is about orientation.
 

@@ -164,7 +164,8 @@ anything structure-specific but also never had to generalise across folds.
      the residue's frame, the **rotation is still applied in the lab frame**.
      An invariant encoder cannot represent a lab-frame rotation axis, so the
      rule can express "move up the gradient" and cannot express "turn toward
-     it". `g16_localrot` is the arm that would fix it and it has never run.
+     it". `g23_localrot` is the arm that would fix it and it has never run;
+     the inexpressibility is measured at 0.68 A per step on a 1.50 A move.
      Position is half of a frame; secondary structure is mostly the other half.
   2. **No arm has ever had a field at all.** `morphogen = false` everywhere, so
      every number above is a probe, not a result from the regeneration task.
