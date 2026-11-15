@@ -20,7 +20,14 @@ Four properties, each a constraint rather than a nicety:
   carries only what the rule puts in it.
 * **Emergent.** The rule chooses what to secrete; the spreading is fixed. So a
   cell can manufacture a gradient nobody specified, and the chain can develop
-  coordinates of its own -- or not, and then this costs four node features.
+  coordinates of its own -- or not, and then this costs ten node features.
+* **Readable as a direction, not only as an amount.** A residue perceives each
+  channel's concentration *and* its gradient as a vector in the residue's own
+  frame (:func:`field_gradient`), which is the other half of Growing NCA's
+  perception vector: a cell there reads ``[identity, grad_x, grad_y]`` from
+  fixed Sobel filters. Its translation is read in that same frame, so
+  "move up the gradient" is one linear map from what it perceives. Measured:
+  supplying the gradient takes a learned chemotaxis from cosine 0.71 to 0.96.
 * **A concentration, so it has memory.** The step is
   ``c <- (1 - lambda) * (c + D * (mean - c)) + secretion``: a residue retains
   what it is carrying and exchanges a fraction of it with its neighbourhood,
@@ -95,6 +102,13 @@ FIELD_CHANNELS = EMIT_CHANNELS
 #: concentration that has decayed over several hops is small, and the rule has
 #: more resolution in the log than in the raw value near zero.
 FIELD_FEATURE_DIM = 2 * FIELD_CHANNELS
+#: Each channel's spatial gradient, as a vector in the residue's own frame.
+#: This is the half of the Growing-NCA perception that is NOT the concentration
+#: itself: a cell there is handed ``[identity, grad_x, grad_y]``, the gradients
+#: coming from fixed Sobel filters rather than from anything the cell learns.
+#: Measured here, supplying it is worth a great deal -- see
+#: :func:`field_gradient`.
+FIELD_GRADIENT_DIM = 3 * FIELD_CHANNELS
 
 #: Floor inside the logarithm, and the scale the log is divided by so the
 #: feature lands in roughly ``[-1, 0]``. An unreached residue reads ``-1``
@@ -209,6 +223,84 @@ def diffuse(
     if alive is not None:
         new_field = new_field * alive.unsqueeze(-1).to(field.dtype)
     return new_field
+
+
+def field_gradient(
+    field: Tensor,
+    neighbours: Tensor,
+    direction: Tensor,
+    weight: Tensor,
+) -> Tensor:
+    """``(R, FIELD_GRADIENT_DIM)``: each channel's gradient in the own frame.
+
+    ``sum_j w_ij (c_j - c_i) u_ij``, where ``u_ij`` is the unit vector to
+    neighbour j **in residue i's own N-CA-C frame** -- the ``local_direction``
+    block the edge features already carry, so this costs one einsum and no new
+    geometry. A vector in a local frame is invariant under a global rotation
+    for the same reason that block is, and it is read by a head whose
+    translation is interpreted in that same frame, so "move up the gradient" is
+    one linear map away.
+
+    **Why it is supplied rather than learned.** In Growing NCA a cell perceives
+    ``[identity, grad_x, grad_y]``: the gradients come from fixed Sobel
+    filters, not from anything the cell works out. The analogous question here
+    has an answer, because the message function *can* infer a gradient -- it
+    sees ``(c_j, u_ij)`` for every neighbour and the messages are summed, which
+    is the right shape. Trained on a synthetic chemotaxis task on 1UBQ (one
+    residue secretes, every other should emit a translation pointing at it; the
+    structure is identical in every example, so the field is the only input
+    that says where the source is), held-out cosine against the true direction,
+    two seeds, mean over three unseen sources:
+
+        update   concentration only   + this block
+           100         +0.652            +0.947
+           300         +0.715            +0.960
+           600         +0.709            +0.960
+
+    So it can be inferred -- 0.71 is far above the 0.00 of a rule that cannot
+    read direction at all -- and inferring it is much worse than being told,
+    for 3,456 parameters. Supplying the derivative is Growing NCA's choice and
+    it carries over to a graph.
+    ``docs/claims/a-residue-can-follow-the-morphogen-gradient.md``.
+
+    ``weight`` is ``(R, k)``, the envelope times the edge mask, so a padded or
+    dormant slot contributes nothing and a neighbour at the cutoff fades out
+    rather than dropping. **Unnormalised**, as Growing NCA's Sobel is: dividing
+    by the weight sum would make the block a mean difference per neighbour
+    rather than a sum over the neighbourhood. Which is better is untested; the
+    numbers above are the unnormalised form, and the density block already
+    tells a rule its degree.
+    """
+    if field.dim() != 2 or field.shape[1] != FIELD_CHANNELS:
+        raise ValueError(
+            f"field must be (R, {FIELD_CHANNELS}), got {tuple(field.shape)}"
+        )
+    n_res, k = neighbours.shape
+    # Checked because it broadcasts rather than failing: ``field[neighbours]``
+    # is (R', k, C) and ``field.unsqueeze(1)`` is (R, 1, C), so a mismatch
+    # produces an (R, k, C) difference between rows that are not the same
+    # residue, which trains.
+    if field.shape[0] != n_res:
+        raise ValueError(
+            f"field has {field.shape[0]} residues and neighbours has {n_res}"
+        )
+    if direction.shape != (n_res, k, 3):
+        raise ValueError(
+            f"direction must be (R, k, 3) = {(n_res, k, 3)}, got "
+            f"{tuple(direction.shape)}"
+        )
+    if weight.shape != (n_res, k):
+        raise ValueError(
+            f"weight must be (R, k) = {(n_res, k)}, got {tuple(weight.shape)}"
+        )
+    difference = field[neighbours] - field.unsqueeze(1)
+    gradient = torch.einsum(
+        "rkc,rka,rk->rca",
+        difference,
+        direction.to(field.dtype),
+        weight.to(field.dtype),
+    )
+    return gradient.reshape(n_res, FIELD_GRADIENT_DIM)
 
 
 def field_features(field: Tensor) -> Tensor:

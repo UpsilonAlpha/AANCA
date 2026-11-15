@@ -45,7 +45,7 @@ from torch import Tensor
 
 from . import residue_constants as rc
 from .blind import blind_coords
-from .morphogen import diffuse, field_features, initial_field
+from .morphogen import diffuse, field_features, field_gradient, initial_field
 from .growth import (
     GrowthConfig,
     alive_topology,
@@ -455,9 +455,12 @@ def step_once(
         closure = closure_features(
             closure_separation(alive, links), config.feature_dtype
         )
-    field_block = None
-    if state.morphogen is not None:
-        field_block = field_features(state.morphogen).to(config.feature_dtype)
+    # The field block is NOT built here, because half of it is a gradient over
+    # the perception graph and the graph does not exist yet: the directions it
+    # needs are the ``local_direction`` edge block, selected from this step's
+    # coordinates a few lines below. So the graph is built without it and the
+    # block is appended afterwards -- the same layout, since ``node_features``
+    # appends the morphogen block last in any case.
 
     coords_seen = state.coords
     aa_onehot = None
@@ -484,7 +487,6 @@ def step_once(
         # has no room for would be a shape mismatch, and the two cannot be set
         # independently without risking exactly that.
         density=bool(getattr(rule, "density", False)),
-        morphogen=field_block,
         # The selection only. Every feature below is still built from
         # ``coords_seen``, which is this step's live geometry -- see
         # ``torch_graph.FixedNeighbours``.
@@ -497,6 +499,27 @@ def step_once(
     edge_mask = graph.edge_mask
     if alive is not None:
         edge_mask = edge_mask & alive[graph.neighbours]
+
+    if state.morphogen is not None:
+        # Amplitude, log amplitude, and the gradient in each residue's own
+        # frame. ``edge_mask`` rather than ``graph.edge_mask``, so a dormant
+        # slot contributes nothing to the gradient either -- the same senders
+        # the diffusion uses.
+        node = torch.cat(
+            [
+                node,
+                field_features(state.morphogen).to(torch.float32),
+                field_gradient(
+                    state.morphogen,
+                    graph.neighbours,
+                    graph.edge_features[
+                        ..., graph.feature_slices["local_direction"]
+                    ],
+                    graph.envelope * edge_mask,
+                ).to(torch.float32),
+            ],
+            dim=-1,
+        )
 
     mu, log_kappa, new_hidden = rule(
         node,

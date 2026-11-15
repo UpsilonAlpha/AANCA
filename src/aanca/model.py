@@ -57,9 +57,17 @@ GROWTH_NODE_EXTRA = 24
 #: drift, the same guard ``GROWTH_NODE_EXTRA`` has.
 DENSITY_NODE_EXTRA = 16
 
-#: Extra node dimensions a field-aware rule carries: the block from
-#: ``aanca.morphogen.field_features``, each secreted channel's amplitude and
-#: its logarithm.
+#: Extra node dimensions a field-aware rule carries: each secreted channel's
+#: amplitude and its logarithm (``morphogen.field_features``), followed by each
+#: channel's gradient as a vector in the residue's own frame
+#: (``morphogen.field_gradient``).
+#:
+#: **Both halves, because that is Growing NCA's perception vector.** A cell
+#: there reads ``[identity, grad_x, grad_y]``, the gradients from fixed Sobel
+#: filters rather than from anything it learns. Measured on a chemotaxis task,
+#: a rule given only the concentration reaches held-out cosine 0.71 against the
+#: 0.96 of one given the gradient too, for 3,456 parameters -- so the
+#: derivative is supplied here as well.
 #:
 #: **It is the Growing-NCA mechanism and nothing else.** The rule secretes a
 #: chemical, it spreads by a fixed local operator over the spatial graph the
@@ -70,9 +78,9 @@ DENSITY_NODE_EXTRA = 16
 #: ``aanca.morphogen`` and
 #: ``docs/claims/the-chain-transported-morphogen-is-a-positional-encoding.md``.
 #:
-#: Asserted equal to ``morphogen.FIELD_FEATURE_DIM`` in the tests, the same
-#: guard the two blocks above have.
-FIELD_NODE_EXTRA = 4
+#: Asserted equal to ``morphogen.FIELD_FEATURE_DIM + FIELD_GRADIENT_DIM`` in
+#: the tests, the same guard the two blocks above have.
+FIELD_NODE_EXTRA = 10
 EDGE_FEATURE_DIM = 575
 
 #: Ceiling on ``log kappa``. A likelihood loss can be reduced by claiming

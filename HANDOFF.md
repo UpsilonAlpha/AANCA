@@ -245,6 +245,45 @@ but ubiquitin, and a larger protein has a larger diameter.
 (`docs/claims/the-emitted-chemical-diffuses-over-the-perception-graph.md`.)
 `morphogen = false` in every arm, so nothing is waiting on it.
 
+**And a residue can now see the gradient, not only the concentration (15
+Nov).** Ulban asked whether nodes can see the morphogen gradient and follow it.
+The circuit already existed -- a message carries the neighbour's concentration
+(`model.py:480`) together with `local_direction`, the unit vector to it in the
+residue's own frame, and `equivariant_move = true` reads the translation in
+that same frame. Measured on a synthetic chemotaxis task on 1UBQ, where the
+structure is identical in every example so the field is the only input that
+says where the source is, held-out cosine on three unseen sources, two seeds:
+
+    update   concentration only   + the gradient block
+       100         +0.652              +0.947
+       600         +0.709              +0.960
+    parameters     241,814              245,270
+
+So the message function can infer a gradient (0.71 against the 0.00 of a rule
+that cannot read direction) and inferring it is much worse than being told.
+`morphogen.field_gradient` now supplies `sum_j w_ij (c_j - c_i) u_ij` in each
+residue's own frame -- Growing NCA's Sobel pair, on a graph -- for 3,456
+parameters. `FIELD_NODE_EXTRA` 4 -> 10. Invariance checked on real geometry at
+3.6e-08.
+
+**Why this matters beyond the morphogen.** `g10_equiv_ceil` ran regeneration
+*with* the equivariance fix and its move was still not aimed: align **-0.096**
+against a +0.206 null. The chemotaxis number says that was never an
+expressivity limit -- given something that carries a bearing, this rule aims in
+a hundred updates. A diffused morphogen gradient is such a quantity, which
+makes the field a candidate answer to the standing "FAPE gives a magnitude and
+not a bearing" problem rather than a side feature. **Hypothesis, not a
+result:** no arm has trained with the field on.
+
+**The gap that is now the clearest thing in the record.** `lab_rotation = true`
+in `[base.inputs]` and in every arm ever run, so the **rotation is still
+applied in the lab frame** while perception is invariant. The rule can express
+"move up the gradient" and **cannot express "turn toward it"** -- position is
+half of a frame and secondary structure is mostly the other half. `g16_localrot`
+is the arm that fixes it and has never run; it was demoted by the rescope and
+this promotes it.
+(`docs/claims/a-residue-can-follow-the-morphogen-gradient.md`.)
+
 **Demoted by the rescope**, and recorded as such rather than dropped:
 ensemble-dispersion spread and the B-factor Spearman. A positive result there
 is a **replication** of PLACER and RFD4's reproduction of it, not a finding, so

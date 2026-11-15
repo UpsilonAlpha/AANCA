@@ -31,9 +31,11 @@ from aanca.morphogen import (
     DIFFUSION_RATE,
     EMIT_CHANNELS,
     FIELD_CHANNELS,
+    FIELD_GRADIENT_DIM,
     FIELD_FEATURE_DIM,
     diffuse,
     field_features,
+    field_gradient,
     initial_field,
 )
 
@@ -74,7 +76,8 @@ def test_dim_constants_agree():
     """
     assert FIELD_CHANNELS == EMIT_CHANNELS
     assert FIELD_FEATURE_DIM == 2 * FIELD_CHANNELS
-    assert FIELD_NODE_EXTRA == FIELD_FEATURE_DIM
+    assert FIELD_GRADIENT_DIM == 3 * FIELD_CHANNELS
+    assert FIELD_NODE_EXTRA == FIELD_FEATURE_DIM + FIELD_GRADIENT_DIM
 
 
 def test_nothing_secreting_means_the_field_stays_exactly_zero():
@@ -366,3 +369,127 @@ def test_the_field_shape_and_the_emission_shape_are_checked():
         diffuse(initial_field(n), neighbours, mask[:-1])
     with pytest.raises(ValueError, match="emission must be"):
         diffuse(initial_field(n), neighbours, mask, torch.zeros(n, 1))
+
+
+def _axis_graph() -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Three residues: 0 perceives 1 at +x and 2 at -x. ``(nb, direction, w)``.
+
+    Directions are already in residue 0's own frame, which is what the edge
+    block supplies, so this is the geometry the gradient is actually computed
+    from.
+    """
+    neighbours = torch.tensor([[1, 2], [0, 0], [0, 0]])
+    direction = torch.zeros(3, 2, 3)
+    direction[0, 0] = torch.tensor([1.0, 0.0, 0.0])    # neighbour 1 lies at +x
+    direction[0, 1] = torch.tensor([-1.0, 0.0, 0.0])   # neighbour 2 lies at -x
+    direction[1, :] = torch.tensor([-1.0, 0.0, 0.0])
+    direction[2, :] = torch.tensor([1.0, 0.0, 0.0])
+    weight = torch.ones(3, 2)
+    weight[1, 1] = 0.0
+    weight[2, 1] = 0.0
+    return neighbours, direction, weight
+
+
+def test_the_gradient_points_at_the_higher_concentration():
+    """The assertion the whole block exists for.
+
+    Residue 0 perceives one neighbour at +x and one at -x. Put the chemical on
+    the +x side and the gradient's x component is positive; move it to the -x
+    side and the sign flips. Nothing else in what a residue perceives says
+    which way is uphill: the concentration alone is a scalar.
+    """
+    neighbours, direction, weight = _axis_graph()
+
+    high_x = torch.zeros(3, FIELD_CHANNELS)
+    high_x[1] = 1.0
+    grad = field_gradient(high_x, neighbours, direction, weight)
+    assert grad.shape == (3, FIELD_GRADIENT_DIM)
+    assert float(grad[0, 0]) > 0.0                      # uphill is +x
+    assert abs(float(grad[0, 1])) < 1e-6                # and only +x
+    assert abs(float(grad[0, 2])) < 1e-6
+
+    low_x = torch.zeros(3, FIELD_CHANNELS)
+    low_x[2] = 1.0
+    flipped = field_gradient(low_x, neighbours, direction, weight)
+    assert float(flipped[0, 0]) < 0.0
+    assert abs(float(flipped[0, 0]) + float(grad[0, 0])) < 1e-6
+
+
+def test_a_uniform_field_has_no_gradient_however_high_it_is():
+    """A saturated channel carries no direction, and says so explicitly.
+
+    This is the failure mode ``DEGRADATION`` exists to prevent, and the reason
+    the gradient block is worth having even where the concentration is read
+    too: a field at 1.0 everywhere is indistinguishable from one at 0.3
+    everywhere as far as "which way should I move" goes, and here both read
+    exactly zero rather than being left for the rule to discover.
+    """
+    neighbours, direction, weight = _axis_graph()
+    for level in (0.0, 0.3, 1.0):
+        field = torch.full((3, FIELD_CHANNELS), level)
+        grad = field_gradient(field, neighbours, direction, weight)
+        assert torch.allclose(grad, torch.zeros_like(grad), atol=1e-7)
+
+
+def test_a_zero_weight_slot_contributes_nothing_to_the_gradient():
+    """``weight`` is the envelope times the mask, so padding must not conduct.
+
+    A padded neighbour slot points at a real residue index -- residue 0 by
+    construction -- so a gradient that ignored the weight would read a
+    difference against whatever the padding happened to select, in whatever
+    direction the padding happened to hold.
+    """
+    neighbours = torch.tensor([[1, 2], [0, 0], [0, 0]])
+    direction = torch.zeros(3, 2, 3)
+    direction[0, 0] = torch.tensor([1.0, 0.0, 0.0])
+    direction[0, 1] = torch.tensor([0.0, 1.0, 0.0])
+    field = torch.zeros(3, FIELD_CHANNELS)
+    field[1] = 1.0
+    field[2] = 1.0
+
+    all_on = torch.ones(3, 2)
+    y_off = all_on.clone()
+    y_off[0, 1] = 0.0
+    both = field_gradient(field, neighbours, direction, all_on)
+    one = field_gradient(field, neighbours, direction, y_off)
+    assert float(both[0, 1]) > 0.0      # the y neighbour counted
+    assert abs(float(one[0, 1])) < 1e-6  # and with weight zero it did not
+    assert abs(float(one[0, 0]) - float(both[0, 0])) < 1e-6
+
+
+def test_the_gradient_carries_autograd_to_the_concentration():
+    """A second route from a loss on geometry back to the emit head.
+
+    The amplitude features were the only one before this block existed. This
+    matters because the gradient is the half the rule can actually steer by, so
+    a stop-gradient here would leave the secretion trained through the weaker
+    path alone.
+    """
+    neighbours, direction, weight = _axis_graph()
+    field = torch.zeros(3, FIELD_CHANNELS, requires_grad=True)
+    with torch.no_grad():
+        field[1] = 0.5
+    grad = field_gradient(field, neighbours, direction, weight)
+    grad[0, 0].backward()
+    assert field.grad is not None
+    assert float(field.grad[1, 0]) > 0.0
+
+
+def test_the_gradient_block_shapes_are_checked():
+    """A wrong width broadcasts, and the quiet cases produce a block that trains."""
+    import pytest
+
+    neighbours, direction, weight = _axis_graph()
+    with pytest.raises(ValueError, match="field must be"):
+        field_gradient(
+            torch.zeros(3, FIELD_CHANNELS + 1), neighbours, direction, weight
+        )
+    with pytest.raises(ValueError, match="direction must be"):
+        field_gradient(
+            initial_field(3), neighbours, direction[:, :, :2], weight
+        )
+    with pytest.raises(ValueError, match="weight must be"):
+        field_gradient(initial_field(3), neighbours, direction, weight[:, :1])
+    # The one that broadcasts instead of failing, which is why it is checked.
+    with pytest.raises(ValueError, match="residues and neighbours"):
+        field_gradient(initial_field(5), neighbours, direction, weight)
