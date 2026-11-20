@@ -796,6 +796,17 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+class _SkipUpdate(Exception):
+    """This update produced nothing trainable; its evaluation still happens.
+
+    Raised instead of `continue` inside the training loop. The difference is
+    the whole fix: a `continue` skipped the held-out evaluation gate as well,
+    so four runs came back with 38 or 39 history rows instead of 40 and g17's
+    pre-registered `settled` pair did not exist
+    (``docs/claims/a-skipped-update-silently-skips-its-evaluation.md``).
+    """
+
+
 def main() -> int:
     runtime = build_parser().parse_args()
     schema = build_schema()
@@ -1181,164 +1192,178 @@ def main() -> int:
     pool: dict[tuple[int, int | None], GrowthPoolEntry] = {}
 
     for update in range(start_update + 1, args.updates + 1):
-        resume: GrowthPoolEntry | None = None
-        if args.pool_probability > 0 and pool and rng.random() < args.pool_probability:
-            key = rng.choice(sorted(pool, key=lambda k: (k[0], k[1] or -1)))
-            index, crop_seed = key
-            try:
-                topo, native, _crop, _used = dataset.load_crop(
-                    index, seed_residue=crop_seed, rng=rng
+        try:
+            resume: GrowthPoolEntry | None = None
+            if args.pool_probability > 0 and pool and rng.random() < args.pool_probability:
+                key = rng.choice(sorted(pool, key=lambda k: (k[0], k[1] or -1)))
+                index, crop_seed = key
+                # **Both pool failures fall through to a fresh draw rather than
+                # spending the update.** A dropped entry is a statement about the
+                # pool, not about this update: the update would have drawn a fresh
+                # crop had the pool not been consulted, so that is what it does.
+                # Before this, a pool miss cost a training step AND -- through the
+                # gate below -- that update's held-out evaluation.
+                try:
+                    topo, native, _crop, _used = dataset.load_crop(
+                        index, seed_residue=crop_seed, rng=rng
+                    )
+                except Exception:
+                    pool.pop(key, None)
+                else:
+                    resume = pool[key]
+                    if resume.coords.shape[0] != topo.n_residues:
+                        # The crop did not reproduce. Drop the entry rather than
+                        # resume a state against a topology it was not grown on.
+                        pool.pop(key, None)
+                        resume = None
+            if resume is None:
+                index = rng.choice(train_indices)
+                try:
+                    topo, native, _crop, crop_seed = dataset.load_crop(index, rng=rng)
+                except Exception:
+                    raise _SkipUpdate
+                key = (index, crop_seed)
+            if topo.n_residues < 12:
+                raise _SkipUpdate
+            generator = torch.Generator().manual_seed(args.seed * 1_000_003 + update)
+            step_config = config
+            if args.steps_min:
+                step_config = dataclasses.replace(
+                    config, steps=rng.randint(args.steps_min, args.steps)
                 )
-            except Exception:
-                pool.pop(key, None)
-                continue
-            resume = pool[key]
-            if resume.coords.shape[0] != topo.n_residues:
-                # The crop did not reproduce. Drop the entry rather than
-                # resume a state against a topology it was not grown on.
-                pool.pop(key, None)
-                continue
-        else:
-            index = rng.choice(train_indices)
-            try:
-                topo, native, _crop, crop_seed = dataset.load_crop(index, rng=rng)
-            except Exception:
-                continue
-            key = (index, crop_seed)
-        if topo.n_residues < 12:
-            continue
-        generator = torch.Generator().manual_seed(args.seed * 1_000_003 + update)
-        step_config = config
-        if args.steps_min:
-            step_config = dataclasses.replace(
-                config, steps=rng.randint(args.steps_min, args.steps)
+            terms, result = growth_objective(
+                rule, native, topo, step_config,
+                resume_from=resume,
+                generator=generator,
+                bond_weight=args.bond_weight,
+                completion_weight=args.completion_weight,
+                identity_weight=args.identity_weight,
+                identity_start=args.identity_start,
+                reach_weight=args.reach_weight,
+                fape_weight=args.fape_weight,
+                move_weight=args.move_weight,
+                clash_weight=args.clash_weight,
+                clash_tolerance=args.clash_tolerance,
+                clash_bonded=args.clash_bonded,
+                pairwise_weight=args.pairwise_weight,
+                # **Training only.** The held-out evaluation above keeps the clamp
+                # unconditionally, because a reported `fape` has to mean the same
+                # thing across arms -- an unclamped held-out score is a different
+                # quantity from every other run's and the two would be silently
+                # plotted against each other.
+                fape_clamp=args.fape_clamp,
+                fape_clamp_prob=args.fape_clamp_prob,
+                orientation_weight=args.orientation_weight,
+                damage=args.damage,
             )
-        terms, result = growth_objective(
-            rule, native, topo, step_config,
-            resume_from=resume,
-            generator=generator,
-            bond_weight=args.bond_weight,
-            completion_weight=args.completion_weight,
-            identity_weight=args.identity_weight,
-            identity_start=args.identity_start,
-            reach_weight=args.reach_weight,
-            fape_weight=args.fape_weight,
-            move_weight=args.move_weight,
-            clash_weight=args.clash_weight,
-            clash_tolerance=args.clash_tolerance,
-            clash_bonded=args.clash_bonded,
-            pairwise_weight=args.pairwise_weight,
-            # **Training only.** The held-out evaluation above keeps the clamp
-            # unconditionally, because a reported `fape` has to mean the same
-            # thing across arms -- an unclamped held-out score is a different
-            # quantity from every other run's and the two would be silently
-            # plotted against each other.
-            fape_clamp=args.fape_clamp,
-            fape_clamp_prob=args.fape_clamp_prob,
-            orientation_weight=args.orientation_weight,
-            damage=args.damage,
-        )
-        if not torch.isfinite(terms.total):
-            continue
-        optimiser.zero_grad()
-        terms.total.backward()
-        # **A finite loss does not imply a finite gradient, and clipping turns
-        # one infinity into NaN parameters.** This is what killed g2 at update
-        # ~1375 and g3 within its first sixty, and the guard above cannot see
-        # it: ``terms.total`` was finite in both cases.
-        #
-        # Measured directly. Give one entry of one gradient an infinity, then
-        # clip to 1.0: ``clip_grad_norm_`` computes ``total_norm = inf``, so the
-        # scale factor is ``clip / inf = 0``, and ``0 * inf = NaN``. The
-        # parameters holding that gradient go NaN on ``step()``, and if they sit
-        # in the shared trunk every logit downstream is NaN -- which is exactly
-        # the "6912 of 6912 identity logits non-finite" the rollout guard
-        # reported, rather than the handful a local fault would give.
-        #
-        # So the gradient is checked before it is allowed to touch the weights.
-        # Skipping the update is right rather than clamping: an infinite
-        # gradient means this rollout produced something the objective cannot
-        # price, and a clamped version of it is a fabricated direction.
-        finite_grad = all(
-            torch.isfinite(p.grad).all()
-            for p in rule.parameters()
-            if p.grad is not None
-        )
-        if not finite_grad:
-            skipped_updates += 1
-            optimiser.zero_grad(set_to_none=True)
-            if skipped_updates in (1, 10, 100) or skipped_updates % 500 == 0:
-                print(
-                    f"  update {update}: non-finite gradient with a finite "
-                    f"loss ({float(terms.total.detach()):.3f}); skipped. "
-                    f"{skipped_updates} so far.",
-                    flush=True,
+            if not torch.isfinite(terms.total):
+                raise _SkipUpdate
+            optimiser.zero_grad()
+            terms.total.backward()
+            # **A finite loss does not imply a finite gradient, and clipping turns
+            # one infinity into NaN parameters.** This is what killed g2 at update
+            # ~1375 and g3 within its first sixty, and the guard above cannot see
+            # it: ``terms.total`` was finite in both cases.
+            #
+            # Measured directly. Give one entry of one gradient an infinity, then
+            # clip to 1.0: ``clip_grad_norm_`` computes ``total_norm = inf``, so the
+            # scale factor is ``clip / inf = 0``, and ``0 * inf = NaN``. The
+            # parameters holding that gradient go NaN on ``step()``, and if they sit
+            # in the shared trunk every logit downstream is NaN -- which is exactly
+            # the "6912 of 6912 identity logits non-finite" the rollout guard
+            # reported, rather than the handful a local fault would give.
+            #
+            # So the gradient is checked before it is allowed to touch the weights.
+            # Skipping the update is right rather than clamping: an infinite
+            # gradient means this rollout produced something the objective cannot
+            # price, and a clamped version of it is a fabricated direction.
+            finite_grad = all(
+                torch.isfinite(p.grad).all()
+                for p in rule.parameters()
+                if p.grad is not None
+            )
+            if not finite_grad:
+                skipped_updates += 1
+                optimiser.zero_grad(set_to_none=True)
+                if skipped_updates in (1, 10, 100) or skipped_updates % 500 == 0:
+                    print(
+                        f"  update {update}: non-finite gradient with a finite "
+                        f"loss ({float(terms.total.detach()):.3f}); skipped. "
+                        f"{skipped_updates} so far.",
+                        flush=True,
+                    )
+                raise _SkipUpdate
+            torch.nn.utils.clip_grad_norm_(rule.parameters(), args.clip)
+            optimiser.step()
+
+            # **Write the end-state back, but only if it is worth resuming.**
+            # The bar is that crop's own fresh baseline, remembered the first time
+            # the crop was seen, so there is no threshold to pick and it
+            # self-calibrates per protein. Without the guard the pool fills with
+            # the states the rule diverges into -- measured at 16.5 A against a
+            # 12.23 A baseline -- and training on those is training on its own
+            # failure
+            # (docs/claims/the-rule-has-no-attractor-past-its-training-horizon.md).
+            if args.pool_probability > 0:
+                bar = (
+                    resume.baseline_rmsd if resume is not None
+                    else terms.start_rmsd_damaged
                 )
-            continue
-        torch.nn.utils.clip_grad_norm_(rule.parameters(), args.clip)
-        optimiser.step()
+                reached = terms.rmsd_damaged
+                if (
+                    bar is not None
+                    and reached is not None
+                    and reached <= bar
+                    and terms.damaged_mask is not None
+                ):
+                    state = result.state
+                    pool[key] = GrowthPoolEntry(
+                        coords=state.coords.detach().clone(),
+                        hidden=state.hidden.detach().clone(),
+                        damaged=terms.damaged_mask.clone(),
+                        identity=(
+                            state.identity.detach().clone()
+                            if state.identity is not None else None
+                        ),
+                        baseline_rmsd=bar,
+                    )
+                else:
+                    pool.pop(key, None)
 
-        # **Write the end-state back, but only if it is worth resuming.**
-        # The bar is that crop's own fresh baseline, remembered the first time
-        # the crop was seen, so there is no threshold to pick and it
-        # self-calibrates per protein. Without the guard the pool fills with
-        # the states the rule diverges into -- measured at 16.5 A against a
-        # 12.23 A baseline -- and training on those is training on its own
-        # failure
-        # (docs/claims/the-rule-has-no-attractor-past-its-training-horizon.md).
-        if args.pool_probability > 0:
-            bar = (
-                resume.baseline_rmsd if resume is not None
-                else terms.start_rmsd_damaged
-            )
-            reached = terms.rmsd_damaged
-            if (
-                bar is not None
-                and reached is not None
-                and reached <= bar
-                and terms.damaged_mask is not None
-            ):
-                state = result.state
-                pool[key] = GrowthPoolEntry(
-                    coords=state.coords.detach().clone(),
-                    hidden=state.hidden.detach().clone(),
-                    damaged=terms.damaged_mask.clone(),
-                    identity=(
-                        state.identity.detach().clone()
-                        if state.identity is not None else None
-                    ),
-                    baseline_rmsd=bar,
+            recent["total"].append(float(terms.total.detach()))
+            recent["fape"].append(float(terms.fape))
+            recent["rmsd"].append(float(terms.rmsd))
+            recent["alive"].append(float(terms.alive_fraction))
+            recent["twist"].append(float(terms.orientation_degrees))
+            if not math.isnan(terms.recovery):
+                recent["recovery"].append(float(terms.recovery))
+
+            if update % max(args.eval_every // 4, 1) == 0:
+                done = update - start_update
+
+                def mean(key: str) -> float:
+                    values = recent[key]
+                    return sum(values) / max(len(values), 1)
+
+                line = (
+                    f"  {update:>6}  total {mean('total'):>8.3f}  "
+                    f"fape {mean('fape'):>6.3f}  rmsd {mean('rmsd'):>6.2f} A  "
+                    f"alive {mean('alive'):>5.1%}"
                 )
-            else:
-                pool.pop(key, None)
+                line += f"  twist {mean('twist'):>4.1f}d"
+                if args.identity_weight:
+                    line += f"  rec {mean('recovery'):>5.1%}"
+                line += f"  {(time.perf_counter() - started) / max(done, 1):>5.2f} s/u"
+                print(line, flush=True)
+                for values in recent.values():
+                    values.clear()
 
-        recent["total"].append(float(terms.total.detach()))
-        recent["fape"].append(float(terms.fape))
-        recent["rmsd"].append(float(terms.rmsd))
-        recent["alive"].append(float(terms.alive_fraction))
-        recent["twist"].append(float(terms.orientation_degrees))
-        if not math.isnan(terms.recovery):
-            recent["recovery"].append(float(terms.recovery))
-
-        if update % max(args.eval_every // 4, 1) == 0:
-            done = update - start_update
-
-            def mean(key: str) -> float:
-                values = recent[key]
-                return sum(values) / max(len(values), 1)
-
-            line = (
-                f"  {update:>6}  total {mean('total'):>8.3f}  "
-                f"fape {mean('fape'):>6.3f}  rmsd {mean('rmsd'):>6.2f} A  "
-                f"alive {mean('alive'):>5.1%}"
-            )
-            line += f"  twist {mean('twist'):>4.1f}d"
-            if args.identity_weight:
-                line += f"  rec {mean('recovery'):>5.1%}"
-            line += f"  {(time.perf_counter() - started) / max(done, 1):>5.2f} s/u"
-            print(line, flush=True)
-            for values in recent.values():
-                values.clear()
+        except _SkipUpdate:
+            # The update produced nothing trainable. Its EVALUATION still
+            # happens, which is the whole point of this block: the gate
+            # below used to sit after every `continue`, so a crop that
+            # failed to load took that update's held-out row with it.
+            pass
 
         if update % args.eval_every == 0 or update == args.updates:
             scores = score(rule, dataset, eval_indices, args, eval_config)
