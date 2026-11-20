@@ -418,7 +418,65 @@ steps_min = 40
 # Bunya's 24k. The comparison is against Bunya's own random baseline, not
 # against 14.12.
 #
-# PRE-REGISTERED, two buckets, and the second is the one that matters.
+# PRE-REGISTERED. Bucket 0 was added 20 Nov and is the PRIMARY condition; the
+# two below it are diagnostics that say WHY it passed or failed.
+#
+#   0. DOES IT PUT THE ATOMS BACK WHERE THEY BELONG? An ABSOLUTE threshold, in
+#      Angstroms, fixed before the run, and NOT a margin over our own baseline.
+#      Ulban, 20 Nov: either the AANCAs can regrow a backbone or they cannot,
+#      and that needs a directly achievable success/failure condition. Every
+#      number in this project so far has been quoted as progress-over-baseline,
+#      which flatters a rule that ends up in the wrong place from a start that
+#      was further wrong.
+#
+#        rmsd_damaged <= 2.0 A    SOLVED. Comparable to dedicated loop
+#            modelling on a window this long.
+#        rmsd_damaged <= 4.0 A    PASS. The window is where it belongs.
+#        rmsd_damaged  > 4.0 A    FAIL.
+#        >= the geometric floor   NO SIGNAL AT ALL, whatever the absolute
+#            value. See FLOOR below.
+#
+#      4.0 A because the CA-CA spacing is 3.8 A, so that is the scale at which
+#      every residue is within ONE POSITION of where it belongs. Above it the
+#      residues are displaced by more than a residue's width, which is a
+#      different conformation and not a noisy version of the right one. The
+#      line is physical rather than borrowed from a convention.
+#
+#      THE BAR IS FAIR, and that was checked rather than asserted:
+#        * `rmsd_damaged` already measures PLACEMENT, not shape. It calls
+#          `backbone_rmsd_on(final, native, topo, geometric, damaged)`, which
+#          fits the superposition on the INTACT structure and reads the
+#          deviation on the WINDOW (`fape.py:197`, "the same rigid motion the
+#          intact structure asked for, applied to the window"). So the window's
+#          displacement in the frame the surviving context defines is
+#          preserved, and this is not shape-after-alignment.
+#        * Reach is not the limit: 0.3 A/step x 120 steps = 36 A of budget
+#          against a ~14 A journey from the random start.
+#        * Resolution is not capped -- nothing forces the per-step move to stay
+#          large, so 4 A is a convergence question and not a budget one.
+#        * The task is well posed: the residue one-hot is 20 of the 32 node
+#          dims (`torch_graph.py:630`), so the rule sees the sequence of the
+#          window it is replacing. Sequence plus fixed flanks -> conformation
+#          has a right answer.
+#
+#      FLOOR, and it must be measured before this arm is read either way. A
+#      12-residue window pinned at both ends cannot go anywhere: the closure
+#      constraint alone forces some RMSD range, with no knowledge of the native
+#      pose. If that range is ~9 A then 8.5 A was never a signal and neither
+#      would 5 A be; if it is ~14 A then a 4 A result is real. One CPU job, no
+#      training, no network. WITHOUT IT A PASS IS AS UNINTERPRETABLE AS A FAIL,
+#      which is why it is part of this registration and not a follow-up.
+#
+#      CONVERGENCE, the one escape clause and it is narrow: if the held-out
+#      curve is still falling at the budget, the result is NOT CONVERGED and
+#      not FAIL. Flat curve or no verdict.
+#
+#      AND THE DISCIPLINE THIS BUCKET EXISTS FOR: if it fails, we do NOT add
+#      terms and re-run. A fail at 8-ish A against a measured floor means a
+#      local rule with this information cannot place a backbone, and that is
+#      the finding. 23 arms have been read as improvements over each other
+#      while none of them was ever read against a number that meant anything.
+#      This is the clause that makes this a test rather than arm 24.
 #
 #   1. PLACEMENT, against its own baseline. g20 beat the helix baseline by
 #      4.45 A. Does this arm beat the RANDOM baseline by a comparable margin?
@@ -445,12 +503,57 @@ steps_min = 40
 #      already returns (phi, psi, omega) per residue, so this is a readout and
 #      not a code change to the trainer.
 #
-# VOID if the run does not complete, or if `twist` leaves the 9-12 band --
-# g20's orientation term is inherited and this arm does not retest it.
+# VOID if the run does not complete. The `twist` clause is NARROWED as of
+# 20 Nov: twist leaving the 9-12 band voids buckets 1 and 2, which are
+# comparisons against g20, and does NOT void bucket 0, which is an absolute
+# threshold that no other arm enters. A regime marker cannot invalidate a
+# measurement that is not a comparison. This matters because the twist guard
+# has now voided the placement number of two consecutive arms -- g19_nomove
+# and g21_pool -- and in g21's case it also took down the gate that was
+# supposed to license reading its primary bucket
+# (`docs/claims/the-pool-and-length-jitter-stop-the-divergence-past-the-training-horizon.md`).
+# An absolute bar is immune to that failure mode, which is most of the argument
+# for having one.
 #
 # ONE VARIABLE against g20_orient. Deliberately NOT inheriting g21_pool: the
 # pool is a separate open question and stacking them would confound the start
-# state with persistence.
+# state with persistence. Bucket 0 is read at step 120, the trained horizon, so
+# it does not need the persistence the pool buys.
+#
+# ---------------------------------------------------------------------------
+# A NOTE ON SCATTERED STARTS, recorded 20 Nov and deliberately NOT built.
+#
+# Ulban: residues could be scattered randomly in space like diffusion does, and
+# the rule should solve it -- offered as a viable starting point rather than as
+# the one to use. `initial = "random"` above is the cheap version of the same
+# argument (no secondary structure handed over) and costs one config key, so it
+# is what this arm runs. The scattered version would be a fourth BASELINE_MODE
+# and is kept here because two of its constraints are architectural facts worth
+# not rediscovering:
+#
+#   * PER-RESIDUE RIGID, never per-atom. `rigid_relax` rotates and translates
+#     each residue's atoms about its own CA, so the rule's only output is a
+#     frame update and it has NO MECHANISM to change internal geometry.
+#     Scattering atoms within a residue would create damage it cannot repair by
+#     construction, and the run would fail for a reason that says nothing about
+#     the thesis.
+#   * SCATTER THE WINDOW, NOT THE WHOLE STRUCTURE. `rmsd_damaged` is a
+#     placement number only because the intact context is pinned and defines
+#     the frame the superposition is fitted on. Scatter everything and there is
+#     no frame left to measure placement in, and the shape/placement
+#     distinction collapses -- the exact failure seven arms could not see.
+#   * And the reach arithmetic sets the radius: 0.3 A/step x 120 = 36 A of
+#     straight-line budget, and real trajectories are not straight. A 15 A
+#     sphere about the window centroid needs ~50-70 steps of directed motion
+#     and is a real test; the full crop bounding box exceeds the budget, so a
+#     failure there would measure `steps` rather than capability.
+#
+# What CANNOT be done to help it: freezing the selection to the native edge
+# set. That was `native_edges`, removed 9 Nov as a leak of the one thing the
+# project exists to recover (`torch_graph.py:330`). It has to work on live
+# graphs, which the forced sequence neighbours make possible -- residue i
+# always perceives i+-1 at any distance, so the chain can zip up from
+# connectivity before any contact comes inside the 10 A cutoff.
 [g22_random]
 inherits = "g20_orient"
 
