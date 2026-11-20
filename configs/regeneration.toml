@@ -442,14 +442,40 @@ steps_min = 40
 #      different conformation and not a noisy version of the right one. The
 #      line is physical rather than borrowed from a convention.
 #
-#      THE BAR IS FAIR, and that was checked rather than asserted:
-#        * `rmsd_damaged` already measures PLACEMENT, not shape. It calls
-#          `backbone_rmsd_on(final, native, topo, geometric, damaged)`, which
-#          fits the superposition on the INTACT structure and reads the
-#          deviation on the WINDOW (`fape.py:197`, "the same rigid motion the
-#          intact structure asked for, applied to the window"). So the window's
-#          displacement in the frame the surviving context defines is
-#          preserved, and this is not shape-after-alignment.
+#      WHICH NUMBER THE BAR IS ON, and this was got WRONG when bucket 0 was
+#      first written, so it is spelled out. There are two superposition
+#      conventions and they are not the same measurement:
+#
+#        fit_all     `backbone_rmsd_on(.., geometric, damaged)` with
+#                    `geometric = final.alive` (growth.py:1912), and these runs
+#                    are 100% alive -- so the fit includes THE DISPLACED WINDOW
+#                    ITSELF. This is `rmsd_damaged`, the column every arm in
+#                    this project has ever been scored by.
+#        fit_intact  the same call with `anchors` -- the surviving context
+#                    alone. This is what `backbone_rmsd_on`'s own docstring
+#                    says the fit should be, because a residue whose placement
+#                    is the question cannot also be part of what the frame is
+#                    fitted to.
+#
+#      Measured on the laptop pool, 12 crops, 12-residue window
+#      (`scripts/baseline_probe.py --damage 12`), on START STATES:
+#
+#        baseline     fit_all  fit_intact   diff
+#        helix          10.77       11.83   1.06
+#        random         14.12       15.84   1.73
+#        extended       21.30       23.74   2.44
+#
+#      So fit_all UNDER-REPORTS the placement error, and the gap grows with
+#      displacement because the fit absorbs more of the thing being asked
+#      about. **BUCKET 0 IS ON fit_intact.** The 4.0 A line does not move --
+#      it is a physical argument about CA-CA spacing and is convention
+#      independent -- but it has to be unambiguous which number it is a line
+#      on, and the one every arm was scored by is the wrong one.
+#
+#      Consequence worth stating plainly: the gap on a TRAINED rollout has
+#      never been measured, only on start states, so g20's 7.78 and g21's 8.41
+#      are both fit_all and both flatter the rule by an unknown amount of order
+#      1-2 A. The trainer now logs both columns so this stops being unknown.
 #        * Reach is not the limit: 0.3 A/step x 120 steps = 36 A of budget
 #          against a ~14 A journey from the random start.
 #        * Resolution is not capped -- nothing forces the per-step move to stay

@@ -233,6 +233,14 @@ def score(rule, dataset, indices, args, config, seed: int = 0) -> dict[str, floa
         # is too short to hold one is undamaged, and folding its absent score
         # in as a zero would read as a perfect fill.
         "rmsd_dmg", "damaged", "dmg_n",
+        # The same window RMSD under the other superposition convention: fitted
+        # on the surviving context alone rather than on every alive residue.
+        # `rmsd_dmg` fits on `geometric = final.alive`, so on a 100 % alive
+        # regeneration run the displaced window is part of what the frame is
+        # fitted to and absorbs some of its own error -- 1.06 A of it on a helix
+        # start state and 1.73 on random. `g22_random`'s absolute pass/fail bar
+        # is a line on THIS column (configs/regeneration.toml, bucket 0).
+        "rmsd_dmg_fit_intact",
         # **Added 7 Nov because I built two terms and could not see either.**
         # `move` is the ceiling check's own loss and `clash` the steric one;
         # without them a run reports that rmsd_dmg is flat and gives no way to
@@ -302,6 +310,12 @@ def score(rule, dataset, indices, args, config, seed: int = 0) -> dict[str, floa
                 sums["rmsd_dmg"] += float(terms.rmsd_damaged)
                 sums["damaged"] += float(terms.damaged)
                 sums["dmg_n"] += 1.0
+                if terms.rmsd_damaged_intact is not None and not math.isnan(
+                    terms.rmsd_damaged_intact
+                ):
+                    sums["rmsd_dmg_fit_intact"] += float(
+                        terms.rmsd_damaged_intact
+                    )
             if terms.move is not None:
                 sums["move"] += float(terms.move)
             if terms.clash is not None:
@@ -329,6 +343,7 @@ def score(rule, dataset, indices, args, config, seed: int = 0) -> dict[str, floa
     # Over the damaged crops, not over every crop.
     windows = max(sums["dmg_n"], 1.0)
     out["rmsd_dmg"] = sums["rmsd_dmg"] / windows
+    out["rmsd_dmg_fit_intact"] = sums["rmsd_dmg_fit_intact"] / windows
     out["damaged"] = sums["damaged"] / windows
     out["dmg_n"] = sums["dmg_n"]
     out["n"] = float(n)
@@ -386,6 +401,10 @@ def report(scores: dict[str, float], identity: bool) -> str:
             f"  regeneration: rmsd_dmg {scores['rmsd_dmg']:>6.2f} A over "
             f"{scores['damaged']:.1f} damaged residues "
             f"in {int(scores['dmg_n'])} of {int(scores['n'])} crops"
+            "\n                fit_intact "
+            f"{scores['rmsd_dmg_fit_intact']:>6.2f} A -- the same window with "
+            f"the superposition fitted on the surviving context alone, which "
+            f"is the number g22_random's 4.0 A bar is set on"
         )
     # The stall diagnostics. Read `done` beside `frontier`: a small completion
     # loss means "the rule wants to grow" only if the frontier is non-empty,

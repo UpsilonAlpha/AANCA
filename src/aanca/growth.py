@@ -1604,6 +1604,19 @@ class GrowthTerms:
     #: and a regeneration run has to report this one. ``None`` when nothing was
     #: damaged.
     rmsd_damaged: float | None = None
+    #: ``rmsd_damaged`` with the superposition fitted on **the surviving
+    #: context alone** instead of on every alive residue.
+    #:
+    #: The field above fits on ``geometric = final.alive``, which on a 100 %
+    #: alive regeneration run includes the twelve displaced residues whose
+    #: placement is the question -- so the fit absorbs part of the error it is
+    #: measuring. This one does not, which is what ``backbone_rmsd_on``'s own
+    #: docstring asks for. On start states the difference is 1.06 A for helix,
+    #: 1.73 for random and 2.44 for extended, always in the direction that
+    #: makes the rule look better, and on a trained rollout it had never been
+    #: measured at all. Both are reported because every arm in the record was
+    #: scored by the field above and the comparison has to stay possible.
+    rmsd_damaged_intact: float | None = None
     #: How many residues were damaged, because the RMSD above is a mean over
     #: them and a window of 4 is a different claim from a window of 24.
     damaged: int = 0
@@ -2007,10 +2020,31 @@ def growth_objective(
     pairwise_window = pairwise_window.to(fape.dtype)
 
     rmsd_damaged = None
+    rmsd_damaged_intact = None
     if bool(damaged.any()):
         rmsd_damaged = float(
             backbone_rmsd_on(
                 final.coords, native_coords, topo, geometric, damaged
+            ).detach()
+        )
+        # **The same quantity under the other superposition convention.**
+        # ``geometric`` is ``final.alive`` and these runs are 100 % alive, so
+        # the fit above includes the displaced window itself and absorbs part
+        # of the error being asked about. Fitting on the surviving context
+        # alone is what ``backbone_rmsd_on``'s docstring prescribes and what
+        # ``scripts/baseline_probe.py`` reports as ``fit_intact``: 1.06 A
+        # larger on a helix start state, 1.73 on random, 2.44 on extended, so
+        # the gap grows with displacement. Logged from 20 Nov because the gap
+        # on a TRAINED rollout had never been measured and `g22_random`'s
+        # absolute pass/fail bar is a line on this number, not on the one
+        # above (``configs/regeneration.toml``, bucket 0).
+        rmsd_damaged_intact = float(
+            backbone_rmsd_on(
+                final.coords,
+                native_coords,
+                topo,
+                (~damaged) & final.alive,
+                damaged,
             ).detach()
         )
     bond = peptide_bond_restraint(final.coords, topo, final.alive, links)
@@ -2144,6 +2178,7 @@ def growth_objective(
             orientation=orientation.detach(),
             orientation_degrees=orientation_degrees,
             rmsd_damaged=rmsd_damaged,
+            rmsd_damaged_intact=rmsd_damaged_intact,
             start_rmsd_damaged=(
                 float(
                     backbone_rmsd_on(
