@@ -164,13 +164,41 @@ deliverable, and not a number to chase on its own.
    disk, so the same index is a different protein on a 954-structure laptop and
    a 23,760-structure Bunya — which is what voided the 10.77 A baseline. **Pin
    PDB ids.** Then move `seed` with the held-out set held fixed.
-2. **Read `g21_pool` (32904055) against its three pre-registered buckets.**
-   Primary is the 600-step reading from `scripts/regrowth_dispersion.py`;
-   second is `settled` at step 120 within 1.0 A of g20's 7.78; third is the
-   step-120 ensemble spread against g20. This is the test of whether divergence
-   past the trained horizon is a protocol problem or an architectural one, and
-   either answer redirects the project. *Blocked while Bunya login is
-   disabled.*
+2. **`g21_pool` (32904055) is READ, its placement number is VOID, and the
+   primary bucket still needs a job (20 Nov).** Completed, exit 0, 10,000
+   updates, 444.6 min on bun144. Its void clause was *"if `twist` leaves the
+   9-12 band"* and settled twist is **13.25** (14.2 then 12.3 on the last two
+   held-out evaluations, out of band at 10 of 39, all from update 5500 on). So
+   `settled` rmsd_dmg 8.41 A is void -- by exact precedent, since `g19_nomove`
+   carried the same clause, settled at 14.26 and had its 8.39 voided while its
+   twist reading stood.
+
+   **The reason the void fired is the result.** g21 inherits
+   `orientation_weight = 2.5` and adds only `pool_probability = 0.5` and
+   `steps_min = 40`, and twist goes most of the way back to the no-term value:
+
+       baseline    --                                 9.6      12.23
+       g17_long    no orientation, 10k               14.3       6.69
+       g19_nomove  no orientation, 10k              14.26  8.39 (void)
+       g20_orient  orientation 2.5, 10k             11.24       7.78
+       g21_pool    orientation 2.5 + pool + jitter  13.25  8.41 (void)
+
+   g20's headline was that the term holds twist in the band, with g19 as the
+   causal control. **The persistence protocol gives that back.** Guess at the
+   mechanism, not more: the pool's guard keeps an end-state only if it beats
+   that crop's fresh baseline and ranks by *accuracy*, so twist is not in the
+   ranking and an entry can be better on placement and worse on orientation and
+   still be kept. Two variables at once, so which of pool or jitter did it is
+   unknown -- a recorded departure, not an accident.
+
+   **Still open: the primary bucket.** The 600-step
+   `scripts/regrowth_dispersion.py` reading on this checkpoint, against g20's
+   16.4-16.9 A. Twist drifting makes that comparison *confounded, not void*, and
+   it is worth taking either way. `runs/g21_pool/best.pt` is on scratch and the
+   script defaults to `--device cpu`, so it is a CPU job and not a GPU slot.
+   **So question 2 above -- does the rule hold what it builds? -- is unanswered
+   after this arm, and the arm cost its placement number in the asking.**
+   (`docs/claims/the-pool-and-length-jitter-undo-the-orientation-terms-hold-on-twist.md`.)
 3. **`g22_random` -- take the helix away.** Pre-registered 14 Nov on Ulban's
    objection that the model should learn to form helices and sheets rather than
    be handed one. Every arm from g1 to g21 ran `initial = "helix"`, so the
