@@ -6,7 +6,7 @@ journal is `docs/JOURNAL.md`; the claims and their evidence are one note each in
 
 ---
 
-## 0. Current state — 2026-11-14
+## 0. Current state — 2026-11-20
 
 ### The question, rescoped 14 Nov
 
@@ -66,10 +66,18 @@ crops, with no teacher forcing and no target graph
 Nine earlier arms without teacher forcing had sat at their own baselines to two
 decimal places, so this is a real signal and not a readout artefact.
 
-**And it does not persist.** The same rule read at 600 steps is at 16.4–16.9 A,
-worse than the 12.23 A untrained baseline — there is no attractor past the
-trained horizon ([[the-rule-has-no-attractor-past-its-training-horizon]]). Every
-number this project reports is a snapshot of a transient at step 120.
+**That rule did not persist, and 20 Nov found the protocol that does.**
+`g20_orient` read at 600 steps is at 16.4–16.9 A, worse than the 12.23 A
+untrained baseline ([[the-rule-has-no-attractor-past-its-training-horizon]]).
+The same measurement on `g21_pool` — same six crops, same members, same
+amplitudes, same `start bond` to two decimals — reads **8.5–9.1 A**, and the
+step-120-to-600 change is **0.10 A** against g20's 9.15
+([[the-pool-and-length-jitter-stop-the-divergence-past-the-training-horizon]]).
+**So the divergence was a training-protocol fault, not an architectural one.**
+Still 0 of 48 converged, so this is a bounded basin and not a fixed point, which
+is the property this record wanted. Read it as **confounded**: g21's twist is
+void, and the horizon-accuracy gate that was pre-registered to license this
+comparison is void with it. Length jitter is the likelier of the two causes.
 
 ### The three things that decide the central claim
 
@@ -81,10 +89,15 @@ In this order, and nothing downstream matters until they are answered.
      ([[no-growth-arm-has-been-run-twice-so-no-difference-has-an-error-bar]]). This needs
      `eval_ids` as a config key pinning PDB ids rather than integer indices, and
      one run. It is the cheapest thing in the queue and it gates everything.
-  2. **Does the rule hold what it builds?** `g21_pool` (32904055) is the
-     cheapest test of whether divergence is a protocol problem or an
-     architectural one — the rule having no way to represent "I have arrived".
-     Pre-registered in three buckets, primary the 600-step reading.
+  2. **Does the rule hold what it builds? ANSWERED YES on 20 Nov, by an arm
+     whose own placement number is void.** `g21_pool`'s primary bucket came back
+     at **8.5 A at 600 steps** against g20's 16.9 and a 12.23 baseline, so
+     divergence is a protocol problem and not the rule having no way to
+     represent "I have arrived"
+     ([[the-pool-and-length-jitter-stop-the-divergence-past-the-training-horizon]]).
+     What is now needed is an arm that holds its structure *and* can report what
+     it built: the pool and the jitter with twist inside the band, which is
+     question 1's replicate as well if it also pins `eval_ids`.
   3. **Is 7.78 A better than the prior it starts from?** The damage operator is
      **not noise**: `baseline_coords(..., initial="helix", ...)` discards the
      window's native pose and regrows it in torsion space off the intact flanks
@@ -111,9 +124,11 @@ everything. What is local is the **function**, not its reach.
                                             the intact flanks
     all-pairs attention each step           one hop per step, every step
     one-step denoising at sampled noise     BPTT through a truncated rollout
-    stops because the schedule ends         has no schedule and, measured,
-                                            does NOT settle -- 16.4-16.9 A
-                                            at 600 steps
+    stops because the schedule ends         has no schedule; with a pool and
+                                            length jitter it holds 8.5 A to
+                                            600 steps without converging --
+                                            a bounded basin, 0/48 fixed points.
+                                            Without them it diverges to 16.9
 
 Not "no timestep": global time exists and the trajectory has a direction, but no
 cell can read it, which is what stops the rule learning the index instead of the
@@ -191,14 +206,49 @@ deliverable, and not a number to chase on its own.
    still be kept. Two variables at once, so which of pool or jitter did it is
    unknown -- a recorded departure, not an accident.
 
-   **Still open: the primary bucket.** The 600-step
-   `scripts/regrowth_dispersion.py` reading on this checkpoint, against g20's
-   16.4-16.9 A. Twist drifting makes that comparison *confounded, not void*, and
-   it is worth taking either way. `runs/g21_pool/best.pt` is on scratch and the
-   script defaults to `--device cpu`, so it is a CPU job and not a GPU slot.
-   **So question 2 above -- does the rule hold what it builds? -- is unanswered
-   after this arm, and the arm cost its placement number in the asking.**
-   (`docs/claims/the-pool-and-length-jitter-undo-the-orientation-terms-hold-on-twist.md`.)
+   **And the primary bucket is now READ (job 33245103, exit 0, 20 Nov), and it
+   is the first bucket -- the best of the four.** The 600-step
+   `scripts/regrowth_dispersion.py` reading on `best.pt`, against g20's figures
+   from the identical measurement:
+
+       amp deg       g20 RMSF  g20 rmsd_dmg    g21 RMSF  g21 rmsd_dmg
+             0          5.098         16.93       3.384          8.51
+            15          5.139         16.35       4.085          8.72
+            45          6.253         16.41       5.400          9.10
+
+       untrained baseline                                       12.23
+       g21 at step 120, the trained horizon (void)               8.41
+
+   Pre-registered first bucket was `<= 9.0` at 600 steps: *"the rule holds its
+   structure, the statistical-potential programme is unblocked."* It reads 8.51
+   at the noise floor, and **the step-120-to-600 drift is 0.10 A against g20's
+   9.15**. Like-for-like was checked and not assumed: same six crops, 8 members,
+   same amplitudes, and `start bond` identical to two decimals in both runs.
+   **0 of 48 converged in both**, so g21 is still moving at 600 steps -- it is
+   moving *without going anywhere*, which is the bounded basin this record
+   named as the physical property and distinguished from the identity map.
+
+   **Third bucket does not fire**: settled spread ratios 0.66 / 0.79 / 0.86,
+   nothing halved, so the pool did not buy persistence by collapsing the
+   distribution. Two qualifications: the bucket asked for spread at step 120 and
+   the script prints it at the cap, and g20's denominator *was divergence* by
+   its own record, so this is a diverging spread against a bounded one and
+   cannot be read as "multiplicity preserved".
+
+   **Confounded, three ways, and the second is a knot rather than a caveat.**
+   (i) The checkpoint's twist is void, as pre-registered, which makes this
+   confounded and not void. (ii) **The second bucket was the gate on reading
+   the first** -- *"more than an Angstrom and the price is too high to read the
+   first bucket against g20 at all"* -- and g21's 8.41 is 0.63 A, inside
+   tolerance, but void on the twist guard, so the gate cannot be read either
+   way. The 8.5 A figure rests on the crops, members, amplitudes and start bond
+   matching, not on a horizon-accuracy check, which does not exist. (iii) Of
+   the two variables, **`steps_min = 40` is the likelier cause than the pool**:
+   drawing the rollout length from [40, 120] removes the privileged step the
+   loss is applied at, which is what horizon-dependence *is*. Stop writing this
+   as "the pool".
+   (`docs/claims/the-pool-and-length-jitter-stop-the-divergence-past-the-training-horizon.md`,
+   `docs/claims/the-pool-and-length-jitter-undo-the-orientation-terms-hold-on-twist.md`.)
 3. **`g22_random` -- take the helix away.** Pre-registered 14 Nov on Ulban's
    objection that the model should learn to form helices and sheets rather than
    be handed one. Every arm from g1 to g21 ran `initial = "helix"`, so the
@@ -393,10 +443,17 @@ unfixed form: `equivariant_move` touches only the translation, and the two
 halves are independent. Pinned as
 `test_a_lab_frame_rotation_is_not_equivariant_either`.
 
-**IN FLIGHT as of 20 Nov 12:34 AEST.** Two jobs, one GPU slot of the two:
+**IN FLIGHT as of 20 Nov 14:08 AEST.** One job, one GPU slot of the two:
 
-    33245111  gpu_rocm  g23_localrot        R  bun160  ~7.5 h expected
-    33245103  general   dispersion on g21   R  bun154  the primary bucket
+    33245111  gpu_rocm  g23_localrot        R  bun160  update 2480 of 10000
+    33245103  general   dispersion on g21   DONE, exit 0, read above
+
+`g23_localrot` at update 2480: twist oscillating **10.2-12.8** with the held-out
+row at 2250 reading **11.5 deg**, so it is inside its 9-12 band and its void
+condition has not fired. rmsd 2.83-3.38 A, alive 100 %, `rmsd_dmg` **10.78 A**
+at update 2250 against the 12.23 baseline. 2.27 s/update, so ~4.7 h left. The
+12.2d seen at update 806 was oscillation and not a trend, which is what the
+early flag was uncertain about.
 
 `g23_localrot` 33245111 is confirmed to be running the arm rather than the
 base: g21's log header carried *"TRANSLATION ONLY: the rotation is left in the
