@@ -6,7 +6,7 @@ journal is `docs/JOURNAL.md`; the claims and their evidence are one note each in
 
 ---
 
-## 0. Current state — 2026-11-20
+## 0. Current state — 2026-11-21
 
 ### The question, rescoped 14 Nov
 
@@ -46,6 +46,47 @@ Two things therefore stop being contributions and are recorded as such:
     binder hypothesis) stay in `docs/claims/` as what regeneration would *buy*,
     and they are strictly downstream of the central claim. Nothing there is
     worth running while the central claim is unsettled.
+
+### THE 4.0 A TEST WAS RUN ON 20 NOV AND IT FAILED (read this first)
+
+The first arm in this project measured against **an absolute threshold fixed
+before the run** and against **a measured floor**, from a neutral start with no
+secondary structure handed to it. `g22_random` (33249861), 10,000 updates:
+
+    on the same 12 held-out crops            fit_all   fit_intact
+    g22_random start (untrained, update 250)   12.38        13.44
+    GEOMETRIC FLOOR, random, mean               8.60         9.48
+    g22_random SETTLED                          8.41         9.02
+    geometric floor, best of 10 restarts        5.68         6.00
+    bucket 0 PASS line                             --         4.00
+
+**Ten thousand updates over 400 proteins bought 0.46 A on top of bond closure
+and steric overlap.** The floor (`scripts/geometric_floor.py`) optimises the
+window's frames against those two terms only -- no distance to native, no
+torsion prior, no fragment library -- using the rule's own degrees of freedom,
+so the two search the same structures and differ only in that one of them is
+told where native is. It is a valid comparator and that was checked three ways:
+same Bunya pool and held-out ids, same start state (11.92/13.09 against the
+arm's own 12.38/13.44), and the chain closed to `bond` 0.0204 against the
+trained rule's 0.629.
+
+**And the rule is not selecting among valid completions.** The best of ten
+random restarts of that same optimiser reaches **6.00 A**, so completions 3 A
+better than the rule's output exist, satisfy the same constraints, and are
+findable by chance in ten draws. That statement does not depend on where the bar
+was put, which makes it the sharper one.
+
+Bucket 0 survived the twist guard because the clause was narrowed *before* this
+run to void only the g20 comparisons: a regime marker cannot invalidate a
+measurement that is not a comparison. Without that narrowing this arm would have
+joined `g19_nomove`, `g21_pool` and `g23_localrot` -- **four consecutive arms
+with a placement number voided on twist** -- and the question would still be
+open after a fifth 400-minute run.
+
+The registration's own clause applies: *if it fails, we do not add terms and
+re-run.* A local rule with this information, this objective and this much
+training does not place a backbone.
+(`docs/claims/the-rule-beats-bond-closure-and-sterics-by-half-an-angstrom-and-fails-the-absolute-bar.md`.)
 
 ### Where the central claim actually stands
 
@@ -443,13 +484,15 @@ unfixed form: `equivariant_move` touches only the translation, and the two
 halves are independent. Pinned as
 `test_a_lab_frame_rotation_is_not_equivariant_either`.
 
-**IN FLIGHT as of 20 Nov 15:55 AEST.** Four jobs, both GPU slots used:
+**NOTHING IN FLIGHT as of 21 Nov. All four jobs finished, exit 0.** The 4.0 A
+test was read and **it FAILED**, which is the answer to the question and is
+recorded directly below rather than in the arm list.
 
-    33245111  gpu_rocm  g23_localrot              R   bun160  update 2480
-    33249861  gpu_rocm  g22_random                PD          the 4.0 A test
-    33249842  general   geometric floor, random   R   bun157  10 restarts
-    33249843  general   geometric floor, helix    R   bun157  1 restart
-    33245103  general   dispersion on g21         DONE, exit 0, read above
+    33249861  gpu_rocm  g22_random                DONE  397.1 min  FAILS bucket 0
+    33245111  gpu_rocm  g23_localrot              DONE  376.8 min  VOID on twist
+    33249842  general   geometric floor, random   DONE  the comparator
+    33249843  general   geometric floor, helix    DONE  BROKEN, see scope
+    33245103  general   dispersion on g21         DONE, read above
 
 `AANCA_ENTRY=scripts/train_growth.py` was set explicitly before submitting
 33249861 and the echoed sbatch line ends `bunya_train.slurm

@@ -1,0 +1,139 @@
+---
+type: observation
+status: supported
+evidence: ours
+sources: [33249861, 33249842, 33249843, geometric_floor.py]
+---
+
+# From a neutral start the rule places a damaged window at 9.02 angstrom where closure and sterics alone reach 9.48, so ten thousand updates bought 0.46 angstrom against a 4.0 angstrom bar
+
+`g22_random` (33249861) completed 20 Nov, exit 0, 10,000 updates, 397.1 min on
+bun161. This is the first arm in the project read against **an absolute
+threshold fixed before the run** and against **a measured floor**, and it is the
+answer to the question Ulban put on 20 Nov: either the AANCAs can regrow a
+backbone or they cannot.
+
+**They cannot. Not yet, and not close.**
+
+    on the same 12 held-out crops            fit_all   fit_intact
+    g22_random start (untrained, update 250)   12.38        13.44
+    GEOMETRIC FLOOR, random, mean               8.60         9.48
+    g22_random SETTLED                          8.41         9.02
+    geometric floor, best of 10 restarts        5.68         6.00
+    bucket 0 PASS line                             --         4.00
+
+`fit_intact` is the column the bar is set on -- the superposition fitted on the
+surviving context alone, so the residues whose placement is the question are not
+also part of the frame that measures them
+(`configs/regeneration.toml`, bucket 0).
+
+## Three readings, and the first is the verdict
+
+**1. Bucket 0 FAILS, by a factor of two.** 9.02 A against a 4.0 A line that was
+set from the CA-CA spacing of 3.8 A -- the scale at which every residue is
+within one position of where it belongs. At 9.02 A the window is a different
+conformation in a different place.
+
+**2. The margin over a native-blind optimiser is 0.46 A.** The floor is
+`scripts/geometric_floor.py`: the window's frames moved to satisfy **peptide-bond
+closure and steric overlap only**, no distance to native, no torsion prior, no
+fragment library, using the rule's own degrees of freedom so that the two search
+the same set of structures and differ only in that one of them is told where
+native is. Ten thousand updates over 400 proteins bought 0.46 A on top of that.
+
+**The floor is not winning by cheating on chemistry, which is the first thing to
+check.** Achieved `bond` on the floor run is **0.0204** against g22's **0.629**:
+the optimiser closes the chain roughly thirty times better than the trained rule
+while also landing closer to native. And a better optimiser would push the floor
+*down*, so this comparison is conservative in the direction that matters.
+
+**3. The rule is not selecting among valid completions.** The best of ten random
+restarts reaches **6.00 A** -- so completions 3 A better than the rule's output
+exist, satisfy the same constraints, and are findable by chance in ten draws.
+The rule is not choosing well among the structures geometry permits; it is
+landing near the middle of them. That is the sharper statement of the failure
+than the bar is, because it does not depend on where the bar was put.
+
+## The floor is a valid comparator, and that was checked rather than assumed
+
+This is the whole load-bearing step, since a floor measured on a different task
+proves nothing. Three checks, all passed:
+
+  * **Same pool, same held-out set.** 23,760 structures available, held-out ids
+    `['3B82','4CQE','1JNP','2FAZ','8QTF','6HJ6','2QB5','12XX','3N71','1T7V','3VYC','10XL']`,
+    whose first six are the dispersion's own. Bunya's pool, not the laptop's --
+    the trap that had the helix baseline quoted as 10.77 for months when Bunya
+    reads 12.23 ([[the-regeneration-baseline-is-12-23-angstrom-and-every-arm-sits-on-it]]).
+  * **Same start state.** The floor's start reads 11.92 / 13.09 and g22's own
+    first held-out evaluation reads 12.38 / 13.44. Those agree, so the optimiser
+    and the rule were handed the same problem.
+  * **The chain is closed.** Mean `bond` 0.0204 over 12 crops x 10 restarts, so
+    these are valid completions and not a torn chain that happens to score well.
+    One crop of twelve (`4CQE`) finished at 0.3237 and is the weakest row.
+
+## What the twist guard did, and why bucket 0 survived it
+
+`g22_random` settled at **twist 12.8 deg**, outside the 9-12 band, so its void
+clause fired -- as it did for `g19_nomove` (14.26), `g21_pool` (13.25) and
+`g23_localrot` (12.9). **Four consecutive arms have had a placement number
+voided by that guard.**
+
+Bucket 0 survives because the clause was narrowed on 20 Nov, before this run,
+to void only buckets 1 and 2 -- the comparisons against g20 -- on the reasoning
+that *a regime marker cannot invalidate a measurement that is not a comparison*.
+An absolute threshold no other arm enters is immune to it. Had that narrowing
+not been written, this arm would have joined the other three and the question
+would still be open after a fifth 400-minute run.
+
+**The cost of that same clause: bucket 2 is void**, and bucket 2 was the
+interesting one -- the fraction of natively-helical window residues landing in
+the helical Ramachandran basin, which is the direct test of learned secondary
+structure and the thing Ulban asked for on 14 Nov. Voiding it on `twist` was
+over-broad of me: twist is the geodesic error of a bonded pair's *relative
+rotation* and the basin fraction is a *local torsion* readout, so they are not
+the same quantity and the second did not need protecting by the first. The
+readout can still be computed from the checkpoint as a diagnostic; it is not
+pre-registered evidence and should not be quoted as though it were.
+
+## What this does and does not retire
+
+**It does not retire g20's 7.78 A.** That arm ran a helix start, where the
+window begins with its secondary structure handed to it, and its number is
+`fit_all`. Both differences flatter it and neither is measured here.
+
+**It does bound what the 7.78 was.** g22 is g20 with one setting changed, and
+from a neutral start the same rule lands at 9.02 A `fit_intact` -- 0.46 A from
+what geometry alone forces. So the project's headline rested on a start state
+doing a large share of the work, which is what [[the-start-state-hands-the-rule-its-secondary-structure]]
+predicted and this is the measurement of it.
+
+**And the discipline clause applies**: bucket 0 was registered with *"if it
+fails, we do not add terms and re-run."* A local rule with this information,
+this objective and this much training does not place a backbone. That is the
+finding.
+
+## Scope
+
+  * **One seed, one run.** No arm in this project has ever been replicated
+    ([[no-growth-arm-has-been-run-twice-so-no-difference-has-an-error-bar]]), so
+    0.46 A has no error bar either. The *sign* is what carries here, not the
+    magnitude, and a 0.46 A margin is inside the noise of anything unmeasured.
+  * **The helix floor (33249843) is NOT used above and should not be quoted.**
+    Two faults: the submission dropped `--iters 1500` so it ran at the default
+    600, and its start state reads 7.67 A `fit_all` against the recorded 12.23
+    for a helix start, driven by five of twelve crops starting under 1.5 A.
+    Until that is understood it is not a measurement of anything.
+  * **The floor is one optimiser configuration**, Adam at lr 0.03 for 1500
+    iterations. It is an upper bound on the true geometric floor, so the real
+    margin over geometry is at most 0.46 A and probably less.
+  * `g23_localrot`'s own number is void on the same guard: `rmsd_dmg` 8.33
+    `fit_all`, twist 12.9. It predates the `fit_intact` column, so it has none.
+
+## Supports
+- [[the-start-state-hands-the-rule-its-secondary-structure]]
+
+## Refutes
+- [[a-local-rule-can-regenerate-a-damaged-region-from-its-surviving-context]]
+
+## Requires
+- [[the-regeneration-baseline-is-12-23-angstrom-and-every-arm-sits-on-it]]
