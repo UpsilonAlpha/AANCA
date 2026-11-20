@@ -393,7 +393,27 @@ unfixed form: `equivariant_move` touches only the translation, and the two
 halves are independent. Pinned as
 `test_a_lab_frame_rotation_is_not_equivariant_either`.
 
-**`g23_localrot` is registered and has not run.** `g20_orient` with
+**IN FLIGHT as of 20 Nov 12:34 AEST.** Two jobs, one GPU slot of the two:
+
+    33245111  gpu_rocm  g23_localrot        R  bun160  ~7.5 h expected
+    33245103  general   dispersion on g21   R  bun154  the primary bucket
+
+`g23_localrot` 33245111 is confirmed to be running the arm rather than the
+base: g21's log header carried *"TRANSLATION ONLY: the rotation is left in the
+lab frame"* and 33245111's does not, which is the flag taking effect observed
+rather than assumed. One earlier submission, **33245088, died at 6 seconds with
+exit 2** -- `AANCA_ENTRY` was unset so it ran the packing trainer and argparse
+rejected the config arguments. No GPU time spent; the fix is
+`export AANCA_ENTRY=scripts/train_growth.py` before `bunya_submit.sh`, which
+the wrapper's own usage line states and a split command line dropped.
+
+The dispersion job reproduces g20's measurement exactly -- 6 crops, 8 members,
+amplitudes 0/15/45, 600-step cap, `--device cpu` -- and its header prints the
+crop ids as `['3B82','4CQE','1JNP','2FAZ','8QTF','6HJ6']`, identical to g20's,
+so the comparison is like for like and that was checked rather than assumed.
+It reads `best.pt at update 9000`, the same selection rule g20's used.
+
+**`g23_localrot` is registered and now running.** `g20_orient` with
 `lab_rotation = false`, one setting, against g20_orient's 7.78 A at its
 120-step horizon. The old `g16_localrot` registration is void: its comparator
 was `g15_both`, which ran `native_edges`, a setting deleted from the schema on
