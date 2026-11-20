@@ -443,10 +443,67 @@ unfixed form: `equivariant_move` touches only the translation, and the two
 halves are independent. Pinned as
 `test_a_lab_frame_rotation_is_not_equivariant_either`.
 
-**IN FLIGHT as of 20 Nov 14:08 AEST.** One job, one GPU slot of the two:
+**IN FLIGHT as of 20 Nov 15:55 AEST.** Four jobs, both GPU slots used:
 
-    33245111  gpu_rocm  g23_localrot        R  bun160  update 2480 of 10000
-    33245103  general   dispersion on g21   DONE, exit 0, read above
+    33245111  gpu_rocm  g23_localrot              R   bun160  update 2480
+    33249861  gpu_rocm  g22_random                PD          the 4.0 A test
+    33249842  general   geometric floor, random   R   bun157  10 restarts
+    33249843  general   geometric floor, helix    R   bun157  1 restart
+    33245103  general   dispersion on g21         DONE, exit 0, read above
+
+`AANCA_ENTRY=scripts/train_growth.py` was set explicitly before submitting
+33249861 and the echoed sbatch line ends `bunya_train.slurm
+configs/regeneration.toml --section g22_random`, so it is the growth trainer
+and not the packing default that killed 33245088. Checked rather than assumed,
+because that is exactly how 33245088 died.
+
+### The two corrections that came out of building the floor (20 Nov)
+
+**1. `rmsd_dmg` is fitted on a superposition that INCLUDES the displaced
+window.** `geometric = final.alive` (`growth.py:1912`) and a regeneration run is
+100 % alive, so the twelve residues whose placement is the question are part of
+what the measuring frame is fitted to, and the fit absorbs some of the error.
+`backbone_rmsd_on`'s own docstring prescribes fitting on the surviving context;
+`baseline_probe.py` has reported that all along as `fit_intact` while saying
+*"fit_intact is the one that means what it says, and fit_all is the one every
+arm has been scored by."* On start states, laptop pool, 12 crops:
+
+    baseline     fit_all  fit_intact   diff
+    helix          10.77       11.83   1.06
+    random         14.12       15.84   1.73
+    extended       21.30       23.74   2.44
+
+Always in the direction that flatters the rule, and growing with displacement.
+**The gap on a trained rollout had never been measured**, so g20's 7.78 and
+g21's 8.41 are under-reports by an unknown amount of order 1-2 A. The trainer
+now logs both columns (`GrowthOutcome.rmsd_damaged_intact`), and `g22_random`'s
+bucket 0 is a line on **fit_intact**.
+
+**2. `scripts/geometric_floor.py` -- the denominator every number here has been
+missing.** It optimises the window against peptide-bond closure and steric
+overlap ONLY, with no native information in the objective at all, using **the
+rule's own degrees of freedom** (a free rigid move per window residue through
+`rigid_relax`, not torsions) so that the optimiser and the rule search the same
+set of structures and differ only in that one of them is told where native is.
+Laptop pool, 3 crops, 1500 iters, chain closed (bond 0.0046 / 0.0328 / 0.0006):
+
+    start              helix  fit_all 10.34     random  fit_all 11.03
+    GEOMETRIC FLOOR    helix  fit_all  9.35     random  fit_all  9.62
+    best of 3 random restarts                           fit_all  6.86
+
+Two readings pointing opposite ways. **Against the floor the rule wins**: ~9.4 A
+comes from closure and sterics alone against g20's 7.78. **Against the lower
+bound it does not**: valid completions at 6.86 A are findable in three random
+draws, so the rule sits well inside what the constraints permit and is not
+selecting among completions well. Read the MEAN as the floor -- a native-blind
+method cannot know which valid completion to emit -- and the best as the bound.
+
+**NEITHER IS QUOTABLE YET, and the reason is the standing trap.** These are
+laptop numbers on a 954-structure pool; g20's 7.78 is a Bunya number on 24,709,
+where the same crop index is a different protein. That is what had the helix
+baseline quoted as 10.77 for months when Bunya reads 12.23. Three crops, and
+1P6F's floor came out *worse* than its own start. **33249842 and 33249843 are
+the runs that settle it.**
 
 `g23_localrot` at update 2480: twist oscillating **10.2-12.8** with the held-out
 row at 2250 reading **11.5 deg**, so it is inside its 9-12 band and its void
