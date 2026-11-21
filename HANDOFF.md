@@ -88,6 +88,56 @@ re-run.* A local rule with this information, this objective and this much
 training does not place a backbone.
 (`docs/claims/the-rule-beats-bond-closure-and-sterics-by-half-an-angstrom-and-fails-the-absolute-bar.md`.)
 
+### WHY it fails: three mechanisms, confirmed 21 Nov without spending a GPU hour
+
+**1. The surviving context is never frozen, and training makes it worse.**
+`growth_objective` calls `rollout(...)` at `growth.py:1894` with **no `frozen`
+argument**, so the moving set is `mask & alive` and a regeneration rollout is
+100 % alive -- all 128 residues are moved by the rule, every step, for 120
+steps. Every description of the task here says otherwise, including
+`GrowthOutcome.rmsd`'s own docstring: *"the intact context, which starts correct
+**and should stay correct**."* From the log's two timepoints:
+
+    g22_random            rmsd   window-only predicts   implied context
+    update 250 (untrained) 3.96                  3.79             1.20 A
+    update 10000 (settled) 3.73                  2.58             2.83 A
+
+**The drift more than doubles over training** -- nothing charges the rule for
+moving anchors, while FAPE and the pairwise anchor term both reward relieving
+window strain by moving the context toward the window instead of the reverse.
+A rule that corrupts its own reference frame is the sharpest possible problem
+for a claim about *regeneration from surviving context*. (The decomposition
+shares one superposition, so 2.83 A is an estimate; the doubling is robust.)
+
+**2. The gradient reaches about a quarter of the journey.** `truncate = 12`
+against `steps = 120` in `[base.inputs]`, **unoverridden anywhere in g22's
+lineage**. At the 0.3 A cap that is 3.6 A of visible travel against a 13.3 A
+start displacement -- 27 %, and
+[[the-gradient-window-is-a-third-of-the-journey-the-window-must-travel]]
+measured this model-free and named it the binding constraint while the per-step
+cap has 3.6x headroom.
+
+**3. Half the move operator is a direction the rule cannot choose.** g22 ran
+*"TRANSLATION ONLY: the rotation is left in the lab frame"*, and a lab-frame
+rotation is unrepresentable by an invariant encoder: 0.68 A of error on a 1.50 A
+move, **45 %**, larger than the translation half that was already fixed.
+
+**Synthesis.** The rule learned the terms with dense local in-window gradients
+and not placement: `bond` 4.278 -> 0.629, `clash` 0.0148, while placement landed
+0.46 A past what bond closure and sterics alone force. That is what 1, 2 and 3
+predict jointly. **So "this architecture cannot place a backbone" is NOT
+established** -- what is established is that this *training setup* cannot, and
+three specific reasons why.
+(`docs/claims/the-rule-displaces-the-surviving-context-it-is-supposed-to-read.md`.)
+
+**The cheapest test, and why the no-re-run clause survives it.** Freezing the
+context adds no loss term and changes no weight: it passes `frozen = ~damaged`
+to a parameter that already exists, making the code do what the task
+description already claims. That is a correctness fix, not a knob. **The 4.0 A
+bar stays where it is and the failed 9.02 A stands.** Order, one variable each:
+freeze the context, then raise `truncate`, then `lab_rotation = false` on a
+non-void arm.
+
 ### Where the central claim actually stands
 
 Two tracks, and only one is finished.
