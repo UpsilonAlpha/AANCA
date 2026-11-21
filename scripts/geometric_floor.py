@@ -42,6 +42,16 @@ completions, which is the interesting claim.
 
     python scripts/geometric_floor.py --damage 12 --structures 12
     python scripts/geometric_floor.py --damage 12 --restarts 16 --iters 800
+    python scripts/geometric_floor.py runs/g22_random/best.pt --restarts 16
+
+**Pass the arm's checkpoint and the floor is measured on the arm's crops.**
+Without one this script picks its own held-out slice, which is how the
+corrected random-start floor came to report a 14.76 / 16.28 start state against
+`g22_random`'s own 12.38 / 13.44: same convention, harder windows, and a floor
+measured on harder windows flatters whatever it is the denominator for. Given a
+`best.pt` the crop ids come from the checkpoint's `eval_indices` and the pool,
+crop size, window and start mode come from its recorded `args`, so the two
+numbers describe the same task. The header says which of the two happened.
 
 `bond` and `clash` are printed as achieved values, not hidden: a floor from an
 optimiser that failed to close the chain is not a floor, and the reader has to
@@ -130,6 +140,14 @@ def relax_to_geometry(
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "checkpoint", nargs="?", default=None,
+        help="an arm's best.pt. Given one, the crops come from its "
+             "`eval_indices` and the pool/crop/window/start come from its "
+             "recorded `args`, so the floor is measured on exactly the "
+             "windows that arm was judged on. Omit it and this script picks "
+             "its own slice, which is comparable to nothing in particular",
+    )
     parser.add_argument("--split", default="train")
     parser.add_argument("--structures", type=int, default=12)
     parser.add_argument("--eval-structures", type=int, default=12)
@@ -161,6 +179,104 @@ def main() -> int:
     parser.add_argument("--clash-weight", type=float, default=1.0)
     args = parser.parse_args()
 
+    # **The checkpoint's own args, never this script's defaults.** `best.pt`
+    # carries `args` precisely so a probe pointed at it does not substitute its
+    # own; `train_growth.py`'s save site names the two 6 Nov runs that were
+    # wasted that way, and the floor is the third: it reshuffled its own slice
+    # and was quoted against an arm it never shared a crop with.
+    #
+    # Read the blob DIRECTLY rather than through
+    # `regrowth_dispersion.rule_from_checkpoint`. That helper is the right one
+    # for a probe that rolls the rule out, but it builds an `AANCARule` and
+    # `load_state_dict`s it, raising `KeyError` when the blob holds neither
+    # `rule` (last.pt) nor `state_dict` (best.pt). This optimiser is
+    # network-free -- the objective is bond closure plus sterics and there is
+    # no forward pass anywhere in it -- so making the floor depend on weights
+    # loading would let an architecture mismatch, or a checkpoint written by a
+    # different trainer, block a measurement that needs none of it. All that is
+    # wanted here is `args` and `eval_indices`.
+    checkpoint_label = "none -- this script chose its own crops"
+    recorded_indices: list[int] = []
+    if args.checkpoint:
+        blob = torch.load(
+            args.checkpoint, map_location="cpu", weights_only=False
+        )
+        run_args = dict(blob.get("args") or {})
+        checkpoint_label = (
+            f"{args.checkpoint} at update {blob.get('update', '?')}"
+        )
+        missing: list[str] = []
+        # (floor's own attribute, checkpoint key). `pool` and `structures`
+        # collide across the two scripts and the mapping is not the identity:
+        # the trainer's `--structures` is the size of the TRAINING pool, which
+        # is what this script calls `--pool`, while this script's
+        # `--structures` is how many of the held-out crops to actually measure
+        # and is the reader's own knob. Getting the pool size right matters as
+        # much as the indices do -- `eval_indices` are positions in
+        # `available[:structures + eval_structures]`, so a differently sized
+        # pool makes the same integer name a different protein.
+        for attribute, key in (
+            ("split", "split"),
+            ("pool", "structures"),
+            ("eval_structures", "eval_structures"),
+            ("seed", "seed"),
+            ("crop_size", "crop_size"),
+            ("initial", "initial"),
+            ("damage", "damage"),
+        ):
+            if key not in run_args:
+                missing.append(key)
+                continue
+            value = run_args[key]
+            if attribute == "damage" and (not isinstance(value, int)
+                                          or value < 2):
+                # A `--damage 0` run is not a regeneration run and has no
+                # window to put a floor under. Say so instead of exiting on
+                # the generic guard below, which would read as a bad CLI flag.
+                print(f"  !! WARNING: checkpoint records damage {value!r}, "
+                      f"which is not a window. KEEPING --damage "
+                      f"{args.damage}. The floor and that run are then NOT "
+                      f"measuring the same task.")
+                continue
+            was = getattr(args, attribute)
+            setattr(args, attribute, value)
+            note = "" if was == value else f" (CLI/default was {was!r})"
+            print(f"  from checkpoint args: {attribute} = {value!r}{note}")
+        if args.seed != 0:
+            # `train_growth.score` is declared `seed: int = 0` and the training
+            # loop calls it WITHOUT a seed, so the trainer draws its held-out
+            # crops from `random.Random(0)` no matter what `--seed` the run
+            # used. This script follows baseline_probe.py and draws from
+            # `random.Random(args.seed)`. The two agree only at seed 0 -- which
+            # every recorded arm so far used -- so a nonzero-seed run gets the
+            # right PROTEINS from `eval_indices` but a different spatial ball
+            # inside each of them, which is the same uncomparability in a
+            # smaller place.
+            print(f"  !! WARNING: checkpoint seed is {args.seed}, not 0. "
+                  f"train_growth.score() draws eval crops from "
+                  f"random.Random(0) regardless of --seed, so the crop "
+                  f"WINDOWS here will not match that run's even though the "
+                  f"structures do. Pass --seed 0 to match the trainer's eval, "
+                  f"or treat this floor as same-proteins-different-windows.")
+        recorded_indices = [int(i) for i in (blob.get("eval_indices") or [])]
+        if not recorded_indices:
+            missing.append("eval_indices")
+        if missing:
+            # Loud, named, and never a silent fall-through to defaults: a floor
+            # that quietly reshuffled is exactly the defect this argument
+            # exists to remove, and it would look identical in the log.
+            print()
+            print("  !! WARNING: checkpoint is MISSING "
+                  f"{', '.join(sorted(set(missing)))}")
+            print("  !! Those values come from this script's own CLI/defaults "
+                  "instead.")
+            if "eval_indices" in missing:
+                print("  !! THE CROPS ARE A RESHUFFLE, NOT THE RUN'S HELD-OUT "
+                      "SET. This floor is not comparable to that run.")
+            print("  !! Checkpoints written by scripts/train_growth.py carry "
+                  "all of these; one that does not is from another trainer.")
+        print()
+
     if args.damage < 2:
         print("--damage must be at least 2; a one-residue window has no floor")
         return 1
@@ -183,17 +299,38 @@ def main() -> int:
         pool, concentrations=(0.0,), crop_size=args.crop_size, device=device,
         cache_limit=max(len(pool), 1),
     )
-    order = list(range(len(pool)))
-    random.Random(args.seed).shuffle(order)
-    indices = order[: args.eval_structures][: args.structures]
+    if recorded_indices:
+        # The run's OWN held-out crops. `train_growth.score` walks
+        # `eval_indices` in this order with one shared rng, which is the
+        # convention this loop below now follows, so the windows match.
+        indices = recorded_indices[: args.structures]
+        provenance = "checkpoint eval_indices"
+    else:
+        order = list(range(len(pool)))
+        random.Random(args.seed).shuffle(order)
+        indices = order[: args.eval_structures][: args.structures]
+        provenance = "reshuffle of this script's own pool slice"
     # Which structures, not just how many -- the same trap baseline_probe.py
     # documents: `available[:412]` is a different 412 on the laptop and on
     # Bunya, and that difference put the helix baseline at 10.77 locally
     # against 12.23 on the cluster.
+    if args.checkpoint:
+        print(f"checkpoint: {checkpoint_label}")
     print(f"{len(pool)} structures on disk, {len(indices)} held out at "
           f"crop {args.crop_size}, window {args.damage}, start {args.initial!r}")
-    print(f"pool: {len(available)} available; held-out ids "
-          f"{[pool[i].pdb_id for i in indices]}")
+    in_range = max(indices, default=-1) < len(pool)
+    ids = [pool[i].pdb_id for i in indices] if in_range else "<out of range>"
+    print(f"pool: {len(available)} available; held-out ids {ids}")
+    # Which crops, and WHERE THEY CAME FROM. A floor on a reshuffle and a floor
+    # on a run's own held-out set print the same table and mean different
+    # things, so the two cases have to be distinguishable in the log.
+    print(f"crops: {provenance}; indices {list(indices)}")
+    if max(indices, default=-1) >= len(pool):
+        print("  !! WARNING: an index is past the end of this pool "
+              f"({len(pool)} entries). The checkpoint was trained where more "
+              f"structures were on disk; those crops CANNOT be measured here "
+              f"and the comparison is void. Run this where the run ran.")
+        return 1
     print(f"optimiser: Adam lr {args.lr}, {args.iters} iters, "
           f"{args.restarts} restarts/crop, clash tolerance "
           f"{args.clash_tolerance}, clash weight {args.clash_weight}")
