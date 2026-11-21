@@ -1459,6 +1459,18 @@ def main() -> int:
                         "args": recorded_args(args),
                         "runtime": runtime_args(args),
                         "eval_indices": eval_indices,
+                        # **The ids as well as the positions.** `eval_indices`
+                        # are offsets into `available[:structures +
+                        # eval_structures]`, so the same integer names a
+                        # DIFFERENT protein on a differently sized pool -- the
+                        # laptop has 954 structures available against Bunya's
+                        # 23,760, and nothing in a checkpoint could detect that
+                        # until now. A probe that resolves these indices can
+                        # assert these ids and fail loudly instead of
+                        # measuring the wrong proteins in silence. Added 21 Nov
+                        # on exactly that hazard being found in
+                        # `scripts/geometric_floor.py`.
+                        "eval_pdb_ids": [pool[i].pdb_id for i in eval_indices],
                         "update": update,
                     },
                 )

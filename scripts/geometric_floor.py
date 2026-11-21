@@ -197,6 +197,7 @@ def main() -> int:
     # wanted here is `args` and `eval_indices`.
     checkpoint_label = "none -- this script chose its own crops"
     recorded_indices: list[int] = []
+    blob = None
     if args.checkpoint:
         blob = torch.load(
             args.checkpoint, map_location="cpu", weights_only=False
@@ -325,6 +326,30 @@ def main() -> int:
     # on a run's own held-out set print the same table and mean different
     # things, so the two cases have to be distinguishable in the log.
     print(f"crops: {provenance}; indices {list(indices)}")
+    # **Assert the recorded pdb ids, if the checkpoint has them.** `eval_indices`
+    # are positions in `available[:pool + eval_structures]`, so the same integer
+    # names a different protein on a differently sized pool -- 954 structures
+    # available on the laptop against 23,760 on Bunya. That cannot be detected
+    # from indices alone, so `train_growth.py` now also records
+    # `eval_pdb_ids`. Checkpoints written before 21 Nov have none, and for those
+    # this says so rather than pretending to have checked.
+    if blob is not None:
+        recorded_ids = list(blob.get("eval_pdb_ids") or [])
+        if not recorded_ids:
+            print("  !! this checkpoint records no eval_pdb_ids (written "
+                  "before 21 Nov), so the crop IDS are unverified -- the "
+                  "indices resolve against THIS pool, which is only the run's "
+                  "pool if this is the same machine and the same data dir")
+        else:
+            here = [pool[i].pdb_id for i in indices]
+            want = recorded_ids[: len(here)]
+            if here != want:
+                print(f"  !! POOL MISMATCH: the checkpoint's eval_indices name "
+                      f"{want} but resolve here to {here}. This pool is not the "
+                      f"run's pool, so the floor would be measured on different "
+                      f"proteins. Refusing to measure.")
+                return 1
+            print(f"  eval_pdb_ids verified against the checkpoint: {here}")
     if max(indices, default=-1) >= len(pool):
         print("  !! WARNING: an index is past the end of this pool "
               f"({len(pool)} entries). The checkpoint was trained where more "
