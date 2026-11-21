@@ -1,18 +1,66 @@
 ---
 type: observation
-status: supported
+status: void
 evidence: ours
-sources: [33249861, growth.py, rollout.py]
+sources: [33249861, growth.py, rollout.py, context_drift.py]
 ---
 
-# The intact context is never frozen, so the rule spends training learning to displace the information the task says it should read: 1.20 angstrom of context drift untrained, 2.83 settled
+# VOID: the context drift this node was built on was an artefact of a shared superposition, and the direct measurement is exactly zero
+
+**Retracted 21 Nov, the same day it was written, by `scripts/context_drift.py`.**
+
+The headline claimed the rule displaces the surviving context by 1.20 A barely
+trained and 2.83 A settled. Both figures came from decomposing `g22_random`'s
+logged `rmsd` against its `rmsd_dmg`, and the note said in its own scope that
+this was an estimate from a shared superposition rather than a measurement. It
+was worse than an estimate -- it was measuring the superposition.
+
+**The control that kills it.** An UNTRAINED rule over a full 120-step
+regeneration rollout, where the move heads emit ~0 and nothing can have drifted:
+
+    direct context N/CA/C displacement     0.0000 A   exactly
+    rmsd decomposition on the same rollout   1.70 A   <- the method, on zero drift
+
+So the decomposition manufactures ~1.7 A of apparent drift from none. The cause
+is the same one this project had just finished correcting one level up: fitting
+the superposition on every residue lets the badly-placed window pull the frame,
+and the correctly-placed context then reads as displaced
+([[the-rule-beats-bond-closure-and-sterics-by-half-an-angstrom-and-fails-the-absolute-bar]]
+sets the arm's bar on `fit_intact` for exactly this reason). My 1.20 A
+"untrained" figure and this control's 1.70 A are the same artefact.
+
+A second error inside the first: a first version of the probe measured all
+atoms together and found 2.1 A of context motion, which was **one oxygen**.
+`correct_oxygens` recomputes every O from its backbone each step, so O moves by
+the crystal-to-ideal difference whether or not the rule touches the residue --
+identically with the context frozen and unfrozen. N, CA and C are the atoms
+that say whether a residue moved, and they read 0.0000.
+
+**What is still true, and it is the narrow version.** `growth_objective` did
+call `rollout` with no `frozen` argument, so the context is *permitted* to move,
+and `freeze_context` now exists and demonstrably works -- the moving mask drops
+from ~33 residues of 64 to ~5. Whether the TRAINED rule uses that permission is
+**unmeasured**: the untrained control cannot test it, because a rule whose move
+heads emit nothing cannot drift, so free and frozen are vacuously identical.
+`scripts/context_drift.py` on `runs/g22_random/best.pt` is the measurement and
+it is a CPU job.
+
+**`[g24_frozen]` must not be read -- or run -- until that number exists.** Its
+whole rationale was this node. If the trained rule's context drift is also near
+zero then freezing changes nothing, the arm is pointless, and the GPU slot
+should go to `truncate` instead.
+
+The two mechanisms below this one are unaffected: they were read off the config
+and a previously measured number, not off this decomposition.
+
+## The original claim, kept for the record
 
 Asked on 21 Nov, after `g22_random` failed its absolute bar: **why** does the
 rule not place a backbone? Three mechanisms are confirmed in the code and the
 logs, they compound, and the first is a discrepancy between what this record
 says the task is and what the code does.
 
-## 1. The surviving context is not held fixed, and training makes that worse
+## 1. Context stability is enforced by the loss rather than by construction, and that enforcement is failing
 
 `growth_objective` calls `rollout(...)` at `growth.py:1894` **with no `frozen`
 argument**. The parameter exists and gates geometry exactly as wanted --
@@ -21,12 +69,25 @@ argument**. The parameter exists and gates geometry exactly as wanted --
 and a regeneration rollout is **100 % alive by construction**. So all 128
 residues of the crop are moved by the rule, every step, for 120 steps.
 
-Every description of the task in this repository says otherwise.
-`baseline_probe.py`: *"Everything outside the window keeps its crystal pose."*
-The trainer's own banner: *"a 12-residue window is destroyed and every other
-residue keeps its crystal pose."* `GrowthOutcome.rmsd`'s docstring: *"the intact
-context, which starts correct **and should stay correct**."* It does not stay
-correct.
+**This is deliberate, and the reasoning is at the call site** -- an earlier
+version of this note called it a discrepancy, which was wrong.
+`growth.py:1820`: *"Scoring FAPE over the whole structure now teaches two things
+at once: fill the window, and leave the context alone. That second half is the
+stability the fixed-point objective asks for, and it is what makes 'emit
+nothing' stop being a free solution -- doing nothing leaves the window wrong
+while the context is right, which is a difference FAPE can see."*
+
+So context stability was designed to be **taught by the loss** rather than
+imposed by construction, for a stated reason: freezing it hands the rule a free
+pass on the half of the objective that was meant to stop the degenerate
+identity solution of the four arms of 6 Nov.
+
+**The finding is therefore not that nobody noticed. It is that the mechanism
+chosen to enforce context stability does not work.** The aspiration is in the
+docstrings -- `GrowthOutcome.rmsd`: *"the intact context, which starts correct
+**and should stay correct**"*; `baseline_probe.py`: *"Everything outside the
+window keeps its crystal pose"* -- and the measurement below says it does not
+stay correct, and gets worse the longer it trains.
 
 **How much it moves, from the log's own two timepoints.** `rmsd` is over all
 residues, `rmsd_dmg` over the 12-residue window. If the context held its
@@ -96,14 +157,33 @@ rule cannot steer (3). **So "the architecture cannot place a backbone" is not
 yet established.** What is established is that this *training setup* cannot, and
 three specific reasons why.
 
-## The one test, and why it is not "adding terms and re-running"
+## The one test, and the real argument against it
 
 `g22_random`'s registration says *"if it fails, we do not add terms and
 re-run."* Freezing the context adds **no loss term and changes no weight**: it
-passes `frozen = ~damaged` to a parameter that already exists, to make the code
-do what every description of the task in this repository already claims it does.
-That is a correctness fix, not a tuning knob, and the distinction is the whole
-reason the clause is survivable here.
+passes `frozen = ~damaged` to a parameter that already exists. So the clause
+survives it -- but the honest objection is not that clause, it is the design
+reason quoted in 1, and it deserves answering rather than waving past.
+
+**The objection**: freezing the context makes "emit nothing" free for 116 of 128
+residues, removing the half of the FAPE signal that was meant to stop the
+degenerate identity solution.
+
+**Why it does not transfer to this regime.** The four arms of 6 Nov that froze
+at their starting conformation were running *reconstruction*: the whole
+structure started from a baseline, so "do nothing" was simultaneously the stable
+answer and close to the scored answer, and the rule found it
+([[the-four-arms-measured-the-architectures-ceiling]]). Under **regeneration**
+with a frozen context, doing nothing leaves the window **13.3 A out of place**
+while the context is already exactly right, and both FAPE on the window and the
+unclamped window-to-anchor pairwise term see that directly. The free lunch the
+comment is guarding against is a property of the reconstruction task, not of
+this one.
+
+**And it is cheap to falsify.** If freezing removes real signal, the arm's
+placement gets worse, which is itself informative: it would say the rule was
+using context motion to relieve strain and that the 9.02 A depended on being
+allowed to corrupt its own reference frame. Either direction is worth a slot.
 
 It is still a re-run, and the clause's spirit is that the bar does not move to
 meet the result. So: **the 4.0 A bar on `fit_intact` stays exactly where it is**,
@@ -128,8 +208,8 @@ actual claim.
   * One seed throughout
     ([[no-growth-arm-has-been-run-twice-so-no-difference-has-an-error-bar]]).
 
-## Supports
-- [[the-gradient-window-is-a-third-of-the-journey-the-window-must-travel]]
+## Superseded by
+- [[the-gradient-reaches-a-quarter-of-the-journey-and-half-the-move-operator-is-unsteerable]]
 
 ## Requires
 - [[the-rule-beats-bond-closure-and-sterics-by-half-an-angstrom-and-fails-the-absolute-bar]]

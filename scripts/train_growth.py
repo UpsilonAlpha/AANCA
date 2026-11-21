@@ -292,6 +292,7 @@ def score(rule, dataset, indices, args, config, seed: int = 0) -> dict[str, floa
                 clash_tolerance=args.clash_tolerance,
                 clash_bonded=args.clash_bonded,
                 pairwise_weight=args.pairwise_weight,
+                freeze_context=args.freeze_context,
             )
             sums["total"] += float(terms.total)
             sums["fape"] += float(terms.fape)
@@ -552,6 +553,22 @@ def build_schema() -> argparse.ArgumentParser:
             "break them. 0.5 zeroes that floor (1.5e-05) while still seeing a "
             "damaged window at 150x it. AF2's 1.5 is too permissive here -- the "
             "window reads exactly zero"
+        ),
+    )
+    parser.add_argument(
+        "--freeze-context", action="store_true",
+        help=(
+            "pin the surviving residues' geometry so ONLY the damaged window "
+            "moves. They still tick, still perceive and still send messages -- "
+            "`alive` gates the cell and `frozen` gates only its atoms -- so "
+            "there is still a surviving context to regenerate from. Off by "
+            "default because g1-g22 ran the context free, which was deliberate: "
+            "whole-structure FAPE was meant to teach `leave the context alone` "
+            "and so stop `emit nothing` being free. That enforcement was "
+            "measured on 21 Nov and FAILS -- g22_random's implied context "
+            "displacement is 1.20 A barely trained and 2.83 A settled, so "
+            "training taught the rule to corrupt its own reference frame "
+            "further. Regeneration only; ignored when nothing is damaged"
         ),
     )
     parser.add_argument(
@@ -949,12 +966,33 @@ def main() -> int:
             # one against the other would look like a breakthrough.
             print(
                 f"REGENERATION: a {args.damage}-residue window is destroyed "
-                "and every other residue keeps its crystal pose. Read "
+                "and every other residue STARTS at its crystal pose. Read "
                 "rmsd_dmg, not rmsd -- the latter is dominated by the intact "
                 "context. fape, twist and bond are not comparable with a "
                 "--damage 0 run's; bond is high by design because the "
                 "window's C-ward join starts open and closing it is the task."
             )
+            # **Says which, because "keeps its crystal pose" was wrong.** The
+            # banner claimed it for two months while the rule moved every
+            # residue: measured on g22_random, the implied context displacement
+            # is 1.20 A barely trained and 2.83 A settled.
+            if args.freeze_context:
+                print(
+                    "  FROZEN CONTEXT: only the damaged window's atoms move. "
+                    "The surviving residues still tick, perceive and send "
+                    "messages; their geometry is pinned for the whole rollout. "
+                    "NOT comparable column-for-column with g1-g22, which all "
+                    "ran the context free -- fape and rmsd in particular are "
+                    "different quantities when 116 of 128 residues cannot move."
+                )
+            else:
+                print(
+                    "  CONTEXT IS FREE: the rule moves the surviving residues "
+                    "too, and whole-structure FAPE is the only thing asking it "
+                    "not to. Measured on g22_random, that enforcement fails -- "
+                    "context displacement 1.20 A untrained, 2.83 A settled. "
+                    "Use --freeze-context to pin it."
+                )
 
     if args.identity_weight and args.birth == "torsion":
         # Not fatal, but worth saying: a torsion birth reads the parent's type
@@ -1265,6 +1303,7 @@ def main() -> int:
                 clash_tolerance=args.clash_tolerance,
                 clash_bonded=args.clash_bonded,
                 pairwise_weight=args.pairwise_weight,
+                freeze_context=args.freeze_context,
                 # **Training only.** The held-out evaluation above keeps the clamp
                 # unconditionally, because a reported `fape` has to mean the same
                 # thing across arms -- an unclamped held-out score is a different

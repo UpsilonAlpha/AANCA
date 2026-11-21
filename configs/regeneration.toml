@@ -72,6 +72,7 @@ split = "train"
 steps = 120
 structures = 400
 truncate = 12
+freeze_context = false  # off in base; g1-g22 moved the context too. See [g24_frozen].
 pool_probability = 0.0  # off in base; the Growing-NCA sample pool. See [g21_pool].
 steps_min = 0  # off in base; 0 means every rollout is exactly `steps` long.
 update_schedule = "bernoulli"
@@ -644,3 +645,105 @@ inherits = "g20_orient"
 
 [g23_localrot.inputs]
 lab_rotation = false
+
+# ---------------------------------------------------------------------------
+# g24_frozen -- let only the placed residues move.
+#
+# *** DO NOT RUN THIS YET (21 Nov). Its rationale was RETRACTED hours after it
+# *** was registered. The context drift it exists to fix was an artefact of a
+# *** shared superposition: scripts/context_drift.py measures the context's
+# *** N/CA/C displacement directly and an UNTRAINED rule over 120 steps reads
+# *** 0.0000 A while the decomposition that motivated this arm reads 1.70 A on
+# *** the same rollout. Whether the TRAINED rule drifts is still unmeasured --
+# *** an untrained rule cannot drift, so that control is vacuous for it.
+# ***
+# *** GATE: run `python scripts/context_drift.py runs/g22_random/best.pt` on
+# *** Bunya first. If the trained drift is also ~0, freezing changes nothing,
+# *** this arm is pointless and the slot belongs to `truncate` instead. The
+# *** wiring and the buckets below are kept because they are correct if the
+# *** gate opens. (docs/claims/the-rule-displaces-the-surviving-context-it-is-
+# *** supposed-to-read.md, status void.)
+#
+# Ulban, 21 Nov, after g22_random failed its absolute bar: "let's try one where
+# only the placed residues can move."
+#
+# WHAT CHANGES. One key, `freeze_context = true`, which passes
+# `frozen = ~damaged` to a rollout parameter that has existed all along and was
+# never wired to the growth path. The surviving residues still TICK -- they
+# perceive, update hidden state and send messages -- and only their geometry is
+# pinned. `alive` gates the cell, `frozen` gates its atoms. If the context
+# stopped talking there would be no surviving context to regenerate from, which
+# is the whole task.
+#
+# WHY. g1-g22 ran the context free, which was a deliberate design choice with a
+# stated reason (growth.py, at the rollout call): whole-structure FAPE was meant
+# to teach "leave the context alone" as well as "fill the window", and that
+# second half is what stops "emit nothing" being a free solution. **That
+# enforcement was measured on 21 Nov and it fails.** Decomposing g22_random's
+# `rmsd` against its `rmsd_dmg`:
+#
+#   g22_random            rmsd   window-only predicts   implied context
+#   update 250 (untrained) 3.96                  3.79             1.20 A
+#   update 10000 (settled) 3.73                  2.58             2.83 A
+#
+# The drift MORE THAN DOUBLES over training. Nothing charges the rule for moving
+# anchors while FAPE and the pairwise anchor term both reward relieving window
+# strain by dragging the context toward the window rather than the reverse. So
+# the rule spends ten thousand updates learning to corrupt the reference frame
+# its placement is measured against
+# (docs/claims/the-rule-displaces-the-surviving-context-it-is-supposed-to-read.md).
+#
+# THE OBJECTION, AND IT IS A REAL ONE. Freezing makes "emit nothing" free for
+# 116 of 128 residues, removing the half of the FAPE signal that was meant to
+# prevent the degenerate identity solution. It does not transfer to this
+# regime: the four arms of 6 Nov that froze at their start were running
+# RECONSTRUCTION, where doing nothing was both the stable answer and near the
+# scored one. Under regeneration with a frozen context, doing nothing leaves the
+# window 13.3 A out of place while the context is exactly right, and both FAPE
+# on the window and the unclamped window-to-anchor term see that directly.
+#
+# PRE-REGISTERED. Bucket 0 is INHERITED UNCHANGED from g22_random and the line
+# does not move: `rmsd_dmg_fit_intact <= 4.0 A` is a PASS, > 4.0 is a FAIL,
+# <= 2.0 is solved, and at or above the geometric floor is no signal at all.
+# The comparators are measured and already on disk:
+#
+#   g22_random settled, context free        9.02 A  fit_intact
+#   GEOMETRIC FLOOR, random start           9.48 A  fit_intact  (33249842)
+#   floor, best of 10 restarts              6.00 A  fit_intact
+#   g22_random start state                 13.44 A  fit_intact
+#
+#   <= 4.0            PASS. The context was the problem and the architecture
+#       places a backbone once it stops destroying its own reference frame.
+#   4.0 - 7.0         a real effect and still a fail. Freezing recovers part of
+#       the gap, the mechanism is confirmed as A cause, and the next variable
+#       is `truncate` -- the gradient reaching 27 % of the journey.
+#   7.0 - 9.02        marginal. Report as "the direction is right and the
+#       magnitude is inside the noise of an unreplicated arm", and do NOT
+#       quote it as a win: nothing here has an error bar
+#       (docs/claims/no-growth-arm-has-been-run-twice-so-no-difference-has-an-error-bar.md).
+#   >= 9.02           freezing does not help, so context corruption was a
+#       symptom and not a cause. That is the most informative outcome for the
+#       architecture question and the one that would retire the mechanism.
+#   worse than 13.44  the rule was RELYING on context motion to relieve strain,
+#       and g22's 9.02 depended on being allowed to corrupt its frame. Also a
+#       finding, and it would mean every arm in the record is measured against
+#       a frame it moved.
+#
+# SECOND, and it is free: the implied context displacement must read ~0 by
+# construction. If it does not, `frozen` was not applied and the run is void --
+# the exact failure mode this project has hit twice, where a flag was dropped
+# and the run reported as though it had been honoured. The banner now prints
+# FROZEN CONTEXT or CONTEXT IS FREE so the log says which.
+#
+# NOT COMPARABLE column-for-column with g1-g22 on `fape`, `rmsd` or `twist`:
+# those are means over residues or bonded pairs and 116 of 128 residues now
+# cannot move, so they are different quantities. `rmsd_dmg` and its fit_intact
+# twin are the comparable columns, which is why the bar is on one of them.
+#
+# ONE VARIABLE against g22_random, so the neutral random start and the absolute
+# bar both carry over unchanged.
+[g24_frozen]
+inherits = "g22_random"
+
+[g24_frozen.inputs]
+freeze_context = true

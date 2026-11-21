@@ -1728,6 +1728,7 @@ def growth_objective(
     clash_tolerance: float = 0.5,
     clash_bonded: bool = False,
     pairwise_weight: float = 0.0,
+    freeze_context: bool = False,
     resume_from: "GrowthPoolEntry | None" = None,
 ) -> tuple[GrowthTerms, object]:
     """Supervised regrowth: from a seed, rebuild the native backbone.
@@ -1891,6 +1892,37 @@ def growth_objective(
         # every residue under ``birth = none``, so no slot is parked and the
         # coordinates go in as they are.
         begin = replace(begin, hidden=resume_from.hidden)
+    # **``freeze_context`` pins the surviving residues' geometry, so only the
+    # damaged window moves.** Off by default, because g1-g22 all ran with the
+    # context free and the comment above says why that was the design: scoring
+    # FAPE over the whole structure was meant to teach "leave the context
+    # alone" as well as "fill the window", and that second half is what stops
+    # "emit nothing" being free.
+    #
+    # It is switchable because **that enforcement was measured on 21 Nov and it
+    # does not work**: g22_random's implied context displacement is 1.20 A
+    # barely trained and 2.83 A settled, so ten thousand updates taught the
+    # rule to displace the context it is supposed to be reading *further*
+    # (``docs/claims/the-rule-displaces-the-surviving-context-it-is-supposed-to-read.md``).
+    # Nothing charges the rule for moving anchors, while FAPE and the pairwise
+    # anchor term both reward relieving window strain by dragging the context
+    # toward the window rather than the reverse.
+    #
+    # The free-lunch objection does not transfer to this regime: the four arms
+    # of 6 Nov that froze at their start were running RECONSTRUCTION, where
+    # doing nothing was both the stable answer and near the scored one. Under
+    # regeneration with a frozen context, doing nothing leaves the window 13.3 A
+    # out of place while the context is exactly right, and both FAPE on the
+    # window and the unclamped window-to-anchor term see that.
+    #
+    # ``alive`` gates the cell's tick and ``frozen`` gates only its geometry,
+    # so a frozen residue still perceives, still updates its hidden state and
+    # still sends messages -- it simply does not move. That is the whole point:
+    # the context has to keep talking, or there is no surviving context to
+    # regenerate from.
+    frozen = None
+    if freeze_context and bool(damaged.any()):
+        frozen = ~damaged
     result = rollout(
         rule,
         begin,
@@ -1898,6 +1930,7 @@ def growth_objective(
         config,
         generator=generator,
         record=False,
+        frozen=frozen,
     )
     final = result.state
     # **Two scoring sets, because the crop mask exists for a reason that does
