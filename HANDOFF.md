@@ -102,13 +102,28 @@ secondary structure handed to it. `g22_random` (33249861), 10,000 updates:
     geometric floor, best of 10 restarts        5.68         6.00
     bucket 0 PASS line                             --         4.00
 
-**Ten thousand updates over 400 proteins bought 0.46 A on top of bond closure
-and steric overlap** -- and that margin is **expected to shrink to ~0.2-0.3 A**
-once the floor is re-measured, because `geometric_floor.py` drew a different
-spatial crop of each protein than every arm it was quoted against (fixed 21 Nov;
-the fix now reproduces `baseline_probe`'s helix start digit for digit). The
-correction runs against the rule, so the verdict strengthens. Treated as an
-estimate until the cluster re-runs land. The floor (`scripts/geometric_floor.py`) optimises the
+**NO FLOOR-VERSUS-ARM MARGIN IN THIS RECORD IS CURRENTLY QUOTABLE** -- not the
+0.46 A below, not `g24_frozen`'s apparent 0.99, not the 1.56 that 8.49 against
+the corrected 10.05 would suggest. The floors were re-measured on 21 Nov after
+a crop-selection fix (confirmed: the helix start now reads **12.23 A**, the
+recorded baseline, to the digit):
+
+    corrected floors              start fit_all/int    floor fit_all/int   best_int
+    helix                             12.23 / 13.26       6.20 /  6.73       6.73
+    random                            14.76 / 16.28       9.21 / 10.05       5.91
+
+But the floor still picks its own crops, so the random floor's start is
+**16.28 fit_intact against the arm's 13.44** -- harder windows, which inflates
+the floor and flatters the rule. Before the crop fix the two agreed by accident
+(13.09 vs 13.44), which hid it. `geometric_floor.py` is being given the
+checkpoint-driven crop selection `context_drift.py` already has.
+
+**And the number that makes this urgent**: the helix floor is **6.20 A fit_all**
+while `g20_orient` -- the arm behind this project's headline, on a helix start --
+settled at **7.78 A fit_all**. If that holds on matched crops, a network-free
+optimiser beats the headline and the 7.78 was at or below the floor: no signal
+rather than a small one. Different crops, so a hint, not a finding -- and a CPU
+job to settle. The floor (`scripts/geometric_floor.py`) optimises the
 window's frames against those two terms only -- no distance to native, no
 torsion prior, no fragment library -- using the rule's own degrees of freedom,
 so the two search the same structures and differ only in that one of them is

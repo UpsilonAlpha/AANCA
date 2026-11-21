@@ -112,6 +112,41 @@ fails, we do not add terms and re-run."* A local rule with this information,
 this objective and this much training does not place a backbone. That is the
 finding.
 
+## The floors were re-measured on 21 Nov, and the margin is STILL not quotable
+
+The crop-selection fault was fixed and both floors re-run (33282053 random,
+33282054 helix, both exit 0). The fix is confirmed on the cluster, not just
+locally: **the helix start now reads 12.23 A `fit_all`**, which is the recorded
+Bunya baseline to the digit.
+
+    corrected floors              start fit_all/int    floor fit_all/int   best_int
+    helix                             12.23 / 13.26       6.20 /  6.73       6.73
+    random                            14.76 / 16.28       9.21 / 10.05       5.91
+
+**But a second comparability fault is now visible, and it runs the other way.**
+The floor still picks its own crops by reshuffling a pool slice, so it is not
+measured on the crops the arm was judged on. The random floor's start state is
+**16.28 A `fit_intact`** against `g22_random`'s own untrained start of **13.44**:
+the floor is being computed on **materially harder windows**, which inflates it
+and therefore flatters the rule. Before the crop fix the two happened to agree
+(13.09 against 13.44), which is why this was invisible.
+
+**So no floor-versus-arm margin in this record should be quoted right now** --
+not the original 0.46 A, not the 0.99 A that `g24_frozen` appears to have, and
+not the 1.56 A that 8.49 against 10.05 would suggest. All three compare numbers
+measured on different windows. `scripts/geometric_floor.py` is being given the
+same checkpoint-driven crop selection `scripts/context_drift.py` already uses
+(`eval_indices` off `best.pt`), and the floors re-run on each arm's own crops
+are what settle it.
+
+**And one number demands that re-run rather than waiting for it.** The helix
+floor is **6.20 A `fit_all`**, while `g20_orient` -- the arm that produced this
+project's headline, on a helix start -- settled at **7.78 A `fit_all`**. If that
+survives a same-crops comparison, then **a network-free optimiser beats the
+project's headline result**, and the 7.78 was at or below the floor: no signal at
+all rather than a small one. Different crops, so it is a hint and not a finding,
+but it is the sharpest open question in the record and it is a CPU job to answer.
+
 ## Scope
 
   * **One seed, one run.** No arm in this project has ever been replicated
