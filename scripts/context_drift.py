@@ -50,6 +50,8 @@ from aanca.growth import (                                    # noqa: E402
     growth_links,
 )
 from aanca.model import AANCARule                             # noqa: E402
+sys.path.insert(0, str(ROOT / "scripts"))
+from regrowth_dispersion import rule_from_checkpoint          # noqa: E402
 from aanca.rollout import RolloutConfig, initial_state, rollout  # noqa: E402
 
 PDB = ROOT / "data" / "pdb"
@@ -106,28 +108,41 @@ def main() -> int:
     random.Random(args.seed).shuffle(order)
     indices = order[: args.eval_structures][: args.structures]
 
-    rule = AANCARule(growth=True, birth="none").to(device)
+    # **Rebuild the rule AND the rollout config from the run's own recorded
+    # args, never from this script's defaults.** `best.pt` carries `args`
+    # precisely because a probe that substitutes its own silently measures a
+    # different rollout -- it happened twice on 6 Nov and the save site in
+    # `train_growth.py` says so. The first version of this script hand-built a
+    # RolloutConfig and guessed `initial`, `lab_rotation`, `truncate` and `k`;
+    # it also failed outright on the weights, because `best.pt` stores them
+    # under `state_dict` and `last.pt` under `rule`.
     if args.checkpoint:
         blob = torch.load(args.checkpoint, map_location=device, weights_only=False)
-        state = blob.get("rule", blob.get("model", blob)) if isinstance(blob, dict) else blob
-        rule.load_state_dict(state)
-        label = f"{args.checkpoint}"
+        rule, run_args, config = rule_from_checkpoint(blob, device)
+        label = f"{args.checkpoint} at update {blob.get('update', '?')}"
+        initial = run_args.initial
+        # The run's OWN held-out crops, so this is measured on the proteins
+        # g22_random was judged on rather than on a fresh shuffle.
+        recorded = list(blob.get("eval_indices") or [])
+        if recorded:
+            indices = recorded[: args.structures]
+        steps = config.steps
     else:
-        label = "UNTRAINED CONTROL (expect exactly 0.0000; proves wiring only)"
+        import train_growth as tg
+        fallback = tg.build_schema().parse_args([])
+        fallback.initial = args.initial
+        fallback.steps = args.steps
+        rule = AANCARule(growth=True, birth="none").to(device)
+        config = tg.build_config(fallback, fallback.eval_activation)
+        label = "UNTRAINED CONTROL (expect exactly 0.0000; wiring only)"
+        initial = args.initial
+        steps = args.steps
     rule.eval()
-
-    config = RolloutConfig(
-        steps=args.steps, truncate=12, k=32,
-        growth=GrowthConfig(
-            seeds=16, birth="none", initial=args.initial,
-            equivariant_move=True, lab_rotation=True,
-        ),
-    )
 
     print(f"checkpoint : {label}")
     print(f"{len(pool)} structures on disk, {len(indices)} held out at crop "
-          f"{args.crop_size}, window {args.damage}, start {args.initial!r}, "
-          f"steps {args.steps}, context {'FROZEN' if args.freeze else 'FREE'}")
+          f"{args.crop_size}, window {args.damage}, start {initial!r}, "
+          f"steps {steps}, context {'FROZEN' if args.freeze else 'FREE'}")
     print(f"held-out ids {[pool[i].pdb_id for i in indices]}")
     print()
     print("N/CA/C drift is whether the context MOVED. O is reconstructed by")
@@ -159,7 +174,7 @@ def main() -> int:
         if not bool(damaged.any()):
             continue
         start = baseline_coords(
-            native, topo, links, ~damaged, args.initial, generator
+            native, topo, links, ~damaged, initial, generator
         )
         begin = initial_state(start, rule, alive=alive)
         with torch.no_grad():
