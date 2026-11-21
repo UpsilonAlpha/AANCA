@@ -6,7 +6,7 @@ journal is `docs/JOURNAL.md`; the claims and their evidence are one note each in
 
 ---
 
-## 0. Current state — 2026-11-21
+## 0. Current state — 2026-11-22
 
 ### The question, rescoped 14 Nov
 
@@ -47,47 +47,60 @@ Two things therefore stop being contributions and are recorded as such:
     and they are strictly downstream of the central claim. Nothing there is
     worth running while the central claim is unsettled.
 
-### THE 4.0 A TEST HAS NOW FAILED TWICE, AND THE SECOND FAILURE IS INFORMATIVE
+### BOTH KNOWN DEFECTS ARE NOW FIXED AND THE BAR STILL FAILS BY 2x (22 Nov)
 
-`g24_frozen` (33277377, exit 0, 393.5 min) is `g22_random` with one setting
-changed -- the surviving context pinned so only the damaged window moves:
+Every number below is on **the same 12 held-out crops and the same damage
+windows**, confirmed rather than assumed: `train_growth.score` seeds its window
+generator `manual_seed(seed + index)` at `seed = 0` and `geometric_floor.py`
+does the same, and the floor read its crop indices straight out of each
+checkpoint's `eval_indices`.
 
-    settled, 12 held-out crops      fit_all  fit_intact   twist   rmsd    bond
-    g22_random   context FREE          8.41        9.02   12.8d   3.73   0.629
-    g24_frozen   context PINNED        7.98        8.49   10.3d   2.52   1.355
+    settled, matched crops            fit_all  fit_intact   twist   margin vs floor
+    untrained start                     14.76       16.28      --        --
+    GEOMETRIC FLOOR (no network)         9.21       10.05      --        --
+    g22_random   context free            8.41        9.02   12.8d      1.03
+    g24_frozen   context pinned          7.98        8.49   10.3d      1.56
+    g25_equivariant  + rotation fix      7.50        8.10    9.2d      1.95
+    g26_fullbptt     + truncate 120      9.46       10.17   12.0d     -0.12
+    bucket 0 PASS                          --        4.00      --        --
 
-    bucket 0 PASS line                    --        4.00
+**The rotation fix helped a little.** `lab_rotation = false` removes the 45 % of
+the emitted rotation an invariant encoder could not represent. Placement 8.49 ->
+8.10 A and **twist 9.2 deg, the lowest in the record** -- the two moving together
+is the mechanism, since the defect was in the rotational actuator. But 0.39 A
+lands in this arm's own pre-registered 6.5-8.49 bucket: *"report direction only,
+and SAY SO rather than quoting the margin."* Honoured.
 
-**Three quantities moved the right way at once**: placement +0.53 A, twist back
-inside the 9-12 band, whole-structure `rmsd` down 1.21 A (the context staying
-put). One of those on a single unreplicated seed would be nothing; three moving
-together as one mechanism predicts is the argument. **The direction is
-trustworthy, the magnitude is not.** So the 2.34 A of context drift was a
-**cause and not a symptom** -- the open question was whether the rule moved the
-context *because* it could not place the window, and freezing would then have
-changed nothing or hurt.
+**The gradient-reach fix made it worse, and refuted its own prediction.**
+`truncate = 12 -> 120` fits on the MI355X (3.01 s/update against 2.27) and cost
+**1.68 A**: 8.49 -> 10.17 A, which is *above* the 10.05 A floor, so that arm has
+**no signal at all**. The note that named truncation *the binding constraint*
+called itself *"pre-positioning... it says which rollout hyperparameter to test
+first"*; it was tested first and it hurt. Its arithmetic stands, its inference
+does not -- a constraint that binds is not necessarily one whose removal helps.
+Narrowed in its own body; no `refutes` edge, because the refutation bites an
+inference and not the titled measurement.
 
-**Twist falling also reinterprets four voided arms.** A bonded pair's relative
-rotation is a statement about two residues; when one has drifted, the pair reads
-as twisted whether or not the rule mis-oriented anything. g19 (14.26), g21
-(13.25), g22 (12.8) and g23 (12.9) were all voided on that guard.
+**`g27_both` IS REGISTERED AND WILL NOT BE RUN.** g26's `>= 8.49` bucket reads
+*"the defects were not what was holding it back... should end the arm chain
+rather than extend it"*, and bucket 0's clause is *"if it fails, we do not add
+terms and re-run."* g27 is the rotation fix plus the truncation change, and the
+truncation change is now measured as harmful.
 
-**The predicted cost appeared**: `bond` rose 0.629 -> 1.355, because a pinned
-context cannot be dragged toward the window to relieve strain at its covalent
-joins. 0.73 on bond for 0.53 A of placement.
+**So: four measured faults have been fixed** -- the translation half of the move
+(7 Nov), the context drift (g24), the rotation half (g25), and the crop-selection
+and superposition faults in the instruments -- **and the best configuration
+places a damaged 12-residue window at 8.10 A where correct is 1-2 A, doing
+nothing is 16.28 A and pure geometry is 10.05 A. A local per-residue rule with
+this objective does not place a backbone, and the remaining gap is not explained
+by any known defect.**
+(`docs/claims/fixing-the-actuator-helped-a-little-and-fixing-the-gradient-reach-made-it-worse-than-geometry.md`.)
 
-**But bucket 0 still fails by a factor of two**, and the registration's clause
-stands. Against the native-blind floor, 8.49 against 9.48 is a 0.99 A margin
-(up from 0.46) -- **provisional**, since both floor runs drew the wrong crops
-and 33282053/33282054 are the re-measurement, expected ~0.3 A higher.
-
-**NEXT, and it is cheap: bucket 2 is finally readable.** `g24_frozen`'s twist is
-in band, so unlike g19/g21/g22/g23 its comparisons are not void. Bucket 2 is the
-fraction of natively-helical window residues placed in the helical Ramachandran
-basin against a ~5-10 % chance rate -- the direct test of learned secondary
-structure, the thing to lead with rather than any `rmsd_dmg`, a CPU readout on
-an existing checkpoint, and **never computed for any arm**.
-(`docs/claims/freezing-the-context-improves-placement-twist-and-whole-structure-rmsd-together.md`.)
+**The one cheap measurement never made** is bucket 2: the fraction of
+natively-helical window residues placed in the helical Ramachandran basin
+against a ~5-10 % chance rate. Every arm from g24 on has twist in band and so
+could carry it, and it is the direct test of learned secondary structure rather
+than another placement number.
 
 ### How the bar came to be set, and the first failure (20 Nov)
 

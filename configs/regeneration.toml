@@ -831,6 +831,13 @@ inherits = "g24_frozen"
 [g26_fullbptt.inputs]
 truncate = 120
 
+# *** DO NOT RUN g27_both (22 Nov). g26_fullbptt measured truncate = 120 as
+# *** HARMFUL -- 1.68 A worse than g24_frozen and above the geometric floor,
+# *** so no signal at all -- and g26's own `>= 8.49` bucket reads "the defects
+# *** were not what was holding it back... should end the arm chain rather than
+# *** extend it". g27 is the rotation fix plus that harmful change. Kept
+# *** registered so the decision not to run it is on the record rather than a
+# *** silent omission.
 [g27_both]
 inherits = "g24_frozen"
 
