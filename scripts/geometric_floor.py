@@ -226,9 +226,22 @@ def main() -> int:
         f"{'bond':>7}  {'clash':>7}"
     )
     print(header)
+    # **ONE rng for every crop, advanced across them -- baseline_probe.py's
+    # convention and the trainer's.** This loop used to pass a freshly seeded
+    # `random.Random(args.seed + index)` per crop. The rng is what `crop()`
+    # draws the SEED RESIDUE from, and the crop is a spatial ball around it, so
+    # a fresh stream put the window in a different region of the same protein
+    # than every recorded baseline and arm number was measured on: same
+    # held-out ids, different 128-residue balls, different damage windows. On
+    # the laptop pool at --damage 12 that read 9.21 A of helix start where
+    # baseline_probe reads 10.77 A. Measured over 46 crops the two conventions
+    # agree inside their standard error (12.11 vs 11.41, se 0.8), so the fresh
+    # stream was not an easier task -- it was an uncomparable sample, which for
+    # a floor quoted against an arm's start state is the same problem.
+    rng = random.Random(args.seed)
     for index in indices:
         try:
-            topo, native, _crop, _used = dataset.load_crop(index, rng=random.Random(args.seed + index))
+            topo, native, _crop, _used = dataset.load_crop(index, rng=rng)
         except Exception:
             continue
         if topo.n_residues < args.damage:
