@@ -61,7 +61,12 @@ secondary structure handed to it. `g22_random` (33249861), 10,000 updates:
     bucket 0 PASS line                             --         4.00
 
 **Ten thousand updates over 400 proteins bought 0.46 A on top of bond closure
-and steric overlap.** The floor (`scripts/geometric_floor.py`) optimises the
+and steric overlap** -- and that margin is **expected to shrink to ~0.2-0.3 A**
+once the floor is re-measured, because `geometric_floor.py` drew a different
+spatial crop of each protein than every arm it was quoted against (fixed 21 Nov;
+the fix now reproduces `baseline_probe`'s helix start digit for digit). The
+correction runs against the rule, so the verdict strengthens. Treated as an
+estimate until the cluster re-runs land. The floor (`scripts/geometric_floor.py`) optimises the
 window's frames against those two terms only -- no distance to native, no
 torsion prior, no fragment library -- using the rule's own degrees of freedom,
 so the two search the same structures and differ only in that one of them is

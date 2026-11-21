@@ -118,11 +118,32 @@ finding.
     ([[no-growth-arm-has-been-run-twice-so-no-difference-has-an-error-bar]]), so
     0.46 A has no error bar either. The *sign* is what carries here, not the
     magnitude, and a 0.46 A margin is inside the noise of anything unmeasured.
-  * **The helix floor (33249843) is NOT used above and should not be quoted.**
-    Two faults: the submission dropped `--iters 1500` so it ran at the default
-    600, and its start state reads 7.67 A `fit_all` against the recorded 12.23
-    for a helix start, driven by five of twelve crops starting under 1.5 A.
-    Until that is understood it is not a measurement of anything.
+  * **BOTH FLOOR RUNS ARE ON THE WRONG CROPS AND ARE BEING RE-MEASURED
+    (21 Nov evening).** `geometric_floor.py` seeded a fresh rng per crop, and
+    that rng picks the crop's SEED RESIDUE -- a crop being a spatial ball around
+    it -- so both runs selected different 128-residue regions of the same
+    proteins than `baseline_probe.py` and the trainer, which share one stream.
+    Same held-out ids, different balls, different windows. The fix reproduces
+    `baseline_probe`'s helix start digit for digit (10.77 / 11.83 locally).
+
+    **It was a comparability fault, not an easier task**: over 46 crops the two
+    conventions agree inside their standard error (helix `fit_all` 11.41 +- 0.78
+    shared against 12.11 +- 0.77 fresh), and with a per-crop sd of ~5 A a
+    12-crop draw moves the mean ~1.5 A on sampling noise alone -- which is how
+    the helix run read 7.67 A against the recorded 12.23. The five crops under
+    1.5 A are genuine: an ideal-helix walk reproduces a natively helical window
+    to ~1 A, and such crops appear under both conventions.
+
+    **Expected effect on the number above**: locally the fix moves the random
+    floor `fit_intact` from 10.91 to 11.20, so **9.48 A should rise by ~0.3 A
+    and the rule's 0.46 A margin should shrink to ~0.2-0.3 A** -- against the
+    rule, so the verdict stands and strengthens, and bucket 0 still fails by a
+    factor of two. **Quoted as an estimate until the cluster re-runs land.**
+    The margin was already inside single-seed noise and is now more so.
+
+    The helix run also dropped `--iters 1500` and ran at the default 600, which
+    is a separate and smaller fault; it is being re-run with the iterations the
+    random run used.
   * **The floor is one optimiser configuration**, Adam at lr 0.03 for 1500
     iterations. It is an upper bound on the true geometric floor, so the real
     margin over geometry is at most 0.46 A and probably less.
