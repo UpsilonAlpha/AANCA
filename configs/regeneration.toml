@@ -747,3 +747,93 @@ inherits = "g22_random"
 
 [g24_frozen.inputs]
 freeze_context = true
+
+# ---------------------------------------------------------------------------
+# g25-g27 -- fix the two known defects. Ulban, 21 Nov: "fix the known defects".
+#
+# Both are faults rather than tuning knobs, both were measured before these arms
+# existed, and both sit on top of [g24_frozen], which is now the best
+# configuration (8.49 A fit_intact) and the only recent arm whose `twist` is
+# inside the 9-12 band and whose buckets are therefore readable at all.
+#
+# DEFECT 1 -- THE GRADIENT REACHES A QUARTER OF THE JOURNEY. `truncate = 12`
+# against `steps = 120`, unoverridden by any arm from g14 to g24. BPTT carries
+# gradient through the last 12 steps only: 3.6 A of visible travel at the 0.3 A
+# cap, against a start state ~13.4 A out of place. 27 %. Measured model-free in
+# docs/claims/the-gradient-window-is-a-third-of-the-journey-the-window-must-
+# travel.md, which named it the binding constraint and the per-step cap as
+# binding on nothing (3.6x headroom). That note called itself "pre-positioning
+# rather than a result -- it says which rollout hyperparameter to test first",
+# and g22's failure is the condition it was waiting for.
+#
+# DEFECT 2 -- HALF THE MOVE OPERATOR IS UNSTEERABLE. `lab_rotation = true`
+# leaves the rotation half of the move in the lab frame. The perception is
+# invariant by construction (1.0e-08), so a lab-frame direction is one an
+# invariant encoder cannot represent and no objective can teach. Measured at
+# 0.68 A of error on a 1.50 A move -- 45 %, LARGER than the 27 % translation
+# half that was fixed on 7 Nov, and `equivariant_move` does not touch it.
+# Pinned in tests/test_move_equivariance.py.
+#
+# `g23_localrot` already tried defect 2 alone and settled at twist 12.9, VOID on
+# its own guard. We now know context drift inflates twist -- a bonded pair's
+# relative rotation is a statement about TWO residues, so a drifted context
+# residue reads as twist that the rule never caused -- and g24 pins the context
+# and lands at 10.3. So the same test on a frozen base should be readable where
+# g23's was not. That is why these inherit g24_frozen and not g20_orient.
+#
+# PRE-REGISTERED, and bucket 0 DOES NOT MOVE. `rmsd_dmg_fit_intact <= 4.0 A`
+# passes, > 4.0 fails, <= 2.0 is solved, at or above the geometric floor is no
+# signal. Comparators, all on the same 12 held-out crops:
+#
+#   untrained start                          13.44 A
+#   geometric floor, random (re-measuring)   ~9.5-9.8 A   33282053
+#   g22_random, context free                  9.02 A
+#   g24_frozen, context pinned                8.49 A   <- the arm to beat
+#   bucket 0 PASS                              4.00 A
+#
+#   <= 4.0          PASS. The defects were the problem. A local rule places a
+#       backbone once its gradient reaches the journey and its actuator is
+#       steerable, and the architecture is vindicated.
+#   4.0 - 6.5       a large real effect and still a fail. The defects mattered
+#       and were not the whole story; report the size and stop adding arms,
+#       because at that point the remaining gap is the architecture's.
+#   6.5 - 8.49      a real effect inside the noise of an unreplicated seed.
+#       Report direction only, and SAY SO rather than quoting the margin.
+#   >= 8.49         the defects were not what was holding it back. This is the
+#       most informative outcome for the central claim and the one that should
+#       end the arm chain: three measured faults fixed, no improvement, and the
+#       constraint is the local rule itself.
+#
+# SECOND, free, and the thing to lead with if twist stays in band: bucket 2,
+# the fraction of natively-helical window residues placed in the helical
+# Ramachandran basin against a ~5-10 % chance rate. Direct evidence of learned
+# secondary structure, worth more than any rmsd_dmg, and never computed for any
+# arm. Readable on these arms precisely because g24 brought twist back in band.
+#
+# VOID if a run does not complete. `twist` leaving 9-12 voids the comparisons
+# against g24 but NOT bucket 0, by the narrowing of 20 Nov: a regime marker
+# cannot invalidate a measurement that is not a comparison.
+#
+# ONE VARIABLE EACH for g25 and g26, so the attribution is clean; g27 is both
+# together and is the arm that answers "does it do the job once the known faults
+# are fixed", which is the question actually asked. g26's `truncate` is set to
+# the largest value a short feasibility run survives -- full BPTT over 120 steps
+# may not fit, and an assumed value that silently OOMs is a wasted slot.
+[g25_equivariant]
+inherits = "g24_frozen"
+
+[g25_equivariant.inputs]
+lab_rotation = false
+
+[g26_fullbptt]
+inherits = "g24_frozen"
+
+[g26_fullbptt.inputs]
+truncate = 120
+
+[g27_both]
+inherits = "g24_frozen"
+
+[g27_both.inputs]
+lab_rotation = false
+truncate = 120
