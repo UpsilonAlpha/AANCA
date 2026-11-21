@@ -649,20 +649,20 @@ lab_rotation = false
 # ---------------------------------------------------------------------------
 # g24_frozen -- let only the placed residues move.
 #
-# *** DO NOT RUN THIS YET (21 Nov). Its rationale was RETRACTED hours after it
-# *** was registered. The context drift it exists to fix was an artefact of a
-# *** shared superposition: scripts/context_drift.py measures the context's
-# *** N/CA/C displacement directly and an UNTRAINED rule over 120 steps reads
-# *** 0.0000 A while the decomposition that motivated this arm reads 1.70 A on
-# *** the same rollout. Whether the TRAINED rule drifts is still unmeasured --
-# *** an untrained rule cannot drift, so that control is vacuous for it.
+# *** GATE OPEN (21 Nov evening). This arm was gated for half a day on a
+# *** retraction that was itself wrong, and the gate is now cleared by direct
+# *** measurement: scripts/context_drift.py on runs/g22_random/best.pt reads
+# *** 2.3402 A of context N/CA/C drift with the context free (job 33277250) and
+# *** exactly 0.0000 A with it frozen (33277251), over the 12 crops the arm was
+# *** judged on. So the context really is being displaced, freezing really does
+# *** stop it, and the second pre-registered bucket below -- that drift must
+# *** read ~0 under freezing or the flag was dropped -- is already SATISFIED.
 # ***
-# *** GATE: run `python scripts/context_drift.py runs/g22_random/best.pt` on
-# *** Bunya first. If the trained drift is also ~0, freezing changes nothing,
-# *** this arm is pointless and the slot belongs to `truncate` instead. The
-# *** wiring and the buckets below are kept because they are correct if the
-# *** gate opens. (docs/claims/the-rule-displaces-the-surviving-context-it-is-
-# *** supposed-to-read.md, status void.)
+# *** The retraction's error, recorded so it is not repeated: the null used to
+# *** kill the claim was an UNTRAINED rule, whose move heads emit ~0 and which
+# *** therefore cannot drift at all. A null that cannot exhibit the effect is
+# *** not a null. (docs/claims/the-rule-displaces-the-surviving-context-it-is-
+# *** supposed-to-read.md, now status supported.)
 #
 # Ulban, 21 Nov, after g22_random failed its absolute bar: "let's try one where
 # only the placed residues can move."

@@ -9,11 +9,13 @@ sources: [33249861, regeneration.toml, model.py]
 
 Asked on 21 Nov after `g22_random` failed its absolute bar
 ([[the-rule-beats-bond-closure-and-sterics-by-half-an-angstrom-and-fails-the-absolute-bar]]):
-**why** does it not place a backbone? Three mechanisms were proposed. **One was
-wrong and is retracted** -- see
-[[the-rule-displaces-the-surviving-context-it-is-supposed-to-read]], which this
-node replaces. These two are read off the config and off a previously measured
-number, not off the decomposition that failed, so they stand.
+**why** does it not place a backbone? Three mechanisms were proposed and **all
+three now stand**. The third --
+[[the-rule-displaces-the-surviving-context-it-is-supposed-to-read]] -- was
+inferred from a bad method, retracted on a null that could not exhibit the
+effect, and then confirmed by direct measurement at 2.34 A. These two were read
+off the config and off a previously measured number rather than off that
+decomposition, so they were never affected either way.
 
 Neither cost a GPU hour to establish.
 
@@ -82,10 +84,9 @@ that are cheap to test one variable at a time.
   * One seed throughout
     ([[no-growth-arm-has-been-run-twice-so-no-difference-has-an-error-bar]]), so
     a difference smaller than ~1 A from either test is not readable.
-  * A third proposed mechanism -- that the rule displaces the surviving context
-    -- was retracted the day it was written when the direct measurement came
-    back at exactly 0.0000 A against the inference's 1.70 A. The lesson is
-    recorded in the void node rather than here.
+  * The third mechanism is now measured and holds at 2.34 A of context drift
+    on the trained checkpoint, so "two reasons" in this node's title is a
+    statement about what THIS node carries, not a count of the causes.
 
 ## Supports
 - [[the-gradient-window-is-a-third-of-the-journey-the-window-must-travel]]

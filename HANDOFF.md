@@ -90,32 +90,32 @@ training does not place a backbone.
 
 ### WHY it fails: three mechanisms, confirmed 21 Nov without spending a GPU hour
 
-**1. RETRACTED THE SAME DAY. The context drift was an artefact of a shared
-superposition and the direct measurement is exactly zero.** The claim was that
-the rule displaces the surviving context by 1.20 A untrained and 2.83 A settled,
-from decomposing `rmsd` against `rmsd_dmg`. `scripts/context_drift.py` measures
-it directly instead, and the control settles it -- an **untrained** rule over a
-full 120-step rollout, where the move heads emit ~0 and nothing can have
-drifted:
+**1. The trained rule displaces the surviving context by 2.34 A.** Measured
+directly on `runs/g22_random/best.pt`, 12 held-out crops, 120 steps
+(`scripts/context_drift.py`, jobs 33277250 free / 33277251 frozen, both exit 0):
 
-    direct context N/CA/C displacement     0.0000 A   exactly
-    rmsd decomposition, same rollout         1.70 A   <- the method, on zero drift
+    g22_random best.pt      context N/CA/C drift   worst atom   O (reconstructed)
+    context FREE (as run)               2.3402 A      16.020 A            2.6545
+    context FROZEN                      0.0000 A       0.000 A            0.0392
 
-So the decomposition manufactures ~1.7 A from nothing, by the same mechanism
-this record had just corrected one level up: fit the superposition on every
-residue and the badly-placed window pulls the frame, so the correct context
-reads as displaced. A first version of the probe also found 2.1 A of apparent
-motion that was **one oxygen** -- `correct_oxygens` recomputes every O from its
-backbone each step, identically frozen or not. N, CA and C read 0.0000.
+**So the surviving context does not survive**, and the rule is scored against a
+frame it is itself destroying -- which is the sharpest possible problem for a
+claim about regeneration FROM SURVIVING CONTEXT. It happens because
+`growth_objective` called `rollout` with no `frozen` argument; that was
+deliberate (whole-structure FAPE was meant to teach "leave the context alone"),
+and the measurement says the enforcement fails. `freeze_context` now exists and
+drives the drift to exactly 0.0000, so **`[g24_frozen]`'s gate is open and its
+second bucket is already satisfied**.
 
-**What survives is narrow.** The context *is* permitted to move (no `frozen`
-argument at `growth.py:1894`), `freeze_context` now exists and demonstrably
-works (moving mask ~33 of 64 residues down to ~5), and whether the TRAINED rule
-uses that permission is **unmeasured** -- an untrained rule cannot drift, so the
-control is vacuous for that question. `scripts/context_drift.py` on
-`runs/g22_random/best.pt` is the measurement, and it is a CPU job.
-(`docs/claims/the-rule-displaces-the-surviving-context-it-is-supposed-to-read.md`,
-now `status: void`.)
+**This claim was inferred badly, retracted, and then confirmed, in one day.**
+The morning's 1.20/2.83 A came from decomposing `rmsd` against `rmsd_dmg`, which
+is an invalid instrument -- it reads 0.96 A on the frozen run where the true
+drift is exactly zero. It was voided at midday on an **untrained** control that
+read 0.0000, and that retraction was the second error: an untrained rule's move
+heads emit ~0, so it cannot drift and free-versus-frozen is vacuously identical.
+**A null that cannot exhibit the effect is not a null.** The direct measurement
+on the trained checkpoint is what settled it.
+(`docs/claims/the-rule-displaces-the-surviving-context-it-is-supposed-to-read.md`.)
 
 **2. The gradient reaches about a quarter of the journey.** `truncate = 12`
 against `steps = 120` in `[base.inputs]`, **unoverridden anywhere in g22's
@@ -133,20 +133,21 @@ move, **45 %**, larger than the translation half that was already fixed.
 **Synthesis.** The rule learned the terms with dense local in-window gradients
 and not placement: `bond` 4.278 -> 0.629, `clash` 0.0148, while placement landed
 0.46 A past what bond closure and sterics alone force. Those two terms are
-local, in-window and scored every step; placement has to survive truncation (2)
-and be actuated through a half-broken rotation (3). **So "this architecture
-cannot place a backbone" is NOT established** -- what is established is that
-this *training setup* cannot, and two surviving reasons why.
+local, in-window and scored every step; placement has to be measured against a
+frame the rule is moving (1), survive truncation (2), and be actuated through a
+half-broken rotation (3). **So "this architecture cannot place a backbone" is
+NOT established** -- what is established is that this *training setup* cannot,
+and all three reasons now have measured magnitudes.
 (`docs/claims/the-gradient-reaches-a-quarter-of-the-journey-and-half-the-move-operator-is-unsteerable.md`.)
 
-**ORDER OF WORK, revised after the retraction.** `[g24_frozen]` is registered
-and wired but **must not be run until the trained drift is measured**, because
-its entire rationale was mechanism 1. If `runs/g22_random/best.pt` also drifts
-~0 then freezing changes nothing and the slot belongs to `truncate`, which is
-the mechanism with a measured magnitude behind it and a model-free note that
-already named it the binding constraint. So: measure the drift on the trained
-checkpoint (CPU, free), then raise `truncate`, then `lab_rotation = false` on a
-non-void arm. **The 4.0 A bar stays where it is and the failed 9.02 A stands.**
+**ORDER OF WORK.** The drift is measured and the gate is open, so
+`[g24_frozen]` is the next arm: one variable against `g22_random`, same neutral
+start, same absolute bar, and it changes a real 2.34 A. Then `truncate`, then
+`lab_rotation = false` on a non-void arm. **The 4.0 A bar stays where it is and
+the failed 9.02 A stands.** Note what g24 cannot settle: freezing could make
+placement WORSE, since the rule currently relieves window strain by moving
+anchors and would lose that -- which would mean the 9.02 A depended on being
+allowed to corrupt the frame, and is a finding either way.
 
 **And the methodological lesson, which cost two wrong claims in one day.** Both
 errors were the same error: a superposition fitted on residues whose placement
