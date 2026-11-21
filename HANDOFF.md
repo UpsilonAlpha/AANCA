@@ -47,7 +47,49 @@ Two things therefore stop being contributions and are recorded as such:
     and they are strictly downstream of the central claim. Nothing there is
     worth running while the central claim is unsettled.
 
-### THE 4.0 A TEST WAS RUN ON 20 NOV AND IT FAILED (read this first)
+### THE 4.0 A TEST HAS NOW FAILED TWICE, AND THE SECOND FAILURE IS INFORMATIVE
+
+`g24_frozen` (33277377, exit 0, 393.5 min) is `g22_random` with one setting
+changed -- the surviving context pinned so only the damaged window moves:
+
+    settled, 12 held-out crops      fit_all  fit_intact   twist   rmsd    bond
+    g22_random   context FREE          8.41        9.02   12.8d   3.73   0.629
+    g24_frozen   context PINNED        7.98        8.49   10.3d   2.52   1.355
+
+    bucket 0 PASS line                    --        4.00
+
+**Three quantities moved the right way at once**: placement +0.53 A, twist back
+inside the 9-12 band, whole-structure `rmsd` down 1.21 A (the context staying
+put). One of those on a single unreplicated seed would be nothing; three moving
+together as one mechanism predicts is the argument. **The direction is
+trustworthy, the magnitude is not.** So the 2.34 A of context drift was a
+**cause and not a symptom** -- the open question was whether the rule moved the
+context *because* it could not place the window, and freezing would then have
+changed nothing or hurt.
+
+**Twist falling also reinterprets four voided arms.** A bonded pair's relative
+rotation is a statement about two residues; when one has drifted, the pair reads
+as twisted whether or not the rule mis-oriented anything. g19 (14.26), g21
+(13.25), g22 (12.8) and g23 (12.9) were all voided on that guard.
+
+**The predicted cost appeared**: `bond` rose 0.629 -> 1.355, because a pinned
+context cannot be dragged toward the window to relieve strain at its covalent
+joins. 0.73 on bond for 0.53 A of placement.
+
+**But bucket 0 still fails by a factor of two**, and the registration's clause
+stands. Against the native-blind floor, 8.49 against 9.48 is a 0.99 A margin
+(up from 0.46) -- **provisional**, since both floor runs drew the wrong crops
+and 33282053/33282054 are the re-measurement, expected ~0.3 A higher.
+
+**NEXT, and it is cheap: bucket 2 is finally readable.** `g24_frozen`'s twist is
+in band, so unlike g19/g21/g22/g23 its comparisons are not void. Bucket 2 is the
+fraction of natively-helical window residues placed in the helical Ramachandran
+basin against a ~5-10 % chance rate -- the direct test of learned secondary
+structure, the thing to lead with rather than any `rmsd_dmg`, a CPU readout on
+an existing checkpoint, and **never computed for any arm**.
+(`docs/claims/freezing-the-context-improves-placement-twist-and-whole-structure-rmsd-together.md`.)
+
+### How the bar came to be set, and the first failure (20 Nov)
 
 The first arm in this project measured against **an absolute threshold fixed
 before the run** and against **a measured floor**, from a neutral start with no
