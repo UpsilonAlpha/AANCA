@@ -96,11 +96,55 @@ this objective does not place a backbone, and the remaining gap is not explained
 by any known defect.**
 (`docs/claims/fixing-the-actuator-helped-a-little-and-fixing-the-gradient-reach-made-it-worse-than-geometry.md`.)
 
-**The one cheap measurement never made** is bucket 2: the fraction of
-natively-helical window residues placed in the helical Ramachandran basin
-against a ~5-10 % chance rate. Every arm from g24 on has twist in band and so
-could carry it, and it is the direct test of learned secondary structure rather
-than another placement number.
+### Bucket 2, made 23 Nov: helix learned, sheet lost to plain geometry
+
+`scripts/ramachandran_basins.py` on the three readable arms (33291294 g25,
+33291295 g24, 33291297 g22), exit 0 each, on the twelve held-out crops each
+checkpoint records in its own `eval_indices`, `eval_pdb_ids` verified. Four rows
+over the same residues and the same boxes; **read `model` against `floor`**, the
+network-free bond-closure-and-sterics optimiser, never against `start`.
+
+    HELIX basin, natively-helical residues    -10d      +0d     +10d
+    native                                   1.000    1.000    1.000
+    start                                    0.036    0.034    0.065
+    GEOMETRIC FLOOR                          0.055    0.068    0.065
+    g22_random                               0.073    0.102    0.194
+    g24_frozen                               0.018    0.034    0.097   <- CROSSES
+    g25_equivariant                          0.218    0.237    0.306
+
+    SHEET basin, natively-sheet residues      -10d      +0d     +10d
+    GEOMETRIC FLOOR                          0.085    0.143    0.186
+    g22_random                               0.021    0.125    0.136
+    g24_frozen                               0.021    0.036    0.051
+    g25_equivariant                          0.000    0.089    0.085
+
+Denominators 55-62 helical, 47-59 sheet. The boxes are rectangles where the real
+basins are contours, so **no absolute fraction here is "the share of residues in
+the helical basin"** -- it belongs to these rectangles. What licenses the reading
+is that all four rows share the same boxes, so box error largely cancels in the
+difference.
+
+**Helix: a real learned signal, in the best arm only.** `g25_equivariant` sits
+3.4-4.7x above the geometric floor at all three widenings. That is the first
+direct evidence the rule learned *local conformation* rather than only pushing
+atoms toward a centroid -- a placement RMSD cannot show it, since 8.10 A is
+compatible with either. `g22` is above the floor but weakly; `g24` crosses it and
+nothing is quoted from it, so **the three-arm ordering does not track placement**.
+
+**Sheet: at or below the floor in every arm, at every widening.** Plain geometry
+puts *more* residues in the sheet basin than any trained rule does. The rule is
+not merely failing to learn sheet -- it displaces residues out of a basin bond
+closure and sterics alone would have found.
+
+**That split is the sharpest mechanistic result in the project**, and it falls
+exactly where the architecture predicts. A helix is local: i -> i+4, inside one
+message-passing hop of a k = 32 spatial neighbourhood. A sheet is not: its
+partner strand is arbitrarily far in sequence, may itself be destroyed, and may
+only become a spatial neighbour once the window is already roughly placed. One
+hop cannot carry it. So the failure is no longer undifferentiated -- it is
+localised, and it names the change that would test it: **reach, not another loss
+term.**
+(`docs/claims/the-rule-learned-helical-torsions-and-learned-nothing-about-sheet.md`.)
 
 ### How the bar came to be set, and the first failure (20 Nov)
 
