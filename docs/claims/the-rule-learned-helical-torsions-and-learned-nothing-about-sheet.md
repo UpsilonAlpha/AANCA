@@ -83,22 +83,52 @@ The rule is not merely failing to learn sheet; **it is actively displacing
 residues out of a basin that bond closure and sterics alone would have
 found.**
 
-**This is the sharpest mechanistic result the project has.** It splits the
-two secondary structures along exactly the line the architecture predicts.
-A helix is *local*: its hydrogen bond is i to i+4, inside one message-passing
-hop of a k = 32 spatial neighbourhood, so a one-hop per-residue rule can in
-principle see everything that defines it -- and the measurement says it did.
-A sheet is *not local*: its partner strand is arbitrarily far away in
-sequence and arrives through a neighbourhood the damaged window does not
-contain, since the partner may itself be destroyed or may only become a
-neighbour once the window is already roughly in place. One hop cannot carry
-it, and the measurement says it did not.
+## RETRACTED SAME DAY: the sequence-distance explanation of the split
 
-This is the same boundary [[in-regeneration-the-surviving-context-is-the-grid]]
-draws from the other side, and it is consistent with
-[[the-clash-term-does-not-see-the-ramachandran-plot]]: nothing in the
-objective rewards a torsion directly, so whatever basin occupancy exists is
-inferred from placement supervision alone.
+**The split above is measured and stands. The mechanism first written here
+for it was wrong, and is withdrawn in full.** It said a helix is local
+because its hydrogen bond is i to i+4 and so fits inside one hop, while a
+sheet is non-local because its partner strand is *arbitrarily far away in
+sequence* -- and concluded that the next thing to test is **reach**.
+
+**Sequence distance is not what a residue perceives.** `graph.py:327`
+selects neighbours by distance over *all heavy atoms*, sequence neighbours
+merely forced in as well; `rollout.py:497` rebuilds the graph **live at every
+step** from the current coordinates, and `fixed_neighbours` -- the only way
+to hold a stale edge set -- is used by one diagnostic and never in training.
+Two strands in a sheet sit about 4.8 A apart. A native sheet partner is
+therefore comfortably inside the k = 32 neighbourhood whenever the residue is
+anywhere near where it belongs, no matter how far apart the two are in
+sequence. One hop already reaches it.
+
+So **"more hops" does not follow from this measurement and must not be
+cited as if it did.** The split needs a different explanation, and three
+candidates survive the correction, two of them cheap to separate:
+
+  1. **One conformational mode, over-applied.** If the rule puts
+     natively-sheet residues in the *helix* box, it learned a single local
+     mode and applies it everywhere. Decided by cross-tabulating native
+     basin against achieved basin -- the torsions are already computed.
+  2. **The floor is trivially good at beta.** The beta region is the open,
+     extended part of the plot, and an optimiser that only closes peptide
+     bonds and avoids clashes will tend to extended conformations by
+     default. If the floor dumps natively-*helical* residues into the sheet
+     box too, then "the model is below the floor on sheet" says more about
+     the floor than about the rule. Same cross-tabulation decides it.
+  3. **Registration rather than reach.** A helix is determined by residues
+     *inside the window*, so the rule can assemble one wherever the window
+     happens to be. A sheet has to be in register with a partner strand at
+     a specific offset, which an 8.10 A placement error destroys even with
+     the partner plainly in view. Being a neighbour is necessary and not
+     sufficient. This one is untouched by the correction, but it predicts
+     sheet recovers only when placement does, so it cannot be tested apart
+     from the placement failure itself.
+
+The boundary [[in-regeneration-the-surviving-context-is-the-grid]] draws is
+still the right frame, and
+[[the-clash-term-does-not-see-the-ramachandran-plot]] still applies: nothing
+in the objective rewards a torsion directly, so whatever basin occupancy
+exists at all is inferred from placement supervision alone.
 
 ## What it does and does not do to the central claim
 
@@ -109,13 +139,13 @@ A rule that puts a quarter of helical residues in the right basin and
 *fewer* sheet residues there than geometry does has not regenerated a
 backbone.
 
-What it changes is the **diagnosis**. The failure is no longer
-undifferentiated -- "it does not place a backbone" -- it is now localised:
-the rule learns the secondary structure whose defining interaction fits
-inside its receptive field, and loses to plain geometry on the one that does
-not. That is a statement about the **one-hop local rule**, not about neural
-cellular automata in general, and it names the change that would test it:
-reach, not another loss term.
+What it changes is the **diagnosis**, though less than the first version of
+this note claimed. The failure is no longer undifferentiated -- "it does not
+place a backbone" -- because it now has a shape: **helical conformation is
+learned, sheet conformation is worse than plain chain closure.** What that
+shape is caused by is open, and the three candidates above are the open
+question, not a conclusion. **It does not name reach**, and the paragraph
+that did has been withdrawn above.
 
 ## Scope
 

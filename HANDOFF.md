@@ -136,14 +136,32 @@ puts *more* residues in the sheet basin than any trained rule does. The rule is
 not merely failing to learn sheet -- it displaces residues out of a basin bond
 closure and sterics alone would have found.
 
-**That split is the sharpest mechanistic result in the project**, and it falls
-exactly where the architecture predicts. A helix is local: i -> i+4, inside one
-message-passing hop of a k = 32 spatial neighbourhood. A sheet is not: its
-partner strand is arbitrarily far in sequence, may itself be destroyed, and may
-only become a spatial neighbour once the window is already roughly placed. One
-hop cannot carry it. So the failure is no longer undifferentiated -- it is
-localised, and it names the change that would test it: **reach, not another loss
-term.**
+**The split is measured. The first mechanism offered for it was WRONG and is
+withdrawn** -- it said a sheet is non-local because its partner strand is far
+away *in sequence*. Sequence distance is not what a residue perceives:
+`graph.py:327` selects neighbours by distance over all heavy atoms, and
+`rollout.py:497` rebuilds the graph live every step from current coordinates.
+Strands sit ~4.8 A apart, so a native sheet partner is already inside the k = 32
+neighbourhood. **One hop reaches it, and "more hops" does not follow from this
+measurement.**
+
+Three candidates survive, and the first two are separated by one cheap
+cross-tabulation of native basin against achieved basin (the torsions are
+already computed):
+
+  1. **One mode, over-applied** -- do natively-sheet residues land in the
+     *helix* box? Then the rule learned a single local conformation and applies
+     it everywhere.
+  2. **The floor is trivially good at beta** -- does the floor also dump
+     natively-*helical* residues into the sheet box? The beta region is the
+     open, extended part of the plot, so a bond-closure-and-sterics optimiser
+     tends there by default, and "below the floor on sheet" would say more
+     about the floor than the rule.
+  3. **Registration, not reach** -- a helix is built from residues inside the
+     window, a sheet must be in register with a partner at a specific offset,
+     which an 8.10 A placement error destroys even with the partner in view.
+     Untouched by the correction, but untestable apart from the placement
+     failure itself.
 (`docs/claims/the-rule-learned-helical-torsions-and-learned-nothing-about-sheet.md`.)
 
 ### How the bar came to be set, and the first failure (20 Nov)
