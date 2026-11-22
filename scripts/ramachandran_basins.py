@@ -78,6 +78,60 @@ Lovell, Davis, Arendall, de Bakker, Word, Prisant, Richardson & Richardson
 region (plus its psi wrap) for sheet. The exact numbers are printed in the
 output header; they are not hidden and they are not re-derived here.
 
+WHERE THE MISPLACED RESIDUES GO (the cross-tabulation)
+
+The two-column table says how often a row lands a residue in the basin its
+crystal conformation occupies. It is silent on the complement, and the
+complement carries the diagnosis: a row that misses the sheet basin on 90% of
+natively-sheet residues has either put them in the HELIX box or put them
+somewhere else again, and those are different failures. So the same residues
+are also printed as a 2x4 cross-tabulation -- native class (helix, sheet)
+against where the row actually placed them -- at every widening, with the same
+denominators as the table above. Two readings are intended, and the script
+states both in its closing lines:
+
+  (a) **When a row misplaces a natively-SHEET residue, where does it put it?**
+      Three different answers, and they do not mean the same thing. In the
+      HELIX box: the rule learned one conformational mode and over-applies it.
+      In OTHER_FAV: it produced a real protein conformation, just the wrong one
+      -- alpha-L is populated, and a residue there is not evidence of anything
+      unlearned about locality. Only DISALLOWED, in no favoured box at all,
+      supports "it learned nothing local and is simply off the plot", and even
+      then the sweep has to agree, because a residue sitting a few degrees
+      outside a box edge is counted disallowed by a rectangle that has no edge
+      there in reality.
+  (b) **Where does the FLOOR put natively-HELICAL residues?** If the floor dumps
+      natively-helical residues into the sheet box too, then the floor's
+      apparent success on sheet residues is just what chain closure does -- the
+      beta region is the open, extended part of the Ramachandran plot -- and
+      "the model is below the floor on sheet" is partly an artefact of the floor
+      being trivially good there rather than of the rule being bad.
+
+The four destinations are ``helix`` (the alpha-R box), ``sheet`` (the beta/PPII
+boxes), ``other_fav`` (in neither of those but inside some other box of
+``ramachandran_clash_probe.FAVOURED`` -- alpha-L today, imported from there and
+widened by the same sweep offset so the sweep stays coherent) and
+``disallowed`` (in no favoured box at all). First match wins in that order.
+
+**Two things the printed block says out loud, because the numbers do not.**
+First, reading (b) is a comparison of two small fractions and it is worthless
+if the floor row's optimiser did not close the chain, so (b) REFUSES to state a
+verdict when the achieved ``bond`` exceeds ``FLOOR_BOND_UNREADABLE`` rather
+than reporting a one-residue difference as discrimination. Second, the native
+class is re-derived at every widening, which is what keeps the ``native`` row a
+tautology and therefore a wiring check -- but it also means **the three sweep
+columns are not the same residue set** (a wider sheet box is a larger native
+class), so the per-widening denominator is printed on the block and the columns
+are not to be read as a trend over one population.
+
+**The caveat discipline does not relax here.** These are the same rectangles,
+so only differences between rows are quotable and never an absolute fraction.
+The destinations are exclusive and exhaustive, so each native class's four
+fractions sum to 1.000 by construction -- that sum is arithmetic, not a check.
+The check is the ``native`` row, whose natively-helical residues must
+cross-tabulate 1.000 into the helix box and 0.000 into the other three, for the
+same tautological reason the two-column table must read 1.000.
+
 **They are rectangles, not contours, and that is a real limitation.** The
 alpha-R box is wide in phi and clips the bridge region; the sheet box contains
 polyproline II as well as beta. The guard is the sensitivity sweep: the whole
@@ -112,6 +166,7 @@ from aanca.growth import (  # noqa: E402
 from aanca.model import AANCARule  # noqa: E402
 from aanca.rollout import initial_state, rollout  # noqa: E402
 from geometric_floor import relax_to_geometry  # noqa: E402
+from ramachandran_clash_probe import FAVOURED  # noqa: E402
 from regrowth_dispersion import rule_from_checkpoint  # noqa: E402
 
 PDB = ROOT / "data" / "pdb"
@@ -127,6 +182,51 @@ SHEET_BOXES = (
 )
 BASINS = {"helix": HELIX_BOXES, "sheet": SHEET_BOXES}
 ROWS = ("native", "start", "floor", "model")
+#: The FAVOURED boxes this script does not already name as a basin -- alpha-L
+#: today. Taken by DIFFERENCE from ``ramachandran_clash_probe.FAVOURED`` rather
+#: than retyped, so a region added there becomes ``other_fav`` here instead of
+#: being silently counted as disallowed.
+OTHER_FAVOURED = tuple(
+    box for box in FAVOURED if box not in HELIX_BOXES + SHEET_BOXES
+)
+# The difference above is only meaningful while this script's own basin boxes
+# ARE elements of FAVOURED. If a box here is edited, or the sibling's alpha-R
+# or beta box moves even slightly, the difference stops removing it: the box
+# reappears in OTHER_FAVOURED, and residues just outside this script's basin
+# but inside the sibling's would be counted `other_fav` instead of
+# `disallowed` -- a quiet shift in exactly the number reading (a) turns on.
+# Refuse at import rather than measure, since nothing downstream could notice.
+_unmatched = [box for box in HELIX_BOXES + SHEET_BOXES if box not in FAVOURED]
+if _unmatched:
+    raise SystemExit(
+        "ramachandran_basins: these basin boxes are not elements of "
+        f"ramachandran_clash_probe.FAVOURED: {_unmatched}. OTHER_FAVOURED is "
+        "taken by difference from FAVOURED, so it can no longer separate "
+        "'in another populated region' from 'in no favoured region at all', "
+        "and reading (a) would be wrong rather than missing. Either restore "
+        "the boxes or state the other-favoured set explicitly."
+    )
+#: The cross-tabulation's columns: where a row actually put the residue.
+#: Exclusive (the boxes do not overlap in psi, and first match wins in this
+#: order regardless) and exhaustive. ``disallowed`` is in NO favoured box at
+#: all, which is a different statement from "not in the box I was asking
+#: about" -- see the docstring.
+DESTINATIONS = ("helix", "sheet", "other_fav", "disallowed")
+#: Printed column heads for ``DESTINATIONS``.
+DESTINATION_TEXT = {
+    "helix": "helix box",
+    "sheet": "sheet box",
+    "other_fav": "other favoured",
+    "disallowed": "disallowed",
+}
+#: Above this achieved ``bond``, reading (b) refuses to state a verdict.
+#: ``peptide_bond_restraint`` is ``mean((C-N length - 1.329 A)**2)`` plus
+#: ``mean(1 + cos omega)``, and that second half alone is 0 at planar trans,
+#: ~1.0 for a uniformly random omega and 2.0 at cis. So 0.5 is already a
+#: chain whose typical peptide unit is nowhere near planar trans, before the
+#: length term is counted at all: deliberately loose, refusing only when the
+#: chain is plainly open rather than merely imperfect.
+FLOOR_BOND_UNREADABLE = 0.5
 
 
 def widen(boxes, margin: float):
@@ -156,6 +256,23 @@ def box_text(boxes) -> str:
         f"phi [{a:.0f},{b:.0f}] psi [{c:.0f},{d:.0f}]"
         for a, b, c, d in boxes
     )
+
+
+def share_trio(cells) -> str:
+    """The sweep's three fractions as text, in ``-margin, 0, +margin`` order.
+
+    ``cells`` is the list of ``(hit, total)`` one widening at a time. An empty
+    native class prints ``n/a`` rather than a nan, because there is nothing
+    there to be a fraction of.
+    """
+    return ", ".join(
+        f"{hit / total:.3f}" if total else "n/a" for hit, total in cells
+    )
+
+
+def share_values(cells) -> list[float]:
+    """The same fractions as numbers, empty native classes dropped."""
+    return [hit / total for hit, total in cells if total]
 
 
 def defined_mask(links: torch.Tensor, n_res: int) -> torch.Tensor:
@@ -443,9 +560,24 @@ def main() -> int:
 
     # -- the table, at each widening -------------------------------------
     verdicts: dict[str, list[tuple[float, float]]] = {"helix": [], "sheet": []}
+    #: ``cross[row][native basin][destination]`` -> one ``(hit, total)`` per
+    #: widening, in sweep order. ``DESTINATIONS`` is exclusive because the
+    #: boxes do not overlap in psi; the first match wins if that ever changes.
+    cross: dict = {
+        row: {
+            basin: {dest: [] for dest in DESTINATIONS}
+            for basin in ("helix", "sheet")
+        }
+        for row in ROWS
+    }
     native_ok = True
     for margin in (-args.margin, 0.0, args.margin):
         boxes = {n: widen(b, margin) for n, b in BASINS.items()}
+        # The FAVOURED regions that are not a basin here, widened by the SAME
+        # offset: a sweep that moved two boxes and left the third fixed would
+        # shuffle residues between `other_fav` and `disallowed` for no reason
+        # but the sweep itself.
+        other_boxes = widen(OTHER_FAVOURED, margin)
         print(f"=== boxes {margin:+.0f} degrees " + "=" * 44)
         for name, b in boxes.items():
             print(f"    {name:>6}  {box_text(b)}")
@@ -453,6 +585,11 @@ def main() -> int:
         # boxes, which is what keeps the native row a tautology and therefore
         # a check on the wiring at every setting.
         counts = {row: {"helix": [0, 0], "sheet": [0, 0]} for row in ROWS}
+        placed = {
+            row: {basin: dict.fromkeys(DESTINATIONS, 0)
+                  for basin in ("helix", "sheet")}
+            for row in ROWS
+        }
         for crop in per_crop:
             n_phi, n_psi = crop["angles"]["native"]
             for position in range(len(n_phi)):
@@ -466,6 +603,15 @@ def main() -> int:
                         if in_boxes(phi[position], psi[position],
                                     boxes[basin]):
                             counts[row][basin][0] += 1
+                        for where in ("helix", "sheet"):
+                            if in_boxes(phi[position], psi[position],
+                                        boxes[where]):
+                                break
+                        else:
+                            where = ("other_fav" if in_boxes(
+                                phi[position], psi[position], other_boxes
+                            ) else "disallowed")
+                        placed[row][basin][where] += 1
         print()
         print(f"    {'row':>8}  {'helix in helix basin':>28}  "
               f"{'sheet in sheet basin':>28}")
@@ -476,6 +622,56 @@ def main() -> int:
                 frac = hit / total if total else float("nan")
                 cells.append(f"{frac:5.3f}  ({hit:>4}/{total:<4})")
             print(f"    {row:>8}  {cells[0]:>28}  {cells[1]:>28}")
+
+        # -- the cross-tabulation: not "did it hit its own basin" but
+        # "where did it put them". Same residues, same denominators as
+        # the two columns above; the three destinations are exclusive.
+        print()
+        print("    cross-tabulation -- where each row PUT the residues of a "
+              "native class. Destinations are exclusive:")
+        print(f"    other favoured = in no basin box but inside another "
+              f"FAVOURED region of ramachandran_clash_probe")
+        print(f"    ({len(OTHER_FAVOURED)} box(es), alpha-L: "
+              f"{box_text(other_boxes)}); disallowed = in no favoured box at "
+              f"all")
+        print("    (a) a natively-SHEET residue in the HELIX box is one "
+              "conformational mode over-applied; in OTHER")
+        print("        FAVOURED it is a real conformation but the wrong one; "
+              "only DISALLOWED is off the plot.")
+        print("    (b) if the FLOOR puts natively-HELICAL residues in the "
+              "SHEET box too, the sheet box is")
+        print("        catching what chain closure does to an extended chain, "
+              "not a basin the floor found.")
+        print("    the native class is re-derived at THIS widening, so the "
+              "denominator below is this widening's own:")
+        print("    the three widenings are DIFFERENT RESIDUE SETS and their "
+              "columns are not a trend over one population.")
+        for basin in ("helix", "sheet"):
+            print()
+            n_native = counts["native"][basin][1]
+            header = f"native {basin.upper()} (n={n_native}) ->"
+            print(f"      {header:>24}  "
+                  + "  ".join(f"{DESTINATION_TEXT[d]:>18}"
+                              for d in DESTINATIONS))
+            for row in ROWS:
+                total = counts[row][basin][1]
+                cells = []
+                for dest in DESTINATIONS:
+                    hit = placed[row][basin][dest]
+                    frac = hit / total if total else float("nan")
+                    cells.append(f"{frac:5.3f}  ({hit:>4}/{total:<4})")
+                    cross[row][basin][dest].append((hit, total))
+                print(f"      {row:>24}  "
+                      + "  ".join(f"{cell:>18}" for cell in cells))
+        # The native row's cross-tab is the same tautology as the table
+        # above, seen from the side: a natively-helical residue is one the
+        # classifier put in the helix box, so it must cross-tabulate 1.000
+        # into that box and 0.000 into the other three.
+        for basin in ("helix", "sheet"):
+            total = counts["native"][basin][1]
+            if total and placed["native"][basin][basin] != total:
+                native_ok = False
+
         for basin in ("helix", "sheet"):
             floor_hit, floor_total = counts["floor"][basin]
             model_hit, model_total = counts["model"][basin]
@@ -562,6 +758,138 @@ def main() -> int:
                   f"({values}) -- STABLE in the only direction that matters: "
                   f"it never exceeds the floor, so there is no excess to "
                   f"call learning")
+    print()
+    mean_bond = sum(bonds) / len(bonds)
+    print("WHERE THE MISSES GO. The two columns above say how often a row hit "
+          "the basin its crystal conformation")
+    print("occupies. The cross-tabulation says where the rest went, and that "
+          "is a different question with a")
+    print("different answer. Fractions below are the sweep, "
+          f"{-args.margin:+.0f}, 0, {args.margin:+.0f} degrees, in that order.")
+    print()
+    print("The denominators differ between the three because the native class "
+          "is re-derived at each widening; the")
+    print("columns are three different residue sets and only the dominant "
+          "destination, not its value, is read here.")
+    print()
+    print("(a) A natively-SHEET residue the row did not put in the sheet box "
+          "went to one of three places, and")
+    print("    they do not mean the same thing -- HELIX is one mode "
+          "over-applied, OTHER FAVOURED is a real")
+    print("    conformation but the wrong one, and only DISALLOWED is in no "
+          "favoured region of the plot at all:")
+    for row in ("start", "floor", "model"):
+        trios = {
+            dest: cross[row]["sheet"][dest]
+            for dest in ("helix", "other_fav", "disallowed")
+        }
+        print(f"  {row:>6}: HELIX box {share_trio(trios['helix'])}; "
+              f"OTHER FAVOURED {share_trio(trios['other_fav'])}; "
+              f"DISALLOWED {share_trio(trios['disallowed'])}")
+        values = {d: share_values(c) for d, c in trios.items()}
+        widenings = list(zip(values["helix"], values["other_fav"],
+                             values["disallowed"]))
+        if not widenings:
+            print(f"  {'':>6}  no natively-sheet residues at any widening; "
+                  f"nothing to read")
+        elif all(d > h and d > o for h, o, d in widenings):
+            print(f"  {'':>6}  DISALLOWED dominates at every widening: this "
+                  f"row is not over-applying a helical mode and it is")
+            print(f"  {'':>6}  not reaching another real conformation either, "
+                  f"it is putting these residues where no protein")
+            print(f"  {'':>6}  puts any residue. That is the one case that "
+                  f"supports 'nothing local was learned' -- but these")
+            print(f"  {'':>6}  are rectangles, so a residue a few degrees "
+                  f"outside an edge counts here too.")
+        elif all(h > o and h > d for h, o, d in widenings):
+            print(f"  {'':>6}  the HELIX box dominates at every widening -- "
+                  f"one conformational mode, over-applied to residues")
+            print(f"  {'':>6}  whose crystal conformation is the other one. "
+                  f"That is a learned mode used wrongly, and it is")
+            print(f"  {'':>6}  the opposite of an absence of local structure.")
+        elif all(o > h and o > d for h, o, d in widenings):
+            print(f"  {'':>6}  OTHER FAVOURED dominates at every widening: "
+                  f"these residues are in a populated region of the")
+            print(f"  {'':>6}  plot, the wrong one. The row produced real "
+                  f"protein conformations and chose badly among them;")
+            print(f"  {'':>6}  nothing here says it is off the plot.")
+        else:
+            print(f"  {'':>6}  which destination dominates CHANGES across the "
+                  f"widenings, so it is a statement about where the")
+            print(f"  {'':>6}  box edge was drawn and not about the row. "
+                  f"Nothing is quotable from it.")
+        if row == "floor" and mean_bond > FLOOR_BOND_UNREADABLE:
+            print(f"  {'':>6}  (and the floor's achieved bond is "
+                  f"{mean_bond:.4f}: the chain did not close, so this row is "
+                  f"not a floor and")
+            print(f"  {'':>6}   the line above describes an unconverged "
+                  f"optimiser, not geometry.)")
+    print()
+    print("(b) Where the FLOOR puts natively-HELICAL residues -- the question "
+          "is whether its sheet number is")
+    print("    a basin it found or just the open, extended part of the plot "
+          "that chain closure lands on anyway:")
+    floor_h2h = cross["floor"]["helix"]["helix"]
+    floor_h2s = cross["floor"]["helix"]["sheet"]
+    floor_h2o = cross["floor"]["helix"]["other_fav"]
+    floor_h2d = cross["floor"]["helix"]["disallowed"]
+    floor_s2s = cross["floor"]["sheet"]["sheet"]
+    print(f"  {'floor':>6}: natively-HELICAL residues -> helix box "
+          f"{share_trio(floor_h2h)}; sheet box {share_trio(floor_h2s)}; "
+          f"other favoured {share_trio(floor_h2o)}; disallowed "
+          f"{share_trio(floor_h2d)}")
+    print(f"  {'':>6}  for comparison, the floor on natively-SHEET residues "
+          f"-> sheet box {share_trio(floor_s2s)}")
+    h2s_v = share_values(floor_h2s)
+    s2s_v = share_values(floor_s2s)
+    pairs = list(zip(h2s_v, s2s_v))
+    # **The refusal.** (b) is a difference between two small fractions of a
+    # few dozen residues, and if the floor's optimiser never closed the chain
+    # then both fractions are properties of an unconverged Adam run and the
+    # difference is noise. A one-residue gap stated as "it discriminates by
+    # native conformation" is worse than no reading at all, so there is no
+    # verdict here until `bond` says there is a floor to read.
+    if mean_bond > FLOOR_BOND_UNREADABLE:
+        print(f"  {'':>6}  !! NOT READABLE: the floor's achieved bond is "
+              f"{mean_bond:.4f}, above the {FLOOR_BOND_UNREADABLE:.2f} at "
+              f"which this")
+        print(f"  {'':>6}  !! script will read (b) at all. The optimiser did "
+              f"not close the chain, so the `floor` row is not a")
+        print(f"  {'':>6}  !! floor and the two fractions above are properties "
+              f"of an unconverged Adam run, not of geometry.")
+        print(f"  {'':>6}  !! The difference between them would be noise and "
+              f"NO VERDICT IS STATED. Raise --floor-iters or")
+        print(f"  {'':>6}  !! --floor-lr and run it again.")
+    elif not pairs:
+        print(f"  {'':>6}  one of the two native classes is empty at every "
+              f"widening; nothing to compare")
+    elif all(h >= s for h, s in pairs):
+        print(f"  {'':>6}  the floor puts natively-helical residues in the "
+              f"SHEET box AT LEAST AS OFTEN as it puts natively-sheet")
+        print(f"  {'':>6}  ones there, at every widening. The sheet box is "
+              f"then catching what bond closure and sterics do to an")
+        print(f"  {'':>6}  extended chain regardless of what the crystal "
+              f"did, so the floor's sheet number is not evidence it")
+        print(f"  {'':>6}  found the basin -- and 'the model is below the "
+              f"floor on sheet' is partly the floor being trivially")
+        print(f"  {'':>6}  good there rather than the rule being bad.")
+    elif all(s > h for h, s in pairs):
+        print(f"  {'':>6}  the floor puts natively-sheet residues in the "
+              f"sheet box MORE often than natively-helical ones, at every")
+        print(f"  {'':>6}  widening, so it does discriminate by native "
+              f"conformation and its sheet number is not explained away")
+        print(f"  {'':>6}  as chain closure landing on the extended region. "
+              f"The sheet comparison stands as read above.")
+    else:
+        print(f"  {'':>6}  the comparison CROSSES across the widenings, so "
+              f"whether the floor discriminates on sheet is a statement")
+        print(f"  {'':>6}  about the box edge. Neither reading is quotable "
+              f"until the boxes are replaced with contours.")
+    print()
+    print("Same discipline as the table: these are rectangles where the real "
+          "basins are contours, so only the")
+    print("DIFFERENCES between rows are quotable and no absolute fraction "
+          "here is a share of a Ramachandran basin.")
     print()
     print("Check the denominators before quoting any of it: a fraction over a "
           "handful of residues is arithmetic, not a measurement.")
