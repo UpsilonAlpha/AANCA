@@ -797,6 +797,47 @@ unfixed form: `equivariant_move` touches only the translation, and the two
 halves are independent. Pinned as
 `test_a_lab_frame_rotation_is_not_equivariant_either`.
 
+## Why the objective is not an all-pairs distance loss (asked 23 Nov)
+
+It partly is, and the part that is missing is missing on purpose.
+`pairwise_distance_restraint` in the losses module is an **unclamped CA-CA
+distance error**, written precisely because FAPE clamps at 10 A and `clamp_max`
+is exactly flat above it, while the damaged window starts ~13.3 A out -- so
+before a single update the placement signal is a constant. It is the published
+automaton's all-pairs MSE *restricted to the pairs that carry placement
+information*, and that restriction has three parts:
+
+  * **Window-to-ANCHOR pairs are weighted.** One end sits at its crystal pose,
+    so the distance to it constrains where the window goes.
+  * **Window-to-window pairs are computed, printed every evaluation, and
+    deliberately NOT weighted.** The reason is measured, not assumed: walk the
+    window linearly from the baseline to its native pose on 1UBQ and the
+    internal half **rises from 8.7 to 44.7 A^2 over the first four tenths**
+    before falling, because a straight line between two poses passes through a
+    contracted intermediate. Weighting it would charge the rule for taking the
+    route to the answer. Reporting the two halves separately is also what makes
+    "the window's internal shape tidied up while its placement never moved"
+    visible at all -- the failure seven arms could not see.
+  * **The default is `pairwise_weight = 0.0`**, so it is off unless an arm asks
+    for it. `g14_pairwise` sets 0.01 and `g19` through `g27` inherit it;
+    `g28_ceil_local` is base-rooted and therefore ran with it at **zero**.
+
+So the answer is not "we are not using it". It is: the placement half is on at
+0.01 in every recent arm, the internal half is off for a measured reason, and
+the one arm that had it fully off is the teacher-forced capacity test, where
+the ideal move was supplied directly instead.
+
+**The live tension, recorded rather than resolved.** Gala's authors call the
+all-pairs loss *necessary* to identify the target uniquely, because nodes "are
+not aware of their global location". Our weighted half covers window-to-anchor
+only. Raising the weight or widening the pair set cuts against
+`docs/claims/the-objective-should-restrain-the-output-not-teach-the-placement.md`,
+and the rigidity node is explicit that this tension is real rather than
+settleable by preference: an under-determined target is not weaker supervision,
+it is a different target.
+
+---
+
 **NOTHING IN FLIGHT as of 23 Nov 15:30. THE CAPACITY QUESTION IS ANSWERED NO,
 AND THE ARM CHAIN ENDS HERE.**
 

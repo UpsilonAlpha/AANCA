@@ -79,7 +79,36 @@ in
 protein half is an argument, not a measurement. What would make it a finding: a
 morphogen or positional-encoding channel on the whole-structure task moving an
 arm off its baseline, or a regeneration arm shown to improve as the intact
-context is made more informative. Neither has been run.
+context is made more informative.
+
+**CORRECTED 23 Nov: the native-edge half HAS been run, three times, and this
+note said it had not.** `native_edges` held the perception graph at the native
+edge set and was a real setting until it was retired on 9 Nov as a leak (the
+retirement banner is in `configs/regeneration.toml`, and
+`tests/test_config.py::test_the_retired_arms_can_no_longer_be_expressed` keeps
+it unexpressible). Against the 12.23 A baseline of its own era:
+
+    g13_natedge   32489939   native edges                    settled 11.42
+    g15_both      32494313   native edges + pairwise          settled 10.24
+    g17_long      32505354   g15 + updates = 10000            settled  6.69
+
+**Every one of those moved off the baseline, and `g17_long` at 6.69 A is the
+best placement number this project has ever produced** -- better than
+`g25_equivariant`'s 8.10 A and better than the 10.05 A geometric floor. Two
+reasons it is not quotable as it stands, and they are why this was easy to
+lose: those are **`fit_all`** numbers from before the superposition correction
+([[fixing-the-actuator-helped-a-little-and-fixing-the-gradient-reach-made-it-worse-than-geometry]]
+and the 4.0 A bar are on `fit_intact`), so they compare only to the 12.23 A
+baseline of the same era and **not** to 8.10 or to the bar; and **`align` was
+never read on any of them**, so the one instrument the capacity question turned
+on has no value for the arms that bear most directly on it. The run
+directories all survive on the cluster, so that readout costs no GPU.
+
+What the retirement was right about is separate and still stands: training on
+the native edge set hands over the structural interaction topology, which is
+the thing an ablation on the rule would be trying to recover, so those weights
+cannot carry the payoff even when they carry the claim.
+
 
 ## Supports
 - [[a-local-per-residue-rule-can-build-a-protein-backbone]]

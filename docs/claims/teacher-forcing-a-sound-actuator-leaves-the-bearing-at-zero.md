@@ -125,7 +125,17 @@ not asking for nothing. It asks confidently, in the wrong direction.
   * **It says nothing about regeneration**, and `rmsd_dmg` 11.43 A is a
     teacher-forced ceiling comparable only to `g8`'s and `g10`'s, never to the
     rung-1 arms or the 4.0 A bar. The context was free here.
-  * **One variable is against `base`, not against `g10`.**
+  * **One variable is against `base`, not against `g10`.** And `base` is not
+    where the recent arms sit: resolved key by key, this arm trained with
+    `pairwise_weight 0.0` and `orientation_weight 0.0`, while `g19` through
+    `g27` all inherit `g14_pairwise` and carry `pairwise 0.01`, and `g22`
+    onward carry `orientation 2.5`. So `g28` is three settings from `g25`, not
+    one. For `align` under teacher forcing that is the clean choice rather than
+    a confound -- `move_weight = 1` supervises the emitted move against the
+    exactly computable ideal one, so the bearing was trained against the answer
+    itself with no competing placement term pulling on it. But it does mean
+    this arm is not `g25` with teacher forcing added, and no column of it may
+    be set beside `g25`'s.
   * **The NO names an architecture, and the implicated feature is the EDGE
     SET, not the message passing.** Teacher forcing supervised the emitted
     move; it did nothing to the *perception*, which is still a k-NN rebuilt
