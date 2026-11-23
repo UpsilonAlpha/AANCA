@@ -797,6 +797,58 @@ unfixed form: `equivariant_move` touches only the translation, and the two
 halves are independent. Pinned as
 `test_a_lab_frame_rotation_is_not_equivariant_either`.
 
+## DIRECTION, 23 Nov: replicate the published rule, do not add arms
+
+**Ulban: "the less arms the better tbh -- this should be a fairly
+straightforward mapping of e(n) graph nca and growing nca to proteins."** This
+supersedes the habit the arm chain was built on and should be read before
+proposing any further experiment.
+
+The arm count is the symptom. `Gala 2024` succeeds at our pattern-formation
+task with **5K parameters**, 8 targets, 256 to 2503 nodes, no anchors at all.
+Ours has **229,588** and fails. Twenty-eight arms have varied
+`orientation_weight`, `identity_weight`, lab versus local rotation,
+`freeze_context`, `truncate`, `move_weight`, the pool and the seed -- and
+**none of those is one of the three measurable differences from the rule that
+works**, which `placing-a-node-from-local-distances-needs-a-globally-rigid-neighbourhood`
+has tabulated all along:
+
+    1  loss          all-pairs distance MSE, which its authors call NECESSARY
+                     to identify the target uniquely
+                     -- ours: FAPE clamped at 10 A, plus 0.01 on window-anchor
+                        pairs only, with the window starting ~13.3 A out
+    2  graph         taken from the TARGET
+                     -- ours: rebuilt from the live (wrong) coordinates
+    3  dynamics      no step cap, no truncated window; stability from weight
+                     decay and gradient clipping; BPTT over 15-25 steps with a
+                     replay pool
+                     -- ours: 0.3 A cap and truncate 12
+
+Difference 2 was closed once and produced **the best number this project has
+ever had** (`g17_long`, 6.69 A `fit_all` against its era's 12.23 A baseline),
+then was retired. Difference 1 is closed to about half. Difference 3 has never
+been closed at all, and `g26_fullbptt` only raised `truncate` while leaving the
+cap in place.
+
+**The methodological point, stated so it is not relitigated per arm: you
+cannot ablate toward success.** One-variable discipline is correct when
+ablating *from* something that works, and that is exactly what the project does
+not have. A faithful port changes several settings at once and is justified for
+that reason -- it is a replication target, not an ablation. Replicate first,
+then ablate from a working baseline.
+
+**And "is it a leak?" depends on which task is being mapped.** In Gala's
+pattern formation the target graph is an **input**: the task is "realise
+coordinates for this graph", not "discover the graph". Mapped to proteins that
+is contact-map-to-coordinates, which is legitimate, is what `g13`/`g15`/`g17`
+were, and has a protein-scale precedent in Chroma's predict-then-solve. The
+9 Nov retirement is sound only for the *other* payoff, where the rule is meant
+to discover the topology -- a strictly harder task than the published one, and
+not one its result licenses any expectation about. **Which of the two the
+project is for is the open decision, and it is worth more than any arm.**
+
+---
+
 ## The native edge set: readout only, training stays retired (decided 23 Nov)
 
 **Ulban's call, 23 Nov: measure the edge set at readout time; do not put a
