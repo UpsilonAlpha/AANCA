@@ -1054,7 +1054,33 @@ def run(where, as_json, strict, real_stdout):
             f"{holder}.md)",
             f"create {missing}.md, correct the spelling of the wikilink in "
             f"{holder}.md, or remove the link"))
-    report.section("5a", "Broken wikilinks", items)
+    # **Prose wikilinks too, as notes.** Until 23 Nov this check read only
+    # links that are edges -- a `- [[target]]` list item under an edge heading
+    # -- so a wikilink written in prose pointing at nothing was invisible to a
+    # section titled "Broken wikilinks". An audit the day it was found turned
+    # up one across 94 notes (a *memory* file's slug, which is a separate
+    # namespace, written into a claim node), so the map was not rotten; the
+    # hole was that nothing would have said if it were. Notes rather than
+    # findings: a dead prose link cannot break an argument the way a dead edge
+    # can, but it does send a reader nowhere.
+    already = {(holder, missing) for holder, _, _, _, missing in graph.broken}
+    seen = {}
+    for slug in sorted(nodes):
+        for n, line in enumerate(nodes[slug].body.splitlines(), 1):
+            for m in re.finditer(r"\[\[([^\]|#]+)", line):
+                target = m.group(1).strip()
+                if target in nodes or (slug, target) in already:
+                    continue
+                seen.setdefault((slug, target), n)
+    prose = [Item(
+        slug,
+        f"[[{target}]] no such note, in prose (body line {line})",
+        f"correct the spelling, create {target}.md, or drop the brackets if "
+        f"it is not meant to be a link")
+        for (slug, target), line in sorted(seen.items())]
+    report.section("5a", "Broken wikilinks", items, notes=prose,
+                   note_header="prose wikilinks pointing at no note; not "
+                               "edges, so they break no argument")
 
     reachable = graph.connected_to(theses)
     items = [Item(

@@ -16,7 +16,7 @@ same day, and the change is a removal.
 In Growing NCA a cell's channels beyond the visible ones are hidden chemicals
 that spread by a **fixed local kernel over the grid**, while what each cell
 secretes is **learned**. The grid is the thing a protein does not have
-([[growing-nca-grid-is-the-missing-information]]), so the neighbourhood the
+([[in-regeneration-the-surviving-context-is-the-grid]]), so the neighbourhood the
 chemical spreads over is the spatial graph the rule already perceives --
 selected from the model's own coordinates, rebuilt every step as the structure
 moves.

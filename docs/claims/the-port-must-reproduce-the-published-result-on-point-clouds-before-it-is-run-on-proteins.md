@@ -28,7 +28,60 @@ are harder" from "our rollout, loss or graph does not do what theirs does", and
 with several settings changing at once in the port it would distinguish them
 even less.
 
-**Leg 1 first, and it is cheap**: no protein data, 5K parameters, 256 nodes,
+## AMENDED SAME DAY: leg 2 first, and leg 1 is the registered response to its failure
+
+**Ulban, 23 Nov: "I don't see any reason we don't just go straight to
+proteins."** Correct, and the ordering above was wrong. Leg 1 only ever pays
+off in the failure branch: if the port works on proteins, reproducing a torus
+proves nothing anyone needed. Running it first spends the one thing the
+instruction "fewer arms" is protecting, which is attention, on a branch that
+may not be taken. **So leg 2 runs first, and leg 1 is pre-registered as the
+response to a leg-2 failure** -- designated now precisely so that a failure
+produces the torus and not arm thirty. That is this note's real function and
+it survives the reordering intact.
+
+The title is therefore historical; the body's argument for *why* leg 1 is the
+right failure response stands unchanged below.
+
+**One claim of mine does hold up better than I expected, and it matters for the
+failure branch.** `AANCARule.forward` takes generic graph tensors
+(`node_features, hidden, edge_features, neighbours, edge_mask, envelope`), so
+the rule is substrate-agnostic at its boundary; Gala's node features are all
+ones; and the all-pairs loss has to be written for the port anyway. A
+point-cloud leg 1 would therefore reuse the rollout loop, the graph builder,
+the step cap, the truncation and the move head -- the machinery actually under
+suspicion -- rather than being a parallel implementation that tests different
+code. So it remains a *good* failure response, not merely the only one.
+
+## Instrument leg 2 so a failure is diagnosable WITHOUT the torus
+
+Since leg 1 no longer runs first, the port must carry the readings that would
+otherwise have come from it:
+
+  * **`align`, and the per-step bearing, not just its mean.** No native-edge
+    arm has ever had `align` read. A mean hides "right then lost", which is
+    the pattern a given edge set makes plausible for the first time.
+  * **Stability past the training horizon.** The published rule holds its
+    attractor 1000 steps past a 15-25 step horizon. We train on ~20 and infer
+    and infer at 120, so the horizon gap is ours too. This is already measured
+    here twice over and the port inherits both results:
+    [[the-rule-has-no-attractor-past-its-training-horizon]], and
+    [[the-pool-and-length-jitter-stop-the-divergence-past-the-training-horizon]]
+    -- which is the replay pool doing in our hands what it does in Gala's, and
+    is why the pool is a line of the port rather than an optional extra. Read
+    the window at 20, 120 and 600 steps in the same run.
+  * **Whether the weighted pair set actually determines the target.** This is
+    checkable without training: the all-pairs loss is only a unique target if
+    the pair set it covers is globally rigid for the window
+    ([[placing-a-node-from-local-distances-needs-a-globally-rigid-neighbourhood]]).
+    Check it on the twelve held-out crops before the arm runs, not after it
+    fails.
+
+With those three in place, a leg-2 failure is already evidence about proteins
+rather than about our plumbing, which was the whole reason leg 1 was going to
+go first.
+
+## Why leg 1 is the right failure response, and it is cheap: no protein data, 5K parameters, 256 nodes,
 CPU. Their reported targets include a 2D grid and a 3D torus, with all-pairs
 distance MSE, 15-25 step rollouts, a replay pool, no step cap, and random
 Gaussian initial coordinates with **no anchors**. If this codebase cannot morph
