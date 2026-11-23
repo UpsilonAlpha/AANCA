@@ -828,10 +828,26 @@ native-edge arm was teacher-forced:
 
     native edge set            task statement, not a ceiling
     move_weight = 0            no teacher
-    all-pairs distance loss    unclamped
+    all-pairs distance loss    unclamped, FULL pair set (decided 23 Nov)
     ~15-25 steps, FULL BPTT    shorter and fully differentiated
+    replay pool                the persistence trick, as published
     no 0.3 A step cap
     small network              5K succeeded; ours is 229,588
+
+**LEG 1 RUNS FIRST, AND IT NEVER HAS.** Pre-registered in
+`docs/claims/the-port-must-reproduce-the-published-result-on-point-clouds-before-it-is-run-on-proteins.md`.
+A "straightforward mapping" is two claims -- that our implementation
+reproduces the published result on the PUBLISHED substrate, and that it
+transfers to proteins -- and **every arm here has tested the second while
+assuming the first.** Nothing in the record shows this codebase morphing a
+Gaussian cloud into a torus. So no protein failure has ever been able to
+separate "proteins are harder" from "our rollout, loss or graph does not do
+what theirs does", and with several settings moving at once it would separate
+them even less. Leg 1 needs no protein data, no GPU and no new science: 5K
+parameters, 256 nodes, CPU, pass/fail taken from the authors' own claim
+(8 targets, attractor held 1000 steps past a 15-25 step horizon, regenerating
+after damage). The sharp part to reproduce is **stability past the horizon**,
+which is what the replay pool is for.
 
 Two inversions in there, both from the published method rather than from a
 result here: the rollout gets **shorter**, not longer (`g26_fullbptt` raised

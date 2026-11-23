@@ -93,8 +93,11 @@ Weighting the full pair set cuts against
 node is not thereby refuted -- an under-determined target is a different
 target, not weaker supervision.
 
-**One measured objection to the all-pairs loss is weaker than it looks under
-this decision, and the reason is worth stating.** The window-to-window half is
+**Decided 23 Nov: the port weights the FULL pair set.** The objection below is
+recorded as the thing to watch rather than as a reason not to.
+
+**That measured objection is weaker than it looks under this decision, and the
+reason is worth stating.** The window-to-window half is
 unweighted because walking the window *linearly* from the baseline to its
 native pose makes that half rise from 8.7 to 44.7 A^2 before falling, since a
 straight line between two poses passes through a contracted intermediate. That
