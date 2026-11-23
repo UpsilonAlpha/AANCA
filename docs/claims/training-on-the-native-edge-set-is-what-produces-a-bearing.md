@@ -24,6 +24,43 @@ them, so "never learned to use them" does not apply to them. Jobs
 --native-edges)` -- the refusal guard reconciling correctly in production
 rather than in a test.
 
+## AND THE FOUR FLAGGED READINGS WERE BLINDED: g13/g15/g17/g18 must be re-measured
+
+**The committed readout passed a bool into a parameter tested for presence, so
+every `--native-edges` run blinded its own selection.** In HEAD,
+`ceiling_readout.py:578` reads
+
+    identity=bool(float(stored.get("identity_weight") or 0.0))
+
+and `native_edge_selection` branched on `identity is not None`. All four arms
+ran `--identity-weight 0`, so that expression is **`False`** -- which is not
+`None`, so the branch fired. `config.blind` comes from
+`stored.get("blind", True)` and `blind` is not a schema key, so it defaults
+**True**. Blinding was therefore ON.
+
+**`blind_coords` moves every atom beyond CB onto its residue's CB**, and the
+neighbour graph selects over *all heavy atoms*. So the "native edge set" these
+four were read against was computed from **side-chain-collapsed coordinates** --
+a different edge set from the one this note claims, and whether the live path
+blinded too (making the comparison symmetric) is unverified.
+
+**So `g13` 0.312, `g15` 0.159, `g17` 0.384 and `g18` -0.106 are withdrawn
+pending re-measurement**, and `g17`'s 0.384 -- which headlined this note -- is
+among them.
+
+**Every conclusion that survived the retraction above rests on UNFLAGGED arms,
+which this does not touch**, because the flag is the only path that calls the
+selection function:
+
+    g14 0.367   g20 0.329   g19 0.293   g24 0.232
+    g23 0.207   g25 0.122   g28 0.036       all unflagged
+
+That is the table the rotation reading and its failure were argued on, and it
+is intact. The fix is in: the parameter is now `carries_identity: bool` with a
+test that a falsy argument does not silently blind -- and a test in the
+readout's own file independently caught the old behaviour, so this is confirmed
+rather than inferred.
+
 ## RETRACTED WITHIN THE HOUR: the edge set is not the variable, `lab_rotation` is
 
 **The attribution in this note's title is withdrawn.** Three further readouts,

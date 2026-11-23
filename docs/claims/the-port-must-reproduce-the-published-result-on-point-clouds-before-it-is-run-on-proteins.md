@@ -154,6 +154,44 @@ are difference 3, which no arm has ever touched together
 ([[placing-a-node-from-local-distances-needs-a-globally-rigid-neighbourhood]]
 tabulates all three).
 
+## TWO LINES OF THE SPEC ARE WRONG, found by building it
+
+**1. "small network -- 5K succeeded; ours is 229,588" cannot be done by
+setting a width.** `AANCARule.__init__` exposes exactly two size knobs,
+`hidden_dim` (96) and `message_dim` (128), and they bottom out at **17,552
+parameters** -- 3.5x the published figure:
+
+    hidden  message   params
+        96      128   229,588   <- default, the number the record quotes
+        32       64    86,868
+         8       16    30,180
+         1        2    17,552   <- the floor these two keys can reach
+
+The residue is structural: four heads at `Linear(node_dim + hidden_dim, 64)`
+with the 64 **hardcoded**, over a growth rule's `node_dim = 56`. Reaching ~5,000
+needs the head width exposed or the featuriser narrowed, neither of which the
+constructor has. **So this is the one line where "each line is a departure of
+ours being removed, not an idea being added" fails** -- removing this departure
+requires adding something to the model. It is deliberately not done, and it is
+Ulban's call whether a 5 kparam port is worth a model change or whether 17,552
+is close enough to call it small.
+
+**2. Leg 1 is not as cheap as this note priced it, and I was wrong twice.** I
+first said a point-cloud leg 1 was cheap, then conceded the cost and rested on
+`AANCARule.forward` taking generic graph tensors. `forward` does -- but
+`__init__` does **not**: `growth=True` silently widens `node_dim` from 32 to 56
+by appending the closure block, and `build_rule` always passes `growth=True`. A
+256-node point cloud has no closure structure, so leg 1 either carries 24 dead
+channels or runs a **differently shaped rule from the one leg 2 runs** -- which
+is exactly the "parallel implementation that tests different code" this note
+says leg 1 avoids. Not fatal, and it is a line of work this note still prices
+at zero.
+
+**3. There is no port section in the config.** Everything the table lists is
+now a key -- `native_edges`, `pairwise_window_weight`, `hidden_dim`,
+`message_dim`, and the rest were already settings -- but assembling them into a
+section is a step nobody has taken, and it waits on (1).
+
 ## Buckets for leg 2, on `rmsd_dmg` fitted on the intact context
 
 The comparators already in the record, all `fit_intact`: doing nothing 16.28 A,
