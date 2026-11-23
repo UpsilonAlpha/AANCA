@@ -121,6 +121,41 @@ reading above 0.25. Four confirmations and one discriminating case is the most
 this record can offer without new arms, which is the point -- these are
 readouts of runs that already happened, so nothing was tuned to produce them.
 
+## THE PREDICTION FAILED, and the dichotomy is a gradient
+
+Two of the five came back first, and the discriminating one goes against me.
+
+    arm             lab_rotation   predicted        read
+    g24_frozen          True       HIGH 0.15-0.40   0.232   confirmed
+    g23_localrot       FALSE       LOW under 0.15   0.207   FAILED
+
+**`g23_localrot` is the clean single-variable case** -- it inherits
+`g20_orient` and flips `lab_rotation` alone -- and `g20` reads 0.329 against
+`g23`'s 0.207. The *direction* is right and the *level* is not: 0.207 sits
+squarely among the arms I called HIGH (`g15` 0.159, `g24` 0.232), not with
+`g25` 0.122 and this arm's 0.036.
+
+By the letter of the refutation clause recorded above -- "`g23_localrot`
+reading above 0.25" -- the hypothesis is not refuted. **By the prediction I
+actually made, it is wrong**, and the letter is not the part that matters. The
+full table is a **gradient, not a dichotomy**:
+
+    lab TRUE    g17 0.384  g14 0.367  g20 0.329  g13 0.312  g19 0.293
+                g24 0.232  g15 0.159
+    lab FALSE   g23 0.207  g25 0.122  g28 0.036
+
+The three `False` arms occupy the bottom, but they overlap the `True` arms --
+`g15` at 0.159 is below `g23` at 0.207. So the conjugated rotation **lowers**
+`align` by something like 0.12 on one variable, and **does not account for
+0.036**.
+
+**So this arm's 0.036 is still unexplained**, and it is now the clear outlier
+rather than the representative of a class. What distinguishes it from every
+other arm read: it is the only one with `pairwise_weight = 0` **and**
+`orientation_weight = 0` **and** teacher forcing **and** the local rotation. No
+geometric term shaped its window beyond bond and clash. That is the leading
+candidate and it is checkable, not a conclusion.
+
 ## Consequence: this arm's NO belongs to the conjugated rotation, and the capacity question answers YES
 
 `g14_pairwise` -- teacher-forced, live edges, 2,000 updates, the same twelve
@@ -129,9 +164,17 @@ crops, differing from this arm in `lab_rotation` and `pairwise` -- reads
 taught to aim. It is the conjugated rotation, not the architecture, that leaves
 the bearing at zero.
 
-[[the-architecture-can-place-residues-under-some-supervision]] therefore closes
-**YES**, scoped to the lab-frame rotation, and the arm-chain-ends clause does
-not apply -- it was earned by a null that turns out to belong to one setting.
+**And closing the capacity question YES on 0.367 broke this note's own
+buckets, which is my error and is reverted.** The bucket for 0.25-0.50 is
+stated above as *"partial, direction only ... Does not close the question
+either way"*, and 0.367 is in it. Six arms now sit in that bucket and **none
+reaches the 0.50 that was pre-registered as closing it YES**. So
+[[the-architecture-can-place-residues-under-some-supervision]] goes back to
+`open`: the evidence that the architecture can aim under supervision is real
+and is a third of the handed-gradient 0.96, which is exactly what "direction
+only, magnitude not a result" was written to describe. The arm-chain-ends
+clause does not apply either, since it was earned by a null that no longer
+stands on its own.
 **What this note measured stands exactly as measured**; what changes is the
 subject of the sentence. `g28_ceil_local` reads 0.036 because its rotation is
 conjugated, not because a local rule cannot aim.

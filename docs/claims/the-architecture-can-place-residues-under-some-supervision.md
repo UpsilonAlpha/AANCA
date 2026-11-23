@@ -1,12 +1,24 @@
 ---
 type: question
-status: supported
-sources: [33321241, 33321243, 33320678]
+status: open
 ---
 
 # The architecture can place residues correctly under *some* amount of supervision
 
-**ANSWERED YES, 23 Nov, after a day that passed through NO and back.** Under
+**STILL OPEN at the end of 23 Nov, and it reached that honestly rather than by
+standing still.** It passed through NO (an arm reading `align` 0.036), then
+through YES (another arm reading 0.367 with the rotation convention flipped),
+and both readings were wrong about the question. The pre-registered bucket for
+0.25-0.50 is *"partial, direction only ... does not close the question either
+way"*, and **every arm that aims at all lands in it**: 0.159 to 0.384 across
+nine arms, with none reaching the 0.50 that was registered as closing it YES
+and none in the null band except `g28` 0.036 and `g25` 0.122. Closing it YES
+was me breaking my own bucket hours after writing it, and it is reverted.
+
+**What IS established:** under teacher forcing this architecture emits a
+bearing a third of the way to the 0.96 it reaches on a handed gradient, and the
+rotation convention moves that by about 0.12 on one variable without
+accounting for the extremes. Under
 teacher forcing the architecture reaches `align` **+0.367** (`g14_pairwise`,
 33321241) with the rotation applied in the **lab frame**, and six arms with
 that convention read 0.159 to 0.384. The two arms with the conjugated local
@@ -21,6 +33,8 @@ the null belonged to one setting.
 **The reading below is kept as the record of the NO this passed through**, with
 its reasoning, because the scope it was given before the number existed is what
 made the flip detectable.
+
+**The NO it passed through, kept as the record:**
 
 **ANSWERED NO, 23 Nov 2026, by `g28_ceil_local` (33308293), against buckets
 pre-registered and pushed before the number existed.** The top rung was run in

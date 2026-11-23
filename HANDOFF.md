@@ -797,7 +797,46 @@ unfixed form: `equivariant_move` touches only the translation, and the two
 halves are independent. Pinned as
 `test_a_lab_frame_rotation_is_not_equivariant_either`.
 
-## THE DAY'S RESULT: the rotation convention is the binding constraint, and the capacity question answers YES
+## THE DAY'S RESULT, as it stands after the out-of-sample test failed
+
+**Two corrections to what I wrote an hour earlier, both against me.**
+
+**1. The rotation-convention hypothesis made a prediction on five unread arms
+and the discriminating one failed.** `g23_localrot` inherits `g20_orient` and
+flips `lab_rotation` alone; `g20` reads 0.329 and I predicted `g23` under 0.15.
+It reads **0.207**. `g24_frozen` confirmed its HIGH prediction at 0.232. So the
+direction is right and the level is not, and the table is a **gradient, not a
+dichotomy**:
+
+    lab TRUE    g17 0.384  g14 0.367  g20 0.329  g13 0.312  g19 0.293
+                g24 0.232  g15 0.159
+    lab FALSE   g23 0.207  g25 0.122  g28 0.036
+
+The `False` arms hold the bottom but overlap the `True` ones -- `g15` 0.159 is
+below `g23` 0.207. **The conjugated rotation lowers `align` by about 0.12 on
+one variable and does not account for `g28`'s 0.036.** My refutation clause was
+"`g23` above 0.25", which 0.207 does not cross, so by the letter the hypothesis
+survives; by the prediction I actually made it is wrong, and the letter is not
+the part that matters.
+
+**`g28`'s 0.036 is therefore still unexplained** and is the outlier rather than
+the representative of a class. It is the only arm with `pairwise 0` **and**
+`orientation 0` **and** teacher forcing **and** the local rotation -- no
+geometric term shaped its window beyond bond and clash. Leading candidate,
+checkable, not a conclusion.
+
+**2. Closing the capacity question YES broke my own pre-registered bucket, and
+it is reverted to `open`.** The 0.25-0.50 bucket says in its own words
+*"partial, direction only ... does not close the question either way"*, and
+**every arm that aims at all lands in it** -- 0.159 to 0.384 across nine arms,
+none reaching the registered 0.50. What is established is that under teacher
+forcing the architecture emits a bearing **a third of the way** to the 0.96 it
+reaches on a handed gradient. That is a real and new result; it is not a YES.
+
+`g21_pool`, `g22_random` and `g26_fullbptt` are still running and are all
+`lab_rotation = True`, so each is a further test of the weakened trend.
+
+## The earlier reading, kept as the record: the rotation convention as a binding constraint
 
 **Supersedes both the capacity NO recorded this morning and the native-edge
 attribution recorded this afternoon.** Read
