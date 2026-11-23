@@ -61,12 +61,17 @@ REAL_BUILD_GRAPH = rollout_module.build_graph
 #: other, and that is settled in the first few steps. The stored arguments are
 #: what the readout configures the rollout from, so they double as the record
 #: of what the fixed selection has to match -- same ``k``, same crop.
+#: Every key here is one ``scripts/train_growth.py``'s schema still has, which
+#: ``test_d`` relies on: the readout refuses a checkpoint recording a setting
+#: the schema has lost, so a stale key in this fixture would stop the other
+#: tests running at all. ``blind`` is deliberately absent -- a real run derives
+#: it from ``identity_track`` and never records it, so the readout's
+#: ``stored.get("blind", True)`` default is what a real checkpoint gets too.
 STORED = {
     "damage": 12,
     "steps": 4,
     "truncate": 12,
     "k": 16,
-    "blind": True,
     "initial": "helix",
     "seed": 0,
     "split": "train",
@@ -97,7 +102,7 @@ class OneCrop:
         return self._topo, self._coords, None, None
 
 
-def _checkpoint(tmp_path, topo):
+def _checkpoint(tmp_path, extra: dict | None = None):
     """A ``best.pt`` for a self-placing damage run, with a head that moves.
 
     The frame head is zero-initialised, so an untouched rule emits the zero
@@ -115,11 +120,16 @@ def _checkpoint(tmp_path, topo):
             torch.randn(parameter.shape, generator=generator) * 0.5
         )
     path = tmp_path / "best.pt"
-    ckpt.save(path, {"state_dict": rule.state_dict(), "args": dict(STORED)})
+    stored = dict(STORED)
+    stored.update(extra or {})
+    ckpt.save(path, {"state_dict": rule.state_dict(), "args": stored})
     return path
 
 
-def _readout(monkeypatch, tmp_path, topo, coords, native_edges: bool):
+def _readout(
+    monkeypatch, tmp_path, topo, coords, native_edges: bool,
+    extra: dict | None = None, expect: int = 0,
+):
     """Run the readout's ``main()`` and return every selection the rule saw.
 
     Recorded by wrapping the ``build_graph`` that ``rollout.step_once`` calls,
@@ -140,13 +150,19 @@ def _readout(monkeypatch, tmp_path, topo, coords, native_edges: bool):
         ceiling_readout, "held_out",
         lambda stored, state, extra=0: (OneCrop(topo, coords), [0], 1),
     )
-    argv = ["ceiling_readout.py", "--checkpoint", str(_checkpoint(tmp_path, topo))]
+    argv = [
+        "ceiling_readout.py",
+        "--checkpoint", str(_checkpoint(tmp_path, extra)),
+    ]
     if native_edges:
         argv.append("--native-edges")
     monkeypatch.setattr(sys, "argv", argv)
 
-    assert ceiling_readout.main() == 0, "the readout itself has to succeed"
-    assert seen, "nothing was recorded, so this test asserts nothing"
+    assert ceiling_readout.main() == expect, (
+        f"the readout returned something other than {expect}"
+    )
+    if expect == 0:
+        assert seen, "nothing was recorded, so this test asserts nothing"
     return seen
 
 
@@ -162,7 +178,8 @@ def test_a_the_native_edge_set_differs_from_the_live_one(ubiquitin):
     topo, coords = ubiquitin
     config = RolloutConfig(
         steps=STORED["steps"], truncate=STORED["truncate"], k=STORED["k"],
-        blind=STORED["blind"],
+        # The readout's own default for a key no run records.
+        blind=True,
         growth=GrowthConfig(birth="none", initial=STORED["initial"]),
     )
     fixed = ceiling_readout.native_selection(coords, topo, config, identity=False)
@@ -219,7 +236,8 @@ def test_b_the_flag_changes_the_edge_set_the_rollout_uses(
     topo, coords = ubiquitin
     config = RolloutConfig(
         steps=STORED["steps"], truncate=STORED["truncate"], k=STORED["k"],
-        blind=STORED["blind"],
+        # The readout's own default for a key no run records.
+        blind=True,
         growth=GrowthConfig(birth="none", initial=STORED["initial"]),
     )
     native = ceiling_readout.native_selection(
@@ -265,7 +283,8 @@ def test_c_a_dropped_flag_is_what_this_would_catch(
     topo, coords = ubiquitin
     config = RolloutConfig(
         steps=STORED["steps"], truncate=STORED["truncate"], k=STORED["k"],
-        blind=STORED["blind"],
+        # The readout's own default for a key no run records.
+        blind=True,
         growth=GrowthConfig(birth="none", initial=STORED["initial"]),
     )
     native = ceiling_readout.native_selection(
@@ -286,3 +305,119 @@ def test_c_a_dropped_flag_is_what_this_would_catch(
         "set, which means test b would pass on a broken flag and proves "
         "nothing"
     )
+
+
+def test_d_a_recorded_setting_the_schema_has_lost_is_refused(
+    monkeypatch, tmp_path, ubiquitin, capsys
+):
+    """A key nothing in this tree reads must stop the readout, by name.
+
+    Every rollout setting is pulled out of ``stored`` with ``.get(...)``, so a
+    key with no reader is dropped without a word -- which is how
+    ``native_edges`` behaved before this check. ``g13_natedge``, ``g15_both``
+    and ``g17_long`` all record it, so the readout would have run their weights
+    under ordinary k-NN-every-step perception and printed the table under their
+    checkpoint path. That is the 6 Nov failure: a probe substituting its own
+    behaviour for the run's with nothing in the output to say so.
+    """
+    topo, coords = ubiquitin
+    _readout(
+        monkeypatch, tmp_path, topo, coords, native_edges=False,
+        extra={"completely_made_up": 7}, expect=1,
+    )
+    printed = capsys.readouterr().out
+    assert "completely_made_up" in printed, "the refusal must name the key"
+    assert "REFUSING" in printed
+    assert "crop" not in printed.split("REFUSING")[-1], (
+        "a refusal must not also print the table it is refusing to stand behind"
+    )
+
+
+def test_e_a_retired_setting_is_refused_unless_it_is_reproduced(
+    monkeypatch, tmp_path, ubiquitin, capsys
+):
+    """``native_edges`` recorded ON: refuse, and say which flag reproduces it.
+
+    The narrow case the retirement creates. Those weights were trained with the
+    target graph in the rollout; reading them without ``--native-edges`` is a
+    different experiment from the one that produced them, and reading them with
+    it is a ceiling. Both are sayable; silently doing the first under the run's
+    name is not.
+    """
+    topo, coords = ubiquitin
+    _readout(
+        monkeypatch, tmp_path, topo, coords, native_edges=False,
+        extra={"native_edges": True}, expect=1,
+    )
+    printed = capsys.readouterr().out
+    assert "native_edges" in printed and "--native-edges" in printed, (
+        "the refusal must name the retired key and the flag that reproduces it"
+    )
+
+    # With the flag, the run is reproducible and the readout proceeds -- and it
+    # still says in the log that the key was retired.
+    _readout(
+        monkeypatch, tmp_path, topo, coords, native_edges=True,
+        extra={"native_edges": True}, expect=0,
+    )
+    printed = capsys.readouterr().out
+    assert "retired" in printed.lower()
+    assert "NATIVE EDGES" in printed
+
+
+def test_f_a_retired_setting_recorded_off_is_not_an_obstacle(
+    monkeypatch, tmp_path, ubiquitin, capsys
+):
+    """``native_edges = False`` is what the schema's absence already means.
+
+    An arm that recorded the flag and left it off ran the same perception every
+    current arm runs, so there is nothing for the operator to reconcile and
+    refusing would be a false alarm. It is still named in the log, because the
+    key is in the checkpoint and the point of the check is that nothing in
+    ``args`` goes unmentioned.
+    """
+    topo, coords = ubiquitin
+    _readout(
+        monkeypatch, tmp_path, topo, coords, native_edges=False,
+        extra={"native_edges": False}, expect=0,
+    )
+    printed = capsys.readouterr().out
+    assert "REFUSING" not in printed
+    assert "native_edges" in printed
+
+
+def test_g_a_checkpoint_whose_settings_all_resolve_is_untouched(
+    monkeypatch, tmp_path, ubiquitin, capsys
+):
+    """The check must be invisible to every ordinary checkpoint.
+
+    ``g25_equivariant`` and ``g28_ceil_local`` record nothing retired, and a
+    readout that started refusing or warning on them would have broken the
+    comparison this flag exists for.
+    """
+    topo, coords = ubiquitin
+    _readout(monkeypatch, tmp_path, topo, coords, native_edges=False)
+    printed = capsys.readouterr().out
+    assert "REFUSING" not in printed
+    assert "retired" not in printed.lower()
+    assert "recorded settings" not in printed
+
+
+def test_h_the_authority_is_the_trainers_schema_not_a_list_here(ubiquitin):
+    """``unresolved_settings`` reads ``build_schema``, and resolves a real run.
+
+    Two ways this goes quietly wrong. Reading ``build_parser`` -- the three
+    options that address the config -- makes *every* recorded key unresolved,
+    which is how it was first written and would refuse every checkpoint. A
+    hand-kept list of valid keys in the readout goes stale the next time the
+    trainer gains a setting, and goes stale silently.
+    """
+    assert ceiling_readout.unresolved_settings(dict(STORED)) == []
+    assert ceiling_readout.unresolved_settings(
+        {"native_edges": True, "nonsense": 1}
+    ) == ["native_edges", "nonsense"]
+    # The resource keys are excluded by ``recorded_args`` on the way in, and an
+    # older checkpoint that carries them anyway is not drift.
+    assert ceiling_readout.unresolved_settings(
+        {"device": "cuda", "max_seconds": 3600.0}
+    ) == []

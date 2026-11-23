@@ -59,6 +59,49 @@ PDB = ROOT / "data" / "pdb"
 MANIFEST = ROOT / "data" / "manifest.json"
 
 
+#: A recorded setting the schema no longer has, and the readout flag that
+#: reproduces what it did. ``native_edges`` was removed from the trainer on
+#: 9 Nov as a leak, and ``g13_natedge``, ``g15_both`` and ``g17_long`` trained
+#: with it, so their ``args`` carry a key nothing in the current tree reads.
+#: Reading those weights without ``--native-edges`` is a *different experiment*
+#: from the one that produced them -- the same k-NN-every-step perception every
+#: other arm has -- and it would print under their tag. Mapped rather than
+#: merely listed so the refusal can say what to pass.
+RETIRED_SETTINGS = {"native_edges": "--native-edges"}
+
+
+def unresolved_settings(stored: dict) -> list[str]:
+    """Recorded keys the trainer's parser no longer has, sorted.
+
+    **The parser is the authority, not a list kept here.** ``aanca.config``
+    makes the same choice for the same reason -- "the parser stays the single
+    declaration of names, types and defaults, so a new flag is usable from a
+    config the moment it is added and the two cannot drift". A second list of
+    valid keys in this file would be a third thing to keep in step, and it
+    would go stale silently, which is the failure being guarded against.
+    """
+    import importlib.util
+
+    from aanca import config as run_config
+
+    spec = importlib.util.spec_from_file_location(
+        "train_growth_schema", ROOT / "scripts" / "train_growth.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    # ``build_schema`` is the experiment's parser; ``build_parser`` is the
+    # three options that address the config and name resources, and it knows
+    # none of the settings. Reading the wrong one makes every recorded key
+    # unresolved, which is how this was first written.
+    known = set(run_config._actions(module.build_schema()))  # noqa: SLF001
+    # A checkpoint from before ``recorded_args`` split them may still carry the
+    # resource keys. Those are not experimental settings -- ``recorded_args``
+    # excludes them precisely so they do not read as drift -- so refusing on
+    # them would be a false alarm about the one thing that is allowed to differ
+    # between a laptop probe and Bunya.
+    return sorted(set(stored) - known - set(run_config.RUNTIME_ONLY))
+
+
 def native_selection(native, topo, config, identity: bool):
     """``FixedNeighbours`` -- the edge set the NATIVE coordinates would select.
 
@@ -378,6 +421,75 @@ def main() -> int:
     if not stored:
         print(f"{path} stores no run arguments; point at the run's last.pt")
         return 1
+
+    # **A recorded setting the schema no longer has must not be read past in
+    # silence.** Every rollout setting below is pulled out with
+    # ``stored.get(...)``, so a key the current tree has no reader for is
+    # dropped without a word -- and before this check, that is exactly what
+    # happened to ``native_edges``. The readout would have taken g13's weights,
+    # run them under ordinary k-NN-every-step perception, and printed the table
+    # under g13's checkpoint path with the line "perception graph rebuilt from
+    # the live coordinates every step" above it, which is a true statement about
+    # what the readout did and a false one about what g13 is.
+    #
+    # That is the 6 Nov failure exactly: a probe pointed at a ``best.pt`` whose
+    # ``args`` it could not fully read, substituting its own behaviour for the
+    # run's, with nothing in the output to say so. Two tables from that cost a
+    # retraction. So the readout refuses, and names the key.
+    try:
+        unresolved = unresolved_settings(stored)
+    except Exception as why:  # the schema itself could not be built
+        unresolved = []
+        print("  *** COULD NOT CHECK the recorded settings against the")
+        print(f"  *** trainer's schema: {type(why).__name__}: {why}")
+        print("  *** A key this tree no longer reads would therefore be")
+        print("  *** dropped in silence. Treat every number below as")
+        print("  *** unattributed until this is fixed.")
+    reconciled = {
+        # A retired setting is accounted for when the readout was asked to
+        # reproduce it, or when the run recorded it OFF -- a falsy value is
+        # what the schema's absence already means, so there is nothing for the
+        # operator to reconcile.
+        key for key in unresolved
+        if key in RETIRED_SETTINGS
+        and (
+            not stored.get(key)
+            or (key == "native_edges" and args.native_edges)
+        )
+    }
+    if set(unresolved) - reconciled:
+        print(f"checkpoint : {path}")
+        print("  *** REFUSING: this checkpoint records settings the current")
+        print("  *** schema does not have, so the readout cannot run it as the")
+        print("  *** run ran. Naming them rather than ignoring them:")
+        for key in unresolved:
+            if key in reconciled:
+                continue
+            flag = RETIRED_SETTINGS.get(key)
+            if flag:
+                print(
+                    f"  ***   {key} = {stored.get(key)!r} -- RETIRED. Pass "
+                    f"{flag} to reproduce that run's perception, and read the "
+                    "result as the ceiling it is."
+                )
+            else:
+                print(
+                    f"  ***   {key} = {stored.get(key)!r} -- nothing in this "
+                    "tree reads this key. It is not a rollout setting the "
+                    "readout can honour, and dropping it would make the "
+                    "numbers below unattributable to any run."
+                )
+        return 1
+    if unresolved:
+        print(
+            "recorded settings: "
+            + ", ".join(
+                f"{key} = {stored.get(key)!r} (retired; reproduced by "
+                f"{RETIRED_SETTINGS[key]})"
+                if stored.get(key) else f"{key} = {stored.get(key)!r} (retired, off)"
+                for key in unresolved
+            )
+        )
 
     # **Say WHICH checkpoint this is, because `last.pt` moves under you.**
     # Job 32423296 read `runs/g10_equiv_ceil/last.pt` between 01:05 and 01:10
