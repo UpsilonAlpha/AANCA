@@ -10,6 +10,18 @@ value of this arm is that its thresholds exist before its number does. The
 project has twice read a capacity result off a confounded arm and twice drawn
 an architectural conclusion from it, so the buckets below are binding.
 
+**STATUS 23 Nov: the first attempt, job 33304426, died before answering it.**
+Not on the science -- on a shadowed variable in the checkpoint writer, nine
+minutes in, after its 250-update evaluation
+([[the-held-out-id-guard-never-recorded-anything-and-killed-the-arm-it-was-meant-to-protect]]).
+**Every bucket below is therefore still unread**, which is the point of
+having written them down: the arm will be resubmitted unchanged and the
+thresholds do not get to move in between. The dead job's 250-update row
+(`rmsd_dmg 11.87 A`, `fit_intact 12.88 A`, twist 13.9 deg) is a 250-update
+row and is read against nothing. The three confirmations that it was the
+right arm -- the resolved section, the `CEILING CHECK` banner and the
+*absence* of the `TRANSLATION ONLY` line -- held, and carry over.
+
 ## The question this settles
 
 [[the-architecture-can-place-residues-under-some-supervision]] is the open

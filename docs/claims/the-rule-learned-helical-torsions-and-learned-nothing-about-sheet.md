@@ -10,8 +10,24 @@ sources: [33291294, 33291295, 33291297, 33283263, 33249861]
 Bucket 2, the one cheap measurement never made, made at last.
 `scripts/ramachandran_basins.py` on the three readable arms, exit 0 each,
 on **the twelve held-out crops each checkpoint records in its own
-`eval_indices`**, with `eval_pdb_ids` checked so a pool mismatch refuses
-rather than measures.
+`eval_indices`**.
+
+**CORRECTED 23 Nov: the id check did not fire, and this note said it did.**
+The sentence here read *"with `eval_pdb_ids` checked so a pool mismatch
+refuses rather than measures"*. All six probe jobs -- 33291294/95/97 and
+33303677/79/81 -- printed instead `!! this checkpoint records no
+eval_pdb_ids (written before 21 Nov), so the crop IDS are unverified`, and
+measured anyway. No checkpoint in this project has ever carried the field:
+the writer that was supposed to record it indexed the Growing-NCA sample
+pool, a dict keyed by `(structure index, crop seed)` tuples, with a bare
+integer, so it raised `KeyError` at the first best checkpoint of every run
+after it landed
+([[the-held-out-id-guard-never-recorded-anything-and-killed-the-arm-it-was-meant-to-protect]]).
+What is true is weaker and should be read as the claim: the indices were
+resolved against the pool reconstructed from each arm's own recorded `args`,
+on the same machine and data dir the arm trained on, which is the condition
+under which they name the same proteins -- but that condition was assumed,
+not asserted by the probe. The tables below are reported on that basis.
 
 Four rows, same residues, same boxes: `native` (a wiring check, must read
 1.000), `start` (the damaged window before the rule touches it), `floor`

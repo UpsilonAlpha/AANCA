@@ -797,8 +797,33 @@ unfixed form: `equivariant_move` touches only the translation, and the two
 halves are independent. Pinned as
 `test_a_lab_frame_rotation_is_not_equivariant_either`.
 
-**IN FLIGHT, 23 Nov: 33304426 `g28_ceil_local`** on `gpu_rocm`/bun160, the
-capacity test. 2,000 updates, ~75-100 min. Confirmed running the arm and not
+**DEAD, 23 Nov: 33304426 `g28_ceil_local` crashed at update ~250, `train exit : 1`.**
+NOT on the science. `scripts/train_growth.py` had two variables named `pool` in
+one function scope -- the structure list, and the Growing-NCA sample pool keyed
+by `(structure index, crop seed)` assigned 220 lines later, which shadows it --
+and the best-checkpoint writer's `[pool[i].pdb_id for i in eval_indices]`
+therefore indexed a tuple-keyed dict with an integer. `KeyError: 180`. **That
+line could never have succeeded on any machine**, so every run since it landed
+on 21 Nov would have died at its first checkpoint, and **no checkpoint in this
+project has ever carried `eval_pdb_ids`** -- the guard added to stop silent pool
+mismatches has never fired once. All six probe jobs that consumed it
+(33291294/95/97, 33303677/79/81) printed the "records no eval_pdb_ids" warning
+and measured anyway, and the basin note wrongly said the check had passed.
+Corrected there. Full account:
+`docs/claims/the-held-out-id-guard-never-recorded-anything-and-killed-the-arm-it-was-meant-to-protect.md`.
+The fix renames the list `catalogue` and resolves the ids **once before the
+first update**, returning 1 if they will not resolve, so a run that cannot name
+its held-out proteins refuses in a second rather than after a GPU hour; the
+resume checkpoint records them too. **Not resubmitted until the fix is proven
+end to end against a real checkpoint's contents** -- a green suite passed over
+the broken line for two days because nothing asserted what a checkpoint
+contains, and resubmitting on a compile check would be the same mistake twice.
+The arm is unchanged and its pre-registration is **unread**: no `align` exists.
+The 250-update row it did produce (`rmsd_dmg 11.87 A`, `fit_intact 12.88 A`,
+twist 13.9d) is a 250-update row and is read against nothing.
+
+Its confirmations held and carry over to the resubmission. 2,000 updates,
+~75-100 min. Confirmed running the arm and not
 the base: the header reads `[g28_ceil_local]`, carries the `CEILING CHECK:
 --move-weight 1` banner, and **does NOT carry the "TRANSLATION ONLY: the
 rotation is still applied in the lab frame" line** that every
