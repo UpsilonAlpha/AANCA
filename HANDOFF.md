@@ -162,6 +162,41 @@ already computed):
      which an 8.10 A placement error destroys even with the partner in view.
      Untouched by the correction, but untestable apart from the placement
      failure itself.
+
+**The cross-tabulation settled 1 and 2** (33303677, 33303679, 33303681, exit 0).
+Where natively-SHEET residues went when they missed the sheet box:
+
+    natively-SHEET -> HELIX box       -10d     +0d    +10d
+    start                            0.021   0.036   0.068
+    GEOMETRIC FLOOR                  0.021   0.054   0.085
+    g24_frozen                       0.043   0.036   0.068
+    g22_random                       0.106   0.107   0.119
+    g25_equivariant                  0.149   0.125   0.169
+
+**Candidate 1 SUPPORTED.** The rule sends natively-sheet residues to the helix
+box at 2-7x the floor's rate. Conditional on landing in any favoured region,
+g25's helix share is 88/47/52 % against the floor's 17/25/30 %. And the
+over-application ordering (g24 none < g22 < g25) is the SAME ordering as
+helical success (g24 crosses < g22 0.102 < g25 0.237) -- two quantities, same
+order, the same form of corroboration the rotation-fix arm rested on, and the
+same weight: three points, one seed each.
+
+**So the rule learned ONE local conformation and applies it regardless of what
+the native conformation is.** That is the answer to "why does it not place a
+backbone correctly" that no placement number could give.
+
+**Candidate 2 weakened, not dead.** The refusal did not fire, so the floor
+converged. It does discriminate (natively-sheet to sheet box 0.085/0.143/0.186
+vs natively-helical 0.036/0.119/0.129, sign stable), so its sheet number is not
+purely extended-default -- **but the margin narrows to 1.2-1.4x as the boxes
+widen, and at both wider settings the floor puts natively-HELICAL residues in
+the SHEET box more often than in the helix box.** Quote "every arm is below the
+floor on sheet" with that attached.
+
+**DISALLOWED dominates every row** -- model 0.68-0.83, floor 0.71-0.87, the
+model better by almost nothing. **Most window residues in every row end at a
+phi/psi in no favoured region at all**, and the helix signal lives inside the
+minority that lands anywhere real.
 (`docs/claims/the-rule-learned-helical-torsions-and-learned-nothing-about-sheet.md`.)
 
 ### How the bar came to be set, and the first failure (20 Nov)

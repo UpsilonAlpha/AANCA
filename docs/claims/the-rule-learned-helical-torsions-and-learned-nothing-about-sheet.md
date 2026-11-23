@@ -102,8 +102,9 @@ anywhere near where it belongs, no matter how far apart the two are in
 sequence. One hop already reaches it.
 
 So **"more hops" does not follow from this measurement and must not be
-cited as if it did.** The split needs a different explanation, and three
-candidates survive the correction, two of them cheap to separate:
+cited as if it did.** The split needs a different explanation. Three
+candidates survived the correction, and the cross-tabulation below
+(33303677, 33303679, 33303681, exit 0 each) has now separated two of them:
 
   1. **One conformational mode, over-applied.** If the rule puts
      natively-sheet residues in the *helix* box, it learned a single local
@@ -123,6 +124,67 @@ candidates survive the correction, two of them cheap to separate:
      sufficient. This one is untouched by the correction, but it predicts
      sheet recovers only when placement does, so it cannot be tested apart
      from the placement failure itself.
+
+## The cross-tabulation, 23 Nov: candidate 1 SUPPORTED, candidate 2 weakened
+
+Where did the natively-SHEET residues go that a row did *not* put in the
+sheet box? Four destinations, exclusive and exhaustive: the helix box, the
+sheet box, **another favoured region** (alpha-L, taken by difference from
+`ramachandran_clash_probe.FAVOURED` so a region added there cannot be
+silently counted disallowed) and **no favoured region at all**. The first
+version of this probe had three destinations and counted alpha-L with the
+disallowed, which let it assert "nothing local was learned" from evidence
+that could not distinguish it from "a real conformation, wrong one".
+
+    natively-SHEET residues -> HELIX box       -10d     +0d    +10d
+    start                                     0.021   0.036   0.068
+    GEOMETRIC FLOOR                           0.021   0.054   0.085
+    g24_frozen                                0.043   0.036   0.068
+    g22_random                                0.106   0.107   0.119
+    g25_equivariant                           0.149   0.125   0.169
+
+**The rule sends natively-sheet residues into the HELIX box at 2-7x the
+floor's rate, and the arm that does it most is the arm that learned helix
+best.** Conditional on landing in *any* favoured region -- which removes
+the shared "off the plot" bulk and is the cleanest form of the comparison --
+the helix share of g25's favoured landings runs **88 % / 47 % / 52 %**
+across the sweep against the floor's **17 % / 25 % / 30 %**.
+
+**The ordering across arms is the same ordering as helical success.** Helix
+over-application runs g24 (at or below floor, no effect) < g22 < g25;
+helix-basin hit rate runs g24 (crosses, no reading) < g22 0.102 < g25 0.237.
+Two quantities, same order, three arms. That is the same form of
+corroboration the rotation-fix arm rested on -- twist and placement moving
+together -- and it carries the same weight: suggestive, three points, one
+seed each, no error bar anywhere.
+
+So **candidate 1 is supported: the rule learned ONE local conformation and
+applies it without regard to what the native conformation is.** That is a
+better answer to "why does it not place a backbone" than anything a
+placement number gave, and it is a statement about a single shared
+per-residue rule under this objective.
+
+**Candidate 2 is weakened but not dead.** The refusal did not fire, so the
+floor converged (bond under 0.5) and reading (b) is readable. The floor does
+discriminate by native conformation -- natively-sheet to the sheet box at
+0.085 / 0.143 / 0.186 against natively-helical at 0.036 / 0.119 / 0.129,
+sign stable across the sweep -- so its sheet number is not purely chain
+closure landing on the extended region. **But the margin narrows sharply as
+the boxes widen (2.4x, 1.2x, 1.4x), and at the two wider settings the floor
+puts natively-HELICAL residues in the SHEET box more often than in the helix
+box** (0.119 vs 0.068, 0.129 vs 0.065). Chain closure does have a real
+extended tendency. The floor's sheet advantage is genuine and thin, and
+"every arm is below the floor on sheet" should be quoted with that attached.
+
+**The destination that dominates every row is still DISALLOWED** -- 0.68 to
+0.83 for the model, 0.71 to 0.87 for the floor, and the model beats the floor
+there by almost nothing (0.678 vs 0.712 at +10). **Most window residues, in
+every row, end at a phi/psi in no favoured region at all.** Neither the
+learned rule nor plain geometry produces protein-like local conformation for
+the bulk of the window, and the helix signal above lives inside the minority
+that lands anywhere real.
+
+Candidate 3 remains untested and untestable apart from the placement failure.
 
 The boundary [[in-regeneration-the-surviving-context-is-the-grid]] draws is
 still the right frame, and
