@@ -797,6 +797,50 @@ unfixed form: `equivariant_move` touches only the translation, and the two
 halves are independent. Pinned as
 `test_a_lab_frame_rotation_is_not_equivariant_either`.
 
+## THE TASK, decided 23 Nov: realise coordinates for a given contact graph
+
+**Ulban chose realise-coordinates over discover-topology.** Read
+`docs/claims/the-task-is-to-realise-coordinates-for-a-given-contact-graph.md`
+before anything else; it is the most consequential decision in the record and
+it changes the meaning of several existing nodes without changing any fact in
+them.
+
+The short form: in Gala's task the target graph is an **input**, so the native
+edge set is the **task statement and not a leak**. Consequences, in order of
+how much they change:
+
+  * **The 9 Nov `native_edges` retirement protected the discarded payoff** and
+    `tests/test_config.py::test_the_retired_arms_can_no_longer_be_expressed`
+    now enforces a constraint from a task we are not mapping. The setting
+    should come back as the task statement. **Not yet done** -- it is a schema
+    change plus that test, and an agent is mid-flight in `scripts/` and
+    `tests/`, so it waits rather than racing.
+  * **`the-perception-graph-is-rebuilt-from-where-the-residue-wrongly-is`
+    changes meaning without changing a fact.** The k-NN-of-live-coordinates
+    finding stands exactly as measured; it stops being a defect and becomes a
+    departure from the task statement. The project was solving a harder problem
+    than it meant to.
+  * **The grid node's "two of the three, not three" is reversed**: under this
+    task the context supplies the determinate neighbourhood too, by definition.
+
+**The one arm this specifies, which has never been run**, because every
+native-edge arm was teacher-forced:
+
+    native edge set            task statement, not a ceiling
+    move_weight = 0            no teacher
+    all-pairs distance loss    unclamped
+    ~15-25 steps, FULL BPTT    shorter and fully differentiated
+    no 0.3 A step cap
+    small network              5K succeeded; ours is 229,588
+
+Two inversions in there, both from the published method rather than from a
+result here: the rollout gets **shorter**, not longer (`g26_fullbptt` raised
+truncation to 120 over 120 steps with the cap still on, so it tested neither
+the short rollout nor the cap), and the network gets **smaller**. It changes
+several settings at once deliberately -- a replication target, not an ablation.
+
+---
+
 ## DIRECTION, 23 Nov: replicate the published rule, do not add arms
 
 **Ulban: "the less arms the better tbh -- this should be a fairly
@@ -824,9 +868,13 @@ has tabulated all along:
                      replay pool
                      -- ours: 0.3 A cap and truncate 12
 
-Difference 2 was closed once and produced **the best number this project has
-ever had** (`g17_long`, 6.69 A `fit_all` against its era's 12.23 A baseline),
-then was retired. Difference 1 is closed to about half. Difference 3 has never
+Difference 2 was closed once, in `g13`/`g15`/`g17`, and moved the number
+12.23 -> 11.42 -> 10.24 within its own era. **It did NOT produce a comparable
+best: every native-edge arm ran `--move-weight 1.0`**, so those are
+teacher-forced ceilings with the graph given as well, and `g17_long`'s 6.69 A
+must never be set beside `g25`'s free-running 8.10 A. I made exactly that
+comparison twice today before reading the recorded command lines; it is
+corrected in both nodes. Difference 1 is closed to about half. Difference 3 has never
 been closed at all, and `g26_fullbptt` only raised `truncate` while leaving the
 cap in place.
 

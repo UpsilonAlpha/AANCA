@@ -135,17 +135,26 @@ it unexpressible). Against the 12.23 A baseline of its own era:
     g15_both      32494313   native edges + pairwise          settled 10.24
     g17_long      32505354   g15 + updates = 10000            settled  6.69
 
-**Every one of those moved off the baseline, and `g17_long` at 6.69 A is the
-best placement number this project has ever produced** -- better than
-`g25_equivariant`'s 8.10 A and better than the 10.05 A geometric floor. Two
-reasons it is not quotable as it stands, and they are why this was easy to
-lose: those are **`fit_all`** numbers from before the superposition correction
-([[fixing-the-actuator-helped-a-little-and-fixing-the-gradient-reach-made-it-worse-than-geometry]]
-and the 4.0 A bar are on `fit_intact`), so they compare only to the 12.23 A
-baseline of the same era and **not** to 8.10 or to the bar; and **`align` was
-never read on any of them**, so the one instrument the capacity question turned
-on has no value for the arms that bear most directly on it. The run
-directories all survive on the cluster, so that readout costs no GPU.
+**CORRECTED WITHIN THE DAY: these are not comparable to `g25`'s 8.10 A, and
+saying so was a category error.** The recorded command lines in
+`tests/test_config.py::RETIRED` show `g13_natedge` and `g15_both` both ran
+**`--move-weight 1.0`**, and `g17_long` is `g15` with more updates, so **every
+native-edge arm was TEACHER-FORCED** -- the exact ideal move supplied at every
+step. So 6.69 A is a ceiling number with *two* ceilings stacked, the given
+graph and the supplied move, and it belongs beside `g8`/`g10`/`g28`'s ceilings,
+never beside `g25`'s 8.10 A, which ran `move_weight 0`. Three further reasons
+no number here is quotable as it stands: they are **`fit_all`**, from before the
+superposition correction, so they compare only to the 12.23 A baseline of their
+own era and not to the `fit_intact` bar; **`align` was never read on any of
+them**, so the one instrument the capacity question turned on has no value for
+the arms bearing most directly on it; and the config banner says the test holds
+all four retired command lines when it holds two.
+
+**What survives, and it is the useful part:** within their own era and with
+both ceilings held fixed across them, closing the edge-set difference moved the
+number 12.23 -> 11.42, and adding the pairwise half moved it to 10.24. Those
+are within-era, like-for-like steps. The run directories all survive on the
+cluster, so the `align` readout costs no GPU.
 
 What the retirement was right about is separate and still stands: training on
 the native edge set hands over the structural interaction topology, which is
