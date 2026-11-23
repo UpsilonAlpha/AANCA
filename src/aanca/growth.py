@@ -1730,6 +1730,7 @@ def growth_objective(
     pairwise_weight: float = 0.0,
     freeze_context: bool = False,
     resume_from: "GrowthPoolEntry | None" = None,
+    fixed_neighbours=None,
 ) -> tuple[GrowthTerms, object]:
     """Supervised regrowth: from a seed, rebuild the native backbone.
 
@@ -1931,6 +1932,16 @@ def growth_objective(
         generator=generator,
         record=False,
         frozen=frozen,
+        # **Passed through, never defaulted to anything but ``None``.** This is
+        # the seam ``torch_graph.FixedNeighbours`` documents: it holds the
+        # neighbour *selection* at an edge set the caller computed while every
+        # feature stays live. No training path in this project sets it -- the
+        # ``native_edges`` setting was retired on 9 Nov as a leak and cannot be
+        # expressed in the config any more -- and it is here so that a READOUT
+        # script can run the one-variable comparison without reimplementing the
+        # rollout beside the real one. A probe that drives its own loop is how
+        # this project earned four retractions.
+        fixed_neighbours=fixed_neighbours,
     )
     final = result.state
     # **Two scoring sets, because the crop mask exists for a reason that does

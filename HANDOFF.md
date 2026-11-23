@@ -797,6 +797,46 @@ unfixed form: `equivariant_move` touches only the translation, and the two
 halves are independent. Pinned as
 `test_a_lab_frame_rotation_is_not_equivariant_either`.
 
+## The native edge set: readout only, training stays retired (decided 23 Nov)
+
+**Ulban's call, 23 Nov: measure the edge set at readout time; do not put a
+native-edge arm back in the schema.** The 9 Nov retirement stands exactly as
+written -- training on the native edge set hands over the structural
+interaction topology, so those weights can carry the claim and never the
+payoff, and `tests/test_config.py::test_the_retired_arms_can_no_longer_be_expressed`
+keeps the setting unexpressible.
+
+What is being measured instead is a **readout-only diagnostic**: a
+`--native-edges` flag on `scripts/ceiling_readout.py` that holds the rollout's
+neighbour *selection* at the edge set computed from the native coordinates,
+leaving weights, steps, damage and crops identical, so running a checkpoint
+with and without it is a one-variable comparison. This is the project's own
+convention -- run settings are config keys, probe scripts keep their flags --
+and the machinery already exists and is validated: `fixed_neighbours`, threaded
+through `rollout.py` (428, 787) into `torch_graph.py` (789, consumed at 806 via
+`FixedNeighbours.checked`, which validates shape, dtype, device and index
+range).
+
+**What it can and cannot settle, registered before the number exists.** A
+*jump* in `align` under native edges is conclusive: it would mean the bearing
+was recoverable from the neighbourhood all along and the k-NN selection was
+what withheld it. A *null* is ambiguous and must not be read as closing
+anything, because these weights never trained on edges they did not see -- so
+the unambiguous version needs training with native edges, which is the thing
+that stays retired. The asymmetry is the price of not re-introducing the leak,
+and it is accepted knowingly.
+
+Order: `g25_equivariant` and `g28_ceil_local` first, both ways, because they
+are current-generation and `g28` is the arm the capacity NO was read off.
+Then `g13_natedge`, `g15_both`, `g17_long` on the cluster, where the question is
+the one never asked of them -- **`align` was never read on any native-edge
+arm**, only placement. Those three carry `args` with a key the schema no longer
+has, so before any number from them is believed, confirm the loader does not
+silently drop it; a probe that appeared to use a setting and did not has
+already cost this project one retraction.
+
+---
+
 ## Why the objective is not an all-pairs distance loss (asked 23 Nov)
 
 It partly is, and the part that is missing is missing on purpose.

@@ -59,6 +59,57 @@ PDB = ROOT / "data" / "pdb"
 MANIFEST = ROOT / "data" / "manifest.json"
 
 
+def native_selection(native, topo, config, identity: bool):
+    """``FixedNeighbours`` -- the edge set the NATIVE coordinates would select.
+
+    **The only thing that differs from an ordinary step is the coordinates the
+    selection is computed from.** Everything else is read off the live rollout's
+    own code path rather than restated here:
+
+      * the same selector (``select_neighbours_device`` or the NumPy
+        ``select_neighbours``, picked by ``config.device_neighbours``, exactly
+        as ``torch_graph.build_graph`` picks it),
+      * the same ``k`` and ``cutoff`` the run trained with, off its own stored
+        arguments, and ``include_sequence_neighbours`` at the default
+        ``build_graph`` leaves it,
+      * the same topology ``step_once`` perceives through -- ``alive_topology``
+        with the all-true mask a ``birth = "none"`` rollout carries, since
+        ``atom_mask`` is what the selection flattens by,
+      * the same blinding, when the run carries an identity state and
+        ``config.blind``: ``step_once`` selects over ``blind_coords`` of the
+        live geometry, so selecting over unblinded native coordinates here
+        would be a second changed variable with side chains in it.
+
+    Only the *selection* travels. ``FixedNeighbours`` recomputes every distance,
+    direction and envelope weight from the live coordinates every step, so the
+    rule is still perceiving the structure it has actually built -- it is just
+    being told which residues to perceive it against.
+    """
+    from aanca.blind import blind_coords
+    from aanca.growth import alive_topology
+    from aanca.torch_graph import (
+        FixedNeighbours,
+        select_neighbours,
+        select_neighbours_device,
+    )
+
+    seen = native
+    if config.growth is not None:
+        topo = alive_topology(
+            topo,
+            torch.ones(topo.n_residues, dtype=torch.bool, device=native.device),
+        )
+    if identity and config.blind:
+        seen = blind_coords(seen, topo)
+    select = (
+        select_neighbours_device if config.device_neighbours else select_neighbours
+    )
+    neighbours, edge_mask = select(
+        seen.to(config.feature_dtype), topo, config.k, config.cutoff
+    )
+    return FixedNeighbours(neighbours=neighbours, edge_mask=edge_mask)
+
+
 def held_out(stored: dict, state: dict, extra: int = 0):
     splits = read_manifest(MANIFEST)
     available = []
@@ -289,6 +340,29 @@ def main() -> int:
             "NOT a held-out number and the readout says so on every run"
         ),
     )
+    parser.add_argument(
+        "--native-edges", action="store_true",
+        help=(
+            "hold the rollout's neighbour SELECTION at the edge set the NATIVE "
+            "coordinates select, instead of rebuilding it each step from the "
+            "live ones. **A DIAGNOSTIC, and a leak by construction.** Who "
+            "contacts whom in the answer is the structural-interaction topology "
+            "this project exists to recover, so under this flag the rule is "
+            "handed information it does not have at inference and could never "
+            "have: at step 0 the damaged window is ~13 A from where it belongs, "
+            "and this tells each displaced residue which native neighbours to "
+            "measure itself against anyway. Any number produced under it is a "
+            "CEILING -- the most a rule of this shape could do if its "
+            "perception graph were correct -- and is NEVER a regeneration "
+            "number and never comparable to one. Training on it was retired on "
+            "9 Nov for exactly that reason, the `native_edges` setting was "
+            "removed from the config schema, and the arms that used it are "
+            "retired; this is readout-only and leaves no weights behind. Only "
+            "the selection is frozen: distances, directions and the envelope "
+            "are recomputed from the live coordinates every step, so with and "
+            "without the flag on one checkpoint is a one-variable comparison"
+        ),
+    )
     args = parser.parse_args()
 
     path = Path(args.checkpoint)
@@ -381,9 +455,21 @@ def main() -> int:
                     ) * args.perturb
                 )
         rule.eval()
+        # Built per crop, because the selection is a function of this crop's
+        # topology and its native coordinates. ``identity`` is the same test
+        # ``growth_objective`` uses to decide whether a rollout carries an
+        # identity state at all, so the blinding matches.
+        fixed = None
+        if args.native_edges:
+            fixed = native_selection(
+                native, topo, config,
+                identity=bool(float(stored.get("identity_weight") or 0.0))
+                or bool(getattr(rule, "identity", False)),
+            )
         with torch.no_grad():
             terms, result = growth_objective(
                 rule, native, topo, config,
+                fixed_neighbours=fixed,
                 generator=torch.Generator().manual_seed(seed + index),
                 identity_weight=float(stored.get("identity_weight") or 0.0),
                 identity_start=str(stored.get("identity_start", "masked")),
@@ -439,7 +525,22 @@ def main() -> int:
     else:
         print(f"{label}, {len(rows)} held-out crops of {pool_size}, "
               f"{damage}-residue window, {config.steps} steps")
-    print(f"{frame_note}\n")
+    print(f"{frame_note}")
+    # **Said on every run, in the log the run produced.** A probe that appeared
+    # to honour a setting and did not has already cost this project a
+    # retraction, so the state of this flag is printed either way rather than
+    # only when it is on.
+    if args.native_edges:
+        print("NATIVE EDGES: the neighbour SELECTION was held at the edge set")
+        print("  *** the native coordinates select, for every step of every")
+        print("  *** crop. Features stayed live. This hands the rule the")
+        print("  *** answer's contact topology, which it does not have at")
+        print("  *** inference -- every number below is a CEILING and is NOT a")
+        print("  *** regeneration result. Training on this was retired 9 Nov.")
+    else:
+        print("perception graph rebuilt from the live coordinates every step "
+              "(no --native-edges)")
+    print()
     # `need` is the window's distance from native at the START state and
     # `rmsd_dmg` is where it ends, so `need - rmsd_dmg` is what the rollout
     # actually bought. Printing them side by side because a good `rmsd_dmg` on
