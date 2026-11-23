@@ -95,6 +95,32 @@ a frame-relative bearing. `g25`'s twist 8.8 with `align` 0.122 is therefore not
 the counter-example I took it for; the two quantities are not measuring the same
 thing.
 
+## Out-of-sample predictions, recorded before the jobs were read
+
+The rotation hypothesis was formed on eight arms. Five more exist on the
+cluster and have never had `align` read, and their `lab_rotation` is fixed by
+the config, so the hypothesis makes a prediction on each **before** the number
+exists. Jobs 33321*, submitted after this paragraph was committed.
+
+    arm             lab_rotation   predicted align
+    g21_pool            True        HIGH, 0.15-0.40
+    g22_random          True        HIGH, 0.15-0.40
+    g24_frozen          True        HIGH, 0.15-0.40
+    g26_fullbptt        True        HIGH, 0.15-0.40
+    g23_localrot       FALSE        LOW,  under 0.15
+
+**`g23_localrot` is the cleanest single-variable test in the project.** It
+`inherits = "g20_orient"` and flips `lab_rotation` and nothing else, and
+`g20_orient` reads **+0.329**. Same generation, same crops, one setting. The
+hypothesis says `g23` reads under 0.15; if it reads near 0.329 the hypothesis
+is dead and the eight-arm table was a coincidence of generations.
+
+**What would refute the hypothesis**, stated now so it cannot be explained away
+afterwards: any `lab_rotation = True` arm reading under 0.15, or `g23_localrot`
+reading above 0.25. Four confirmations and one discriminating case is the most
+this record can offer without new arms, which is the point -- these are
+readouts of runs that already happened, so nothing was tuned to produce them.
+
 ## Consequence: this arm's NO belongs to the conjugated rotation, and the capacity question answers YES
 
 `g14_pairwise` -- teacher-forced, live edges, 2,000 updates, the same twelve
