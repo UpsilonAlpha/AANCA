@@ -1,6 +1,6 @@
 ---
 type: question
-status: open
+status: unsupported
 ---
 
 # Both previous capacity tests were confounded, and the cell that settles whether the architecture can be taught to aim has never been run
@@ -10,7 +10,22 @@ value of this arm is that its thresholds exist before its number does. The
 project has twice read a capacity result off a confounded arm and twice drawn
 an architectural conclusion from it, so the buckets below are binding.
 
-**STATUS 23 Nov: the first attempt, job 33304426, died before answering it.**
+**RUN AND READ, 23 Nov: `align` = +0.036, which is the architectural bucket.**
+The cell this note was written to map is now occupied by 33308293 and the
+buckets below were applied as written, none of them moved:
+[[teacher-forcing-a-sound-actuator-leaves-the-bearing-at-zero]]. The title's
+"has never been run" is therefore historical; the first clause, that both
+previous attempts were confounded, is what still stands and is what made the
+arm worth running. Two things the result sends back up into this note: the
+guard's **band** condition was NOT met (twist never reached 9-12, oscillating
+12.3-22.1 without ever jumping 2x, so the checkpoint was readable under the
+pre-registered rule while the band requirement was not satisfied), and the
+reading below that "identity off is what keeps a ceiling arm alive long enough
+to be read" is **too strong** -- `g9_ceil_noid` held 9.1-9.2 with identity off
+and this arm did not, the difference between them being the local rotation.
+Alive, yes; quiet, no.
+
+**The first attempt, job 33304426, died before answering it.**
 Not on the science -- on a shadowed variable in the checkpoint writer, nine
 minutes in, after its 250-update evaluation
 ([[the-held-out-id-guard-never-recorded-anything-and-killed-the-arm-it-was-meant-to-protect]]).

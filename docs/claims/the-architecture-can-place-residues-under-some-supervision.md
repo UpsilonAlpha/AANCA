@@ -1,9 +1,27 @@
 ---
 type: question
-status: open
+status: unsupported
 ---
 
 # The architecture can place residues correctly under *some* amount of supervision
+
+**ANSWERED NO, 23 Nov 2026, by `g28_ceil_local` (33308293), against buckets
+pre-registered and pushed before the number existed.** The top rung was run in
+the one configuration that was never confounded -- teacher forcing, a sound
+actuator, identity off, no break -- and `align` came back **+0.036, 95% CI
+[-0.043, +0.114]**, the whole interval inside the pre-registered null band. The
+rule is handed the exact move at every one of 2,000 updates and still emits a
+bearing indistinguishable from zero.
+[[teacher-forcing-a-sound-actuator-leaves-the-bearing-at-zero]] carries the
+guard reading, the control, the corroboration and the scope.
+
+**This closes the question and ends the arm chain.** The clause was written
+into the pre-registration before submission: a null here is the most
+informative outcome and the one that should end the chain rather than extend
+it, so no terms get added and nothing gets re-run. Everything below is the
+question as it stood, kept because the reasoning that made it the gate is what
+made the answer worth having.
+
 
 **The gap the map was hiding, written as a question so it is visible at check 3
 rather than absent.** Seven arms have failed and not one of them establishes

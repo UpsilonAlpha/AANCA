@@ -797,9 +797,59 @@ unfixed form: `equivariant_move` touches only the translation, and the two
 halves are independent. Pinned as
 `test_a_lab_frame_rotation_is_not_equivariant_either`.
 
-**IN FLIGHT, 23 Nov: 33308293 `g28_ceil_local`** on `gpu_rocm`/bun159, started
-13:57:43 AEST, 2,000 updates, ~75-100 min, so readable from roughly 15:15. The
-resubmission of the arm 33304426 lost. Commit `408e813` confirmed on the cluster
+**NOTHING IN FLIGHT as of 23 Nov 15:30. THE CAPACITY QUESTION IS ANSWERED NO,
+AND THE ARM CHAIN ENDS HERE.**
+
+`g28_ceil_local` (33308293, `train exit : 0`, 72.2 min) was the one unconfounded
+cell: teacher forcing, local rotation, identity off, 2,000 updates. Read against
+buckets pushed before the number existed, `align` = **+0.036, 95% CI
+[-0.043, +0.114]** -- the whole interval inside the pre-registered null band of
+-0.10 to +0.25. Readouts 33313562 (trained) and 33313576 (untrained, frame head
+perturbed 0.05, same crops and convention, -0.141) on the update-2000 checkpoint.
+
+**That is the architectural bucket.** Invariant perception plus a local move
+head cannot be taught to aim even when handed the exact answer at every one of
+2,000 steps. `docs/claims/the-architecture-can-place-residues-under-some-supervision.md`
+is now `unsupported`, and the clause written into the pre-registration applies:
+**do not add terms and re-run.** Full reading, guard, control, corroboration and
+scope: `docs/claims/teacher-forcing-a-sound-actuator-leaves-the-bearing-at-zero.md`.
+
+Three things to carry, because each could be misread:
+
+  * **The guard's band condition was NOT met.** Twist never reached 9-12 at any
+    evaluation (13.9, 22.1, 13.2, 15.3, 12.3, 17.2, 13.3, 18.9; minimum 12.3).
+    No evaluation jumped 2x -- the largest ratio is 1.59 -- so the final
+    checkpoint was readable under the pre-registered rule, and both readouts
+    confirm they read `update: 2000`. But the band requirement was unsatisfied
+    and is recorded as unsatisfied, not reinterpreted. It never ran away: it
+    returns to 12.3-13.3 after every excursion, unlike `g10` which went 9.9 to
+    52.3 and stayed at 50.2.
+  * **Identity off is NOT sufficient for a quiet ceiling arm.** `g9_ceil_noid`
+    held 9.1-9.2 with identity off; this arm oscillated 12.3-22.1 with identity
+    equally off, and the difference between them is the local rotation. That
+    does not refute the identity-jump node, whose claim is about a >2x jump,
+    but the pre-registration's "identity off is what keeps a ceiling arm alive
+    long enough to be read" is too strong. Alive, yes. Quiet, no.
+  * **The readout's arrival warning does not reach `align`.** It flags that the
+    gradient window is `truncate 12 x 0.3 A = 3.6 A` while the damaged window
+    starts a median 10.95 A away, 10 of 12 crops beyond it, so those crops
+    cannot be taught to *arrive*. That is why no `rmsd_dmg` here means anything.
+    `align` is a per-step bearing and needs no arrival, which is exactly why the
+    pre-registration made it the primary readout. **Raising `truncate` is not
+    the escape hatch** -- pre-registered against two nodes at once.
+
+Corroboration not needed for the bucket but worth knowing: `gained` is -0.02 A
+(the window ends marginally FURTHER from native than it started), `net/path` is
+0.996 (straight-line motion, not wandering), the per-step bearing is noise from
+the first step rather than a decaying signal, and training moved the *variance*
+(sd 0.266 to 0.138) while leaving the mean at zero -- a consistent small move
+that points nowhere, asking for 0.04 A per step at 12.8 % of the cap with the
+tanh unsaturated.
+
+---
+
+**SUPERSEDED, 23 Nov: 33308293 `g28_ceil_local`** on `gpu_rocm`/bun159, started
+13:57:43 AEST. The resubmission of the arm 33304426 lost. Commit `408e813` confirmed on the cluster
 by `git pull` before submitting, and the queue held nothing but the code-server
 session, so one GPU slot and none of Ulban's own work crowded.
 
