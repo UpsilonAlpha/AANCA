@@ -844,6 +844,58 @@ unfixed form: `equivariant_move` touches only the translation, and the two
 halves are independent. Pinned as
 `test_a_lab_frame_rotation_is_not_equivariant_either`.
 
+## STOPPED: the code-server session expired at ~17:50 AEST, 23 Nov
+
+Ulban asked me to work autonomously until it expired, and it has. The tab's
+URL was unchanged (`bun148/16624`) but every `vscode-remote-resource` fetch
+returned "Failed to fetch", and a reload redirected to
+`iam.rcc.uq.edu.au/auth/realms/bunya/protocol/openid-connect/auth`. That path
+is the **start** of the OIDC flow, which is ordinary expiry rather than the AAF
+broker fault that lands on `/broker/<alias>/endpoint?code=...`. **Not signed in
+on his behalf.** The interactive job 33303464 had been up 7:50 when last seen.
+Reconnect from `https://onbunya.rcc.uq.edu.au/pun/sys/dashboard`; "Limited
+Login" is the button that routes around an AAF outage if the normal one fails.
+
+### Three readouts were in flight and their results should be there
+
+`g21_pool` 33322914, `g22_random` 33322915, `g26_fullbptt` 33322919 -- `align`
+on the three remaining `lab_rotation = True` arms, submitted ~17:12. They are
+slow for structural reasons (a sample pool, length jitter, and `truncate 120`
+respectively). **SLURM jobs are independent of the code-server job, so they
+will have continued**; their logs are `logs/aanca-cpu-<id>.out` and the number
+is the `align` column of the `mean` row. Shortly before the session died those
+logs read 19 bytes where they had previously held full headers -- that is
+almost certainly the dying session returning junk rather than the jobs
+restarting, so **read them fresh before concluding anything about them**.
+
+Each is a further test of the weakened rotation trend: all three are
+`lab_rotation = True`, so the trend predicts 0.15-0.40 for each, and any of
+them under 0.15 is the refutation clause I registered.
+
+### Four readouts need re-running, because they were blinded
+
+`g13_natedge`, `g15_both`, `g17_long`, `g18_seed1` with `--native-edges`, now
+that the `carries_identity` fix is in. Their withdrawn values were 0.312,
+0.159, 0.384 and -0.106.
+
+### Also re-measure `need` with the corrected readout
+
+Every earlier log's start distance is the pose entering the **last gradient
+window**, not the start, so the "median 10.95 A" and the "10 of 12 crops beyond
+the window" line are both wrong as printed. `g25_equivariant` and
+`g28_ceil_local`, both perceptions, is the cheap way to get the true figures
+and a properly paired `align`.
+
+### The local tree is committed and the suite is green
+
+Everything from the three agents is in: `native_edges` restored as a config
+key, `pairwise_window_weight` added as a **separate** weight with the resolved
+namespace of all seven arms diffed to prove no existing objective moved,
+`hidden_dim`/`message_dim` surfaced, and the `carries_identity` fix with a test
+that a falsy argument does not silently blind.
+
+---
+
 ## THE DAY'S RESULT, as it stands after the out-of-sample test failed
 
 **Two corrections to what I wrote an hour earlier, both against me.**
