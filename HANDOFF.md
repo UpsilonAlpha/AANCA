@@ -6,7 +6,54 @@ journal is `docs/JOURNAL.md`; the claims and their evidence are one note each in
 
 ---
 
-## 0. Current state — 2026-11-22
+## 0. Current state — 2026-11-23
+
+### READ THIS FIRST: §0's framing below is superseded in one important way
+
+**The claim further down this section that "nothing ever tells it which way"
+and that no arm aims is REFUTED by measurement on 23 Nov.** `align` had only
+ever been read on two arms. It has now been read on **thirteen**, and nine of
+them emit a bearing clear of the null band:
+
+    g17 0.384  g14 0.367  g20 0.329  g13 0.312  g19 0.293  g24 0.232
+    g23 0.207  g25 0.122  g28 0.036            (g21, g22, g26 pending)
+
+So the architecture does aim, about **a third of the way** to the 0.96 it
+reaches on a handed gradient. It is *not* true that nothing starts aiming, and
+the `g10_equiv_ceil` -0.096 that §0 rests on is one arm, read off a checkpoint
+whose twist had blown to 50 degrees, and is now the outlier rather than the
+rule.
+
+**Today's sections, in the order they should be read** (they were written as
+the day went and some supersede others, so this index is the map):
+
+    1  THE DAY'S RESULT, as it stands after the out-of-sample test failed
+       -- the current position on aiming, and two corrections against me
+    2  The earlier reading, kept as the record
+       -- SUPERSEDED by (1); kept because the trail is how the error was caught
+    3  THE BEARING EXISTS, WITH THE NATIVE EDGE SET
+       -- its ATTRIBUTION is RETRACTED in (1); its numbers stand
+    4  The objective, measured from g25's own curve
+       -- FAPE is 1-2 % of the loss; pair_window never improves. Unaffected.
+    5  The native-edge readout: a clean null
+       -- stands; the no-retraining comparison, and the `need` defect it found
+    6  THE TASK, decided 23 Nov: realise coordinates for a given contact graph
+       -- Ulban's decision. Stands, and is the frame for everything above.
+    7  DIRECTION: replicate the published rule, do not add arms
+       -- Ulban's instruction. Stands.
+    8  The native edge set: readout only, training stays retired
+       -- SUPERSEDED by (6): the setting is restored as the task statement.
+    9  Why the objective is not an all-pairs distance loss
+       -- stands; answers it from the code.
+
+**The open question the day ends on** is why `g28_ceil_local` reads 0.036 when
+every comparable arm reads 0.16 to 0.38. It is the only arm with
+`pairwise 0` and `orientation 0` and teacher forcing and the local rotation.
+Unexplained, and the leading candidate is the absence of any geometric term.
+
+---
+
+## 0b. The framing as it stood — 2026-11-22
 
 ### The question, rescoped 14 Nov
 
