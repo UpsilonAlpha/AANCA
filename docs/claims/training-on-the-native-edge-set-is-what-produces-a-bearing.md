@@ -5,7 +5,13 @@ evidence: ours
 sources: [33320676, 33320677, 33320678, 33319941, 33319943]
 ---
 
-# Trained on the native edge set, the same architecture does learn a bearing: g17_long reads align 0.384, CI [+0.300, +0.468], every crop positive
+# Trained on the native edge set, the same architecture emits a bearing clear of the null: g17_long reads align 0.384, CI [+0.300, +0.468], every crop positive
+
+**Status note: `supported` for the measurement, not for a mechanism.** The
+numbers are what they are and the crops are shared; what no arm here can
+support is that the edge set *alone* caused the difference, because nothing in
+this project has ever been replicated and the arms differ in more than the edge
+set. Read the comparison section before quoting the headline.
 
 **This is the unambiguous branch the readout pre-registration asked for.**
 Holding the native edge set at *measurement* time changed nothing
@@ -92,13 +98,33 @@ length *plus* a neighbourhood that is not a function of the error is.
     **No `rmsd_dmg` from these runs is a regeneration result**, and the
     readout's crops are resampled per run, so no placement number here
     compares with any other arm's.
-  * **One seed each, and the replicate is still running.** `g18_seed1` is
-    `g15` at `seed = 1` -- the only seed replicate this project has ever run
-    ([[no-growth-arm-has-been-run-twice-so-no-difference-has-an-error-bar]]).
-    Its `align` against `g15`'s +0.159 will be the first same-settings
-    different-seed comparison in the record, and the `g13`-vs-`g15` gap
-    (+0.312 against +0.159, overlapping intervals) is a warning that
-    between-arm differences at this scale may be seed noise.
+  * **The five arms above share the same twelve crop indices**
+    `[180, 167, 393, 264, 330, 193, 348, 297, 6, 319, 225, 129]`, verified
+    from the checkpoints in
+    [[with-no-ceiling-at-all-the-rule-places-a-damaged-window-to-7-8-angstrom]],
+    which is what makes a cross-arm `align` comparison legitimate at all.
+  * **`g18_seed1` is NOT a replicate, and calling it one here was wrong.** It
+    read `align` **-0.106** against `g15`'s +0.159 and I first recorded that as
+    the project's first seed replicate overturning the result. It is not:
+    `seed` does two jobs, seeding initialisation *and choosing the split*, so
+    `g18`'s held-out set
+    `[31, 45, 131, 138, 154, 164, 174, 200, 289, 294, 327, 388]` is **disjoint**
+    from `g15`'s ([[no-growth-arm-has-been-run-twice-so-no-difference-has-an-error-bar]],
+    which is why its placement number was voided). So -0.106 is a measurement
+    of *different proteins* and bounds nothing about `g15`, in either
+    direction. It neither undermines nor supports anything here.
+  * **So there is still no error bar, on anything.** No arm in this project has
+    ever been replicated, `g17` included, and the only CIs available are
+    within-arm across correlated crops -- which say nothing about seed
+    variation. The `g13`-vs-`g15` gap (+0.312 against +0.159 at different best
+    checkpoints, intervals overlapping) is the standing warning that
+    differences at this scale may not survive one.
+  * **`g17`'s twist is 14.3 degrees**, outside the project's 9-12 band, so its
+    *placement* number carries a regime marker. By the clause pre-registered in
+    [[teacher-forcing-a-sound-actuator-leaves-the-bearing-at-zero]] -- "a twist
+    regime marker does not void this arm's `align`", because `align` is not a
+    cross-regime placement comparison -- that does not reach the number read
+    here. Stated because it would otherwise look unaddressed.
   * The CIs are normal-approximation over 11-12 correlated crops; residues
     within one window are not independent, so the intervals are optimistic.
 

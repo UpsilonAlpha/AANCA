@@ -837,12 +837,33 @@ and that scope was fixed before this was measured. Change the neighbourhood and
 the architecture aims.
 
 **Every number here is a ceiling twice over** (teacher-forced, graph given), so
-no `rmsd_dmg` from them is a regeneration result, and the readout resamples
-crops per run so no placement number compares across them. One seed each;
-`g18_seed1` (`g15` at `seed = 1`) is still running and will be **the project's
-first same-settings different-seed comparison**. The `g13`-vs-`g15` gap
-(+0.312 vs +0.159, intervals overlapping) is a standing warning that
-differences at this scale may be seed noise.
+no `rmsd_dmg` from them is a regeneration result.
+
+**The five arms share the same twelve crop indices**, verified from the
+checkpoints, which is what makes a cross-arm `align` comparison legitimate.
+
+**`g18_seed1` read -0.106 and it is NOT a replicate -- I recorded it as one and
+that was wrong.** `seed` does two jobs: it seeds initialisation *and chooses the
+split*, so `g18`'s held-out set is **disjoint** from `g15`'s. Its -0.106 is a
+measurement of different proteins and bounds nothing about `g15` either way.
+**So there is still no error bar on anything**, `g17` included; the only CIs
+available are within-arm across correlated crops and say nothing about seed
+variation. `g13` +0.312 vs `g15` +0.159, intervals overlapping, is the standing
+warning that differences at this scale may not survive a replicate.
+
+**`g17`'s twist is 14.3 degrees**, outside the band, so its *placement* number
+carries a regime marker -- but the pre-registered clause says a regime marker
+does not void `align`, which is not a cross-regime placement comparison.
+
+**A gap in the record worth closing, and now running (33321241/42/43):**
+`g20_orient` places a damaged window at **7.78 A with NO ceilings at all** --
+no teacher forcing, no native edges -- and `g19_nomove` at 8.39, both over
+10,000 updates, and **neither has ever had `align` read**. Those, plus
+`g14_pairwise` (teacher-forced, live edges, 2k), complete the picture. Note
+also that `g20`'s 7.78 is `rmsd_dmg` while `g25`'s 8.10 is
+`rmsd_dmg_fit_intact`, and the two differ by ~0.6 A on the same checkpoint, so
+**"g25 is the best arm" may be an artefact of comparing two conventions** --
+worth settling before either is quoted again.
 
 ---
 
