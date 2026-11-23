@@ -797,6 +797,56 @@ unfixed form: `equivariant_move` touches only the translation, and the two
 halves are independent. Pinned as
 `test_a_lab_frame_rotation_is_not_equivariant_either`.
 
+## The objective, measured from g25's own curve (23 Nov) -- read this before building the port
+
+`runs/g25_equivariant/history.json`, 40 evaluations over **10,000 updates**,
+weights resolved through `config.resolve`. Full account:
+`docs/claims/the-clamp-the-project-tuned-governs-two-percent-of-the-objective.md`.
+
+    weighted contribution       u=250     u=10000    of total
+    pairwise (anchor)           0.695      0.241      44 % -> 38 %
+    orientation                 0.298      0.238      19 % -> 37 %
+    bond                        0.518      0.125      32 % -> 20 %
+    clash                       0.068      0.020       4 % ->  3 %
+    FAPE                        0.0153     0.0136      1 % ->  2 %
+    TOTAL                       1.5938     0.6375
+
+**Three things this changes.**
+
+1. **The FAPE clamp governs 1-2 % of the objective and does not move** across
+   ten thousand updates. The clamp argument is about where the *gradient* sits,
+   not the loss, so this does not refute it -- but any account of these arms
+   that treats FAPE as the placement signal is describing 2 % of the loss.
+2. **Difference 1 was mis-stated in the rigidity node.** The all-pairs loss is
+   not missing: the unclamped pairwise term is the **largest single term** at
+   both ends of training, at weight 0.01, because its raw magnitude is 24-70
+   A^2. What is missing is its **pair set** -- window-to-anchor only.
+3. **`pair_window` never improves**: 22.2 -> 23.38 A^2, no trend over the whole
+   run. The window's internal shape is the one quantity with no progress, and
+   it is exactly the half left unweighted. The full-pair-set decision makes the
+   port the first arm to put a gradient on it.
+
+**And the result that should steer the port.** `rmsd_dmg_fit_intact` fell
+**13.13 -> 8.10 A** (16.28 A is doing nothing) while `align` reads 0.141,
+inside the null band. **Placement improved five angstrom with no bearing.**
+That is not a contradiction: Gala's update is
+`x_i += mean_j (x_i - x_j) * phi_x(m_ij)`, a **distance-driven relaxation** in
+which nothing aims. `align` asks a Growing-NCA question -- does the move point
+at where the residue belongs -- which presupposes the cell knows its address.
+So `align` may be the wrong instrument for a realise-coordinates task. The
+capacity NO stands exactly as measured and scoped (the architecture cannot be
+*taught to aim*); what is now in question is whether aiming is the capacity
+this task needs, and the 5 A gain at `align` 0.141 says it is not the only
+route.
+
+**Two things not to overclaim**, both registered in the node: `pair_anchor`
+falling is close to a *restatement* of placement improving rather than
+independent evidence that the term caused it; and loss share is not gradient
+share, which is the entire content of the clamp argument -- nothing has
+measured per-term gradient norms.
+
+---
+
 ## The native-edge readout: a clean null, and the free-lunch version is dead
 
 Jobs 33319941/42/43/62, exit 0, both perceptions on each of two checkpoints.
