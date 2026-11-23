@@ -70,16 +70,60 @@ otherwise have come from it:
     -- which is the replay pool doing in our hands what it does in Gala's, and
     is why the pool is a line of the port rather than an optional extra. Read
     the window at 20, 120 and 600 steps in the same run.
-  * **Whether the weighted pair set actually determines the target.** This is
-    checkable without training: the all-pairs loss is only a unique target if
-    the pair set it covers is globally rigid for the window
+  * **Whether the weighted pair set actually determines the target --
+    DISCHARGED 23 Nov, analytically, and it needs no run.** The condition is
+    that the grounded graph be generically globally rigid; the efficiently
+    solvable protein instance is Dong & Wu's, where **four already-placed,
+    non-coplanar anchors fix an atom exactly**
     ([[placing-a-node-from-local-distances-needs-a-globally-rigid-neighbourhood]]).
-    Check it on the twelve held-out crops before the arm runs, not after it
-    fails.
+    With the **full** pair set every one of the 12 window residues is
+    constrained against all ~116 intact residues of a 128-residue crop, which
+    is four non-coplanar anchors by a wide margin: the only way it could fail
+    is anchors spanning fewer than three dimensions, and a 116-residue
+    backbone fragment is not coplanar -- even an ideal helix puts its CAs on a
+    cylinder, which is rank 3. The residual ambiguity is the global
+    reflection, fixed by chirality and by the context being held at its
+    crystal pose. **So the full pair set satisfies the precondition by
+    construction, for every crop, and the old window-to-anchor-only set did
+    too.** Rigidity was therefore never what was broken -- which is worth
+    knowing, because it removes a candidate rather than confirming one, and it
+    means the full pair set earns its place through `pair_window` (the one
+    quantity that never improves,
+    [[the-clamp-the-project-tuned-governs-two-percent-of-the-objective]])
+    rather than through uniqueness of the target.
 
 With those three in place, a leg-2 failure is already evidence about proteins
 rather than about our plumbing, which was the whole reason leg 1 was going to
 go first.
+
+## Why the cap and the rollout length must move together
+
+Recorded because they look like two independent lines of the port and are one.
+
+The step cap is `max_translation = 0.3 A`, so a 12-step gradient window can
+carry a residue at most `12 x 0.3 = 3.6 A`
+([[the-gradient-window-is-a-third-of-the-journey-the-window-must-travel]]),
+while the damaged window starts a median **10.95 A** from where it belongs.
+**The cap is what makes 120 steps necessary**: at 0.3 A a residue needs ~36
+steps merely to cover the distance, so the rollout was lengthened to let a
+capped rule arrive at all, and the gradient window then covered 10 % of it.
+
+Remove the cap and the arithmetic inverts. An unbounded move head crossing
+11 A in 20 steps needs ~0.55 A per step, which is inside what an MLP emits
+without saturating -- and `g28` measured the head *asking* for only 0.04 A per
+step with the tanh at 0.98 of its gradient near the origin, i.e. nowhere near
+its ceiling
+([[teacher-forcing-a-sound-actuator-leaves-the-bearing-at-zero]]). So a short
+rollout is only coherent together with removing the cap, and removing the cap
+is only safe together with a short rollout fully differentiated, which is
+exactly the published combination: 15-25 steps, no cap, stability from weight
+decay and gradient clipping rather than from a hard clamp.
+
+**This is also why `g26_fullbptt` settles nothing about difference 3.** It
+raised `truncate` to 120 over a 120-step rollout **with the cap still on** --
+the longest, most expensive form of the wrong half -- and read 1.68 A worse.
+Neither the short rollout nor the uncapped step has ever been run, together or
+apart.
 
 ## Why leg 1 is the right failure response, and it is cheap: no protein data, 5K parameters, 256 nodes,
 CPU. Their reported targets include a 2D grid and a 3D torus, with all-pairs
