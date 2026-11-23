@@ -844,3 +844,121 @@ inherits = "g24_frozen"
 [g27_both.inputs]
 lab_rotation = false
 truncate = 120
+
+# ======================================================================
+# g28_ceil_local -- THE CAPACITY TEST, and the top rung of the supervision
+# ladder. `move_weight = 1.0` teacher-forces every emitted move against the
+# exactly computable ideal one, so the rule is handed the answer at every step.
+# It is a CEILING and it is never a result about the task.
+#
+# NOT A NEW IDEA. It has been attempted twice and failed twice, and the whole
+# point of this arm is that BOTH previous attempts were confounded:
+#
+#   * `g8_ceiling` (32405172) had NEITHER half of the equivariance fix. The
+#     move was read in the lab frame while perception is invariant, so the
+#     direction it was being taught was never representable. The arm could not
+#     have aimed whatever it was told.
+#   * `g10_equiv_ceil` (32420154) had BOTH halves local -- local translation
+#     and local rotation -- so its actuator was sound. But its `twist` went
+#     9.9 deg at update 250 to 52.3 at 1000 and 50.2 at 2000, and the bearing
+#     reading -- `align` -0.096 against a +0.206 null -- was taken off that
+#     FINAL checkpoint. That is a reading off a rule whose geometry had already
+#     broken, not off a teacher-forced rule.
+#
+# AND THE BREAK IS THE IDENTITY HEAD, NOT THE EQUIVARIANCE FIX. `g8_ceiling`
+# has neither half of the fix and breaks in the same row, and `g9_ceil_noid` at
+# `identity_weight = 0` holds twist 9.1-9.2 deg for the full 2000 updates.
+# docs/claims/the-twist-jump-at-update-1000-is-the-identity-head-leaving-its-floor.md
+#
+# So the cell that has never been run is: BOTH HALVES OF THE MOVE LOCAL, AND
+# IDENTITY OFF, AND TEACHER FORCED. `g10` had the first but not the second;
+# `g9_ceil_noid` had the second but not the first. This arm is that cell. The
+# base already supplies teacher forcing (`move_weight = 1.0`) and
+# `identity_weight = 0.0`, which is why `lab_rotation` is the only thing that
+# changes.
+#
+# WHAT RIDES ON IT, stated plainly because a ceiling arm is only worth a slot
+# if the answer is consequential either way:
+#
+#   * If the rule CAN be taught to aim when it is handed the exact answer, has
+#     a working actuator and nothing breaking it, then every rung-1 failure in
+#     the record is about the OBJECTIVE.
+#   * If it STILL cannot, the limitation is in the architecture as instantiated
+#     -- invariant perception plus a local move head cannot be taught to aim
+#     even when given the answer -- and that is a negative result about this
+#     class of model rather than about this loss.
+#
+# The claim nodes this arm sits between:
+#   docs/claims/the-architecture-can-place-residues-under-some-supervision.md
+#   docs/claims/the-equivariance-fix-did-not-release-a-bearing.md
+#   docs/claims/the-rotation-half-of-the-equivariance-fix-is-still-switched-off.md
+#   docs/claims/the-twist-jump-at-update-1000-is-the-identity-head-leaving-its-floor.md
+#
+# *** PRE-REGISTERED, 23 Nov, BEFORE SUBMISSION. Full reasoning and scope in
+# *** docs/claims/the-capacity-test-has-never-been-run-with-a-working-actuator-and-no-identity-break.md
+# ***
+# *** Read on `align` -- the cosine between the emitted move and the ideal one,
+# *** scripts/ceiling_readout.py, twelve held-out crops -- AT THE LAST READABLE
+# *** CHECKPOINT. Reference points already in the record: a handed gradient
+# *** reaches 0.96, the convention-matched null is +0.206, a fixed random vector
+# *** runs -0.4 to +0.25, and g10_equiv_ceil's broken final read -0.096.
+# ***
+# ***   align >= 0.50        CAPACITY EXISTS, decisively. Every rung-1 failure
+# ***                        in the record is then about the OBJECTIVE, and
+# ***                        the-architecture-can-place-residues-under-some-
+# ***                        supervision closes YES.
+# ***   align 0.25 to 0.50   Partial. Clear of the null, far short of 0.96.
+# ***                        Report DIRECTION ONLY and say the magnitude is not
+# ***                        a result: one seed, no arm here has run twice.
+# ***   align -0.10 to 0.25  THE LIMITATION IS ARCHITECTURAL. Handed the answer,
+# ***                        sound actuator, identity off, nothing broken, and
+# ***                        still no bearing. Closes the capacity question NO.
+# ***                        MOST INFORMATIVE OUTCOME, and the one that ENDS the
+# ***                        arm chain. The bucket-0 clause applies: if it
+# ***                        fails, we do not add terms and re-run.
+# ***   align < -0.10        SUSPECT THE INSTRUMENT. Systematic anti-aiming is
+# ***                        not a thing a teacher-forced head does. Re-derive
+# ***                        the readout's frame convention and publish nothing
+# ***                        until it is checked -- that error class has already
+# ***                        cost this project a retraction.
+# ***
+# *** GUARD, which decides WHICH checkpoint is readable. This is the whole
+# *** lesson of g10 and it is registered so a result cannot make it forgotten:
+# ***   * twist holds in the 9-12 deg band through update 2000, as g9_ceil_noid
+# ***     did at 9.1-9.2. OSCILLATION IS NOT A BREACH -- g23_localrot oscillated
+# ***     10.2-12.8 and was read as inside its band, and that precedent is
+# ***     adopted here rather than invented afterwards.
+# ***   * twist jumping more than 2x at any evaluation makes the FINAL
+# ***     checkpoint UNREADABLE. Read align off the last checkpoint before the
+# ***     jump, say so in the same breath as the number, and treat the arm as
+# ***     truncated at that update.
+# ***   * if it jumps with identity_weight = 0, the identity attribution in
+# ***     the-twist-jump-at-update-1000-is-the-identity-head-leaving-its-floor
+# ***     is WRONG. That is a finding of its own, and capacity must not be read
+# ***     off such an arm at all.
+# ***   * a twist REGIME MARKER does not void this arm's align. Four arms have
+# ***     had a PLACEMENT number voided on twist, because a regime marker
+# ***     invalidates a cross-regime placement comparison. align is not one.
+# ***
+# *** SCOPE, stated now so it is not claimed later:
+# ***   * This says NOTHING about regeneration. rmsd_dmg here is a ceiling,
+# ***     comparable only to g8's and g10's, never to the 4.0 A bar.
+# ***   * One variable is against the BASE, not against g10, which also had
+# ***     identity on and an older base. A g28-vs-g10 difference may not be
+# ***     attributed to lab_rotation alone.
+# ***   * A NO is bounded by truncate = 12: it is a null for "cannot be taught
+# ***     to aim with BPTT spanning 12 of 120 steps". But raising truncate is
+# ***     NOT the escape hatch -- the gradient-window node predicted in advance
+# ***     that truncation should not limit a teacher-forced arm, since each
+# ***     step's move is supervised at that step, and g26_fullbptt measured
+# ***     truncate = 120 as HARMFUL. Appealing to the window after a NO would
+# ***     contradict both nodes at once.
+# ***   * A NO does not establish that no local rule could aim, only that this
+# ***     one cannot be taught to under the strongest supervision available.
+#
+# ONE VARIABLE AGAINST THE BASE, and the only arm since g14_pairwise to sit
+# directly on it. No `inherits` key, which is this file's way of saying "off the
+# base" -- `resolve` stops its walk at the base and refuses `base` as a section
+# name, so naming it explicitly is the one spelling that cannot be loaded.
+[g28_ceil_local.inputs]
+lab_rotation = false

@@ -30,12 +30,15 @@ reason is that the objective supplies a magnitude and never a bearing.**
     updates** ([[a-residue-can-follow-the-morphogen-gradient]]). Directed motion
     is representable and learnable by this architecture, measured.
   * **Nothing ever tells it which way.** `g10_equiv_ceil` **teacher-forced the
-    exact ideal move at every step for 2,000 updates**, with the translation
-    equivariance fix in, and the emitted bearing was **-0.096 against a +0.206
+    exact ideal move at every step for 2,000 updates**, with **both halves of
+    the move local**, and the emitted bearing was **-0.096 against a +0.206
     null** -- below an untrained head
     ([[the-equivariance-fix-did-not-release-a-bearing]]). The fix made aiming
     representable and nothing started aiming. Clamped FAPE is *"a magnitude and
     not a bearing"* ([[fape-can-teach-the-frame-head-which-way-to-move]]).
+    **Read the caveat in experiment 1 below before citing this**: that align was
+    read off a checkpoint whose twist had already blown up to 50 degrees, so it
+    is not yet a clean capacity measurement.
   * **Today's mode collapse is what that predicts.** An objective that supplies
     a magnitude, with no term rewarding a torsion
     ([[the-clash-term-does-not-see-the-ramachandran-plot]]), gets a rule that
@@ -45,17 +48,33 @@ reason is that the objective supplies a magnitude and never a bearing.**
 **What is NOT settled, and the two experiments that would settle it.** Neither
 has been run, both are cheap, both are one variable from an existing arm:
 
-  1. **A ceiling arm with `lab_rotation = false`.** The capacity ladder's top
-    rung has been attempted twice and failed twice -- `g8_ceiling` with both
-    halves of the move in the lab frame, `g10_equiv_ceil` with the rotation half
-    still there. The rotation half is a *measured* defect worth 0.39 A and the
-    lowest twist in the record (g25). **No ceiling arm has ever run with both
-    actuator fixes**, so "teacher forcing does not work" has never been tested on
-    a working actuator. ~70 min of GPU. If it still fails, the limitation is
-    architectural -- invariant perception plus a local move head cannot be taught
-    to aim even when handed the answer -- and that is a real negative result
-    about this class of model. If it succeeds, every rung-1 failure in the record
-    is about the objective.
+  1. **A ceiling arm with a working actuator AND identity off** -- `g28_ceil_local`.
+    **CORRECTED 23 Nov: an earlier version of this section said no ceiling arm
+    had ever run with both actuator fixes. That was wrong.**
+    [[the-twist-jump-at-update-1000-is-the-identity-head-leaving-its-floor]]
+    tabulates `g10_equiv_ceil` as *"local translation, local rotation"* -- both
+    halves local, a sound actuator, teacher-forced for 2,000 updates.
+
+    What confounds `g10` is not its actuator but **when its bearing was read**.
+    Its twist runs 9.9 (update 250) -> 52.3 (1000) -> 50.2 (2000), and the
+    align -0.096 was taken off the **final** checkpoint, i.e. off a rule whose
+    geometry had already broken by a factor of five. The break belongs to the
+    **identity head leaving its floor at update 1000** -- `g8_ceiling` has
+    neither equivariance fix and breaks in the same row, while `g9_ceil_noid` at
+    `identity_weight = 0` holds twist 9.1-9.2 for the full 2,000.
+
+    So the untested cell is **both halves local AND identity off AND teacher
+    forced**. `g10` had the first without the second; `g9_ceil_noid` had the
+    second without the first. Nothing has had both. The current `base` already
+    carries `move_weight = 1.0` and `identity_weight = 0.0`, so this arm is
+    **one variable from base: `lab_rotation = false`.** ~70 min of GPU.
+
+    If the rule can be taught to aim when handed the exact answer with a working
+    actuator and nothing breaking it, every rung-1 failure in the record is about
+    the objective. If it still cannot, the limitation is architectural --
+    invariant perception plus a local move head cannot be taught to aim even when
+    given the answer -- and that is a negative result about this class of model
+    rather than about this loss.
   2. **The morphogen field trained on regeneration.** The gradient is a
     candidate bearing -- a vector, in the right frame, non-local in a way one
     hop is not. Nothing has trained it on this task, and the chemotaxis task
