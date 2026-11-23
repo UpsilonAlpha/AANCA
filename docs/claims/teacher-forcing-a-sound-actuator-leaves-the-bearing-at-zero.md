@@ -15,6 +15,49 @@ before the number existed**
 (`identity 0`, read off the run's own weights line rather than inferred from
 the config), 2,000 updates, `train exit : 0`, 72.2 min.
 
+## PROVISIONAL, same day: the instrument's frame convention is suspect for exactly this arm
+
+**The 0.036 stands as a measurement. The conclusion drawn from it does not,
+pending a check that should have come first.** Reading `align` on six older
+arms the same evening produced a table sorted by one setting, and it is not the
+edge set, the teacher, the orientation term or the training length:
+
+    lab_rotation = TRUE    g17 0.384  g14 0.367  g20 0.329  g13 0.312
+                           g19 0.293  g15 0.159
+    lab_rotation = FALSE   g25 0.122  g28 0.036   <- this arm
+
+`g14_pairwise` is this arm with the rotation convention flipped and little else
+(same teacher, same live edge set, same 2,000 updates, same twelve crops;
+`pairwise` 0.01 against 0) and it reads **+0.367** against this arm's 0.036 --
+a prediction recorded before that number was read
+([[training-on-the-native-edge-set-is-what-produces-a-bearing]]).
+
+The readout prints *"emitted move rotated into the lab frame for
+comparison"*. **If that rotation matches a `lab_rotation = True` run's
+convention and not a `False` one, an arm like this reads near zero by
+construction**, and bucket 4 of this very note says what to do: re-derive the
+convention before reading anything into it.
+
+**Either way this arm is currently uninterpretable, and the dilemma is sharp.**
+Teacher forcing *is* a comparison of the emitted move against the ideal one, so
+the training loss carries a frame convention too. Either training and the
+readout share the convention -- and then a rule trained for 2,000 updates to
+match should not score 0.036, so something else is wrong -- or they differ, and
+then this arm was never properly teacher-forced at all. There is no reading on
+which 0.036 means what this note took it to mean.
+
+**Consequence: the NO is withdrawn to provisional, and
+[[the-architecture-can-place-residues-under-some-supervision]] goes back to
+`open`.** The twist guard, the control, the corroborating details and the
+scope all stand as written; what is suspended is the inference from 0.036 to
+"cannot be taught to aim". The arm-chain-ends clause also goes back into
+suspension: it was earned by a null, and the null is not currently readable.
+
+**What to do next, in this order:** re-derive the frame convention of `align`
+against both `lab_rotation` settings from the code and from a synthetic case
+where the right answer is known by construction, before any further arm. This
+is a readout question and costs no GPU.
+
 ## The guard first, because it decides which checkpoint may be read
 
     update     250     500     750    1000    1250    1500    1750    2000

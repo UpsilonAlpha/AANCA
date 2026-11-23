@@ -1,9 +1,11 @@
 ---
 type: question
-status: unsupported
+status: open
 ---
 
 # The architecture can place residues correctly under *some* amount of supervision
+
+**REOPENED the same evening -- see the note at the end of this block before reading on.**
 
 **ANSWERED NO, 23 Nov 2026, by `g28_ceil_local` (33308293), against buckets
 pre-registered and pushed before the number existed.** The top rung was run in
@@ -15,7 +17,19 @@ bearing indistinguishable from zero.
 [[teacher-forcing-a-sound-actuator-leaves-the-bearing-at-zero]] carries the
 guard reading, the control, the corroboration and the scope.
 
-**This closes the question and ends the arm chain.** The clause was written
+**REOPENED, 23 Nov, hours later.** `align` read on six older arms sorts
+cleanly by `lab_rotation` and by nothing else -- every lab-frame-rotation arm
+0.159 to 0.384, both local-rotation arms 0.036 and 0.122 -- and `g14_pairwise`
+is `g28` with that convention flipped and reads +0.367 against `g28`'s 0.036.
+The readout rotates the emitted move into the lab frame for comparison, so the
+instrument's convention may match one group and not the other, in which case
+`g28` read near zero by construction.
+[[teacher-forcing-a-sound-actuator-leaves-the-bearing-at-zero]] carries the
+full account and is withdrawn to provisional. **So this question is open again
+and the arm chain is not ended**, until the frame convention is re-derived --
+which costs no GPU and must come before anything else.
+
+**The NO as it stood:** The clause was written
 into the pre-registration before submission: a null here is the most
 informative outcome and the one that should end the chain rather than extend
 it, so no terms get added and nothing gets re-run. Everything below is the

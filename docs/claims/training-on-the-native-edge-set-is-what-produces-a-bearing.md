@@ -73,8 +73,25 @@ nothing else (`g28` has `pairwise 0`). So:
   * if teacher forcing on live edges is, `g14` reads roughly **0.04**, like
     `g28`.
 
-Job 33321241 was submitted before this paragraph and is read below. Recorded
-this way round so the prediction cannot be fitted to the answer.
+**`g14` reads +0.367**, eleven of eleven crops positive (job 33321241, exit 0,
+best checkpoint u1500). The prediction is confirmed and slightly exceeded.
+
+    g14_pairwise   lab_rot TRUE   live edges  teacher  2000 upd   +0.367
+    g28_ceil_local lab_rot FALSE  live edges  teacher  2000 upd   +0.036
+
+Same teacher, same edge set, same update budget, same twelve crops; they differ
+in `lab_rotation` and in `pairwise` (0.01 against 0). **A tenfold difference in
+`align`, tracking the rotation convention.** Six arms at `lab_rotation = True`
+now read 0.159 to 0.384; the only two at `False` read 0.036 and 0.122.
+
+**And twist does not track `align`, which kills the obvious physical
+explanation.** The tempting mechanism was that the local rotation degrades the
+residue frames and the move is expressed in those frames, so frame error
+corrupts the bearing. The numbers refuse it: `g25` has the *best* twist in the
+set at 8.8 degrees and `align` 0.122, while `g19` has twist 13.67 and `align`
+0.293. If anything the two are anti-correlated. **So the instrument is left as
+the leading explanation**, and the pre-registered bucket-4 instruction applies
+in full.
 
 **What survives of this note:** the five `align` numbers, the shared crop
 indices, and the observation that no arm on this architecture has ever shown a
