@@ -140,6 +140,15 @@ forgotten under a result:
     [[no-growth-arm-has-been-run-twice-so-no-difference-has-an-error-bar]]
     applies, which is why the buckets are wide and sign-based rather than
     margins.
+  * **The context is FREE in this arm**, because it is one variable from `base`
+    and `base` has `freeze_context = false`. So it is not comparable with
+    `g24`/`g25` on any whole-structure quantity, and the context drift that
+    [[freezing-the-context-improves-placement-twist-and-whole-structure-rmsd-together]]
+    measured is present here. That does not touch `align`, which is the cosine
+    between the emitted move and the ideal move for this rule's own state, but
+    it does mean `rmsd_dmg` and `rmsd` from this arm are comparable only to
+    `g8`'s and `g10`'s, which also ran the context free.
+
   * **A NO does not establish that no local rule could aim**, only that this
     one cannot be taught to under the strongest supervision available. The
     bearing may have to be **constructed** rather than perceived -- by

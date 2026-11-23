@@ -797,6 +797,19 @@ unfixed form: `equivariant_move` touches only the translation, and the two
 halves are independent. Pinned as
 `test_a_lab_frame_rotation_is_not_equivariant_either`.
 
+**IN FLIGHT, 23 Nov: 33304426 `g28_ceil_local`** on `gpu_rocm`/bun160, the
+capacity test. 2,000 updates, ~75-100 min. Confirmed running the arm and not
+the base: the header reads `[g28_ceil_local]`, carries the `CEILING CHECK:
+--move-weight 1` banner, and **does NOT carry the "TRANSLATION ONLY: the
+rotation is still applied in the lab frame" line** that every
+`lab_rotation = true` arm prints -- its absence is the positive confirmation
+that the rotation is local, the same check that confirmed `g23`.
+`AANCA_ENTRY=scripts/train_growth.py` was exported and echoed to the log before
+submission, because that is exactly how 33245088 died.
+**Read it against the pre-registered buckets in
+`docs/claims/the-capacity-test-has-never-been-run-with-a-working-actuator-and-no-identity-break.md`,
+and check the twist guard FIRST to decide which checkpoint is readable.**
+
 **NOTHING IN FLIGHT as of 21 Nov. All four jobs finished, exit 0.** The 4.0 A
 test was read and **it FAILED**, which is the answer to the question and is
 recorded directly below rather than in the arm list.
