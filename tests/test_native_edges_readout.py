@@ -57,6 +57,14 @@ NATIVE = ROOT / "data" / "raw" / "1UBQ.pdb"
 #: this was found.
 REAL_BUILD_GRAPH = rollout_module.build_graph
 
+#: Captured at import for the same reason, and it is the same trap: a test that
+#: runs the readout twice shares one ``monkeypatch``, so reading
+#: ``ceiling_readout._bearing`` inside the recorder's installer picks up the
+#: recorder the first call left in place. The second run then appends to both
+#: lists and the pairing comparison is between a two-entry list and a one-entry
+#: one, which is how this was found.
+REAL_BEARING = ceiling_readout._bearing
+
 #: Small on purpose: these tests are about which residues are talking to each
 #: other, and that is settled in the first few steps. The stored arguments are
 #: what the readout configures the rollout from, so they double as the record
@@ -129,6 +137,7 @@ def _checkpoint(tmp_path, extra: dict | None = None):
 def _readout(
     monkeypatch, tmp_path, topo, coords, native_edges: bool,
     extra: dict | None = None, expect: int = 0,
+    bearings: list | None = None, cripple_pairing: bool = False,
 ):
     """Run the readout's ``main()`` and return every selection the rule saw.
 
@@ -145,6 +154,41 @@ def _readout(
         seen.append(graph.neighbours.clone())
         return graph
 
+    if bearings is not None:
+        def recording_bearing(
+            result, native, topo_, damaged, start_coords, config, local=False
+        ):
+            out = REAL_BEARING(
+                result, native, topo_, damaged, start_coords, config,
+                local=local,
+            )
+            need = out[4]
+            if cripple_pairing:
+                # **The defect, put back.** `need` read off the rollout's own
+                # `moves[0]` -- which `rollout.rollout` leaves holding the
+                # start of the LAST truncation window, not the start of the
+                # rollout. Nothing else about the run changes, so a `need`
+                # that moves between the two perceptions under this and not
+                # otherwise is the whole of the bug and the whole of the fix.
+                from aanca.fape import ca_rmsd_on
+                from aanca.growth import backbone_atoms
+
+                first = backbone_atoms(result.moves[0][2], topo_)[:, 1]
+                ca_native = backbone_atoms(native, topo_)[:, 1]
+                every = torch.ones_like(damaged)
+                need = float(ca_rmsd_on(
+                    first[every], ca_native[every],
+                    first[damaged], ca_native[damaged],
+                ))
+            bearings.append({
+                "start": start_coords.detach().clone(),
+                "damaged": damaged.detach().clone(),
+                "need": need,
+                "align": out[0],
+            })
+            return out
+
+        monkeypatch.setattr(ceiling_readout, "_bearing", recording_bearing)
     monkeypatch.setattr(rollout_module, "build_graph", recording)
     monkeypatch.setattr(
         ceiling_readout, "held_out",
@@ -182,7 +226,20 @@ def test_a_the_native_edge_set_differs_from_the_live_one(ubiquitin):
         blind=True,
         growth=GrowthConfig(birth="none", initial=STORED["initial"]),
     )
-    fixed = ceiling_readout.native_selection(coords, topo, config, identity=False)
+    # **The readout must not carry its own copy of this.** It did until 23 Nov,
+    # when ``aanca.growth`` gained the same function for the trainer; two
+    # functions whose whole content is "nothing differs but the coordinates" is
+    # where a divergence hides in silence, so the readout's name is now an
+    # alias and this pins it. The argument is ``carries_identity=False``: the
+    # parameter used to be the identity STATE, tested with ``is not None``, so
+    # ``False`` turned blinding on -- which is what three tests in this file,
+    # this one included, were silently doing. It is a bool read by value now.
+    from aanca.growth import native_edge_selection
+
+    assert ceiling_readout.native_selection is native_edge_selection
+    fixed = ceiling_readout.native_selection(
+        coords, topo, config, carries_identity=False
+    )
 
     live, _mask = select_neighbours(
         coords.to(config.feature_dtype), topo, config.k, config.cutoff
@@ -241,7 +298,7 @@ def test_b_the_flag_changes_the_edge_set_the_rollout_uses(
         growth=GrowthConfig(birth="none", initial=STORED["initial"]),
     )
     native = ceiling_readout.native_selection(
-        coords, topo, config, identity=False
+        coords, topo, config, carries_identity=False
     ).neighbours
 
     with_flag = _readout(monkeypatch, tmp_path, topo, coords, native_edges=True)
@@ -288,7 +345,7 @@ def test_c_a_dropped_flag_is_what_this_would_catch(
         growth=GrowthConfig(birth="none", initial=STORED["initial"]),
     )
     native = ceiling_readout.native_selection(
-        coords, topo, config, identity=False
+        coords, topo, config, carries_identity=False
     ).neighbours
 
     monkeypatch.setattr(
@@ -333,16 +390,22 @@ def test_d_a_recorded_setting_the_schema_has_lost_is_refused(
     )
 
 
-def test_e_a_retired_setting_is_refused_unless_it_is_reproduced(
+def test_e_a_recorded_perception_is_refused_unless_it_is_reproduced(
     monkeypatch, tmp_path, ubiquitin, capsys
 ):
     """``native_edges`` recorded ON: refuse, and say which flag reproduces it.
 
-    The narrow case the retirement creates. Those weights were trained with the
-    target graph in the rollout; reading them without ``--native-edges`` is a
-    different experiment from the one that produced them, and reading them with
-    it is a ceiling. Both are sayable; silently doing the first under the run's
-    name is not.
+    **The grounds changed on 23 Nov and the refusal did not.** ``native_edges``
+    was restored to ``scripts/train_growth.py``'s schema as the task statement
+    rather than a leak, so it is an ordinary recorded setting again and
+    ``unresolved_settings`` no longer fires on it -- which is exactly the
+    condition under which ``stored.get`` drops it in silence, as it did before
+    9 Nov. What mattered was never that the key had no reader; it was that those
+    weights were trained with the target graph in the rollout, so reading them
+    without ``--native-edges`` is a different experiment from the one that
+    produced them, printed under the run's tag. Reading them *with* it is a
+    reproduction. Both are sayable; silently doing the first is not, and
+    ``ceiling_readout.perception_mismatch`` is where that survives.
     """
     topo, coords = ubiquitin
     _readout(
@@ -350,31 +413,45 @@ def test_e_a_retired_setting_is_refused_unless_it_is_reproduced(
         extra={"native_edges": True}, expect=1,
     )
     printed = capsys.readouterr().out
+    assert "REFUSING" in printed
     assert "native_edges" in printed and "--native-edges" in printed, (
-        "the refusal must name the retired key and the flag that reproduces it"
+        "the refusal must name the recorded setting and the flag that "
+        "reproduces it"
+    )
+    assert "crop" not in printed.split("REFUSING")[-1], (
+        "a refusal must not also print the table it is refusing to stand behind"
     )
 
     # With the flag, the run is reproducible and the readout proceeds -- and it
-    # still says in the log that the key was retired.
+    # says in the log that this is the run's OWN perception rather than a
+    # ceiling imposed on an arm that trained without it.
     _readout(
         monkeypatch, tmp_path, topo, coords, native_edges=True,
         extra={"native_edges": True}, expect=0,
     )
     printed = capsys.readouterr().out
-    assert "retired" in printed.lower()
     assert "NATIVE EDGES" in printed
+    assert "RECORDED native_edges" in printed, (
+        "the log must distinguish reproducing the run's own perception from "
+        "imposing a ceiling on an arm that never had it"
+    )
 
 
-def test_f_a_retired_setting_recorded_off_is_not_an_obstacle(
+def test_f_native_edges_recorded_off_is_not_an_obstacle_either_way(
     monkeypatch, tmp_path, ubiquitin, capsys
 ):
-    """``native_edges = False`` is what the schema's absence already means.
+    """``native_edges = False`` read without the flag is simply the run.
 
-    An arm that recorded the flag and left it off ran the same perception every
-    current arm runs, so there is nothing for the operator to reconcile and
-    refusing would be a false alarm. It is still named in the log, because the
-    key is in the checkpoint and the point of the check is that nothing in
-    ``args`` goes unmentioned.
+    An arm that recorded the setting and left it off ran the k-NN-every-step
+    perception every live-edge arm runs, so there is nothing to reconcile and
+    refusing would be a false alarm -- and the log must still state which
+    perception was used, because that statement is the only thing in the output
+    that attributes the table.
+
+    And the reverse direction must stay open: the same arm read *with*
+    ``--native-edges`` is the one-variable ceiling comparison this whole script
+    exists for, so it cannot be refused as a mismatch. Only trained-on-native
+    read as live is an error, which is what ``perception_mismatch`` encodes.
     """
     topo, coords = ubiquitin
     _readout(
@@ -383,7 +460,18 @@ def test_f_a_retired_setting_recorded_off_is_not_an_obstacle(
     )
     printed = capsys.readouterr().out
     assert "REFUSING" not in printed
-    assert "native_edges" in printed
+    assert "rebuilt from the live coordinates every step" in printed
+
+    _readout(
+        monkeypatch, tmp_path, topo, coords, native_edges=True,
+        extra={"native_edges": False}, expect=0,
+    )
+    printed = capsys.readouterr().out
+    assert "REFUSING" not in printed, (
+        "a live-edge arm read with --native-edges is the ceiling comparison, "
+        "not a mismatch, and refusing it would remove the diagnostic"
+    )
+    assert "CEILING" in printed and "did NOT record native_edges" in printed
 
 
 def test_g_a_checkpoint_whose_settings_all_resolve_is_untouched(
@@ -413,11 +501,182 @@ def test_h_the_authority_is_the_trainers_schema_not_a_list_here(ubiquitin):
     trainer gains a setting, and goes stale silently.
     """
     assert ceiling_readout.unresolved_settings(dict(STORED)) == []
+    # ``native_edges`` is a schema key again as of 23 Nov, so it resolves and
+    # only the genuinely unknown key is named. That the KEY resolves is not the
+    # end of the matter -- test e covers the perception it implies -- but the
+    # schema check must report the schema and nothing else, or it is the
+    # hand-kept list this function exists to avoid.
     assert ceiling_readout.unresolved_settings(
         {"native_edges": True, "nonsense": 1}
-    ) == ["native_edges", "nonsense"]
+    ) == ["nonsense"]
+    assert ceiling_readout.RETIRED_SETTINGS == {}, (
+        "nothing is retired today; a non-empty map needs a test of its own"
+    )
     # The resource keys are excluded by ``recorded_args`` on the way in, and an
     # older checkpoint that carries them anyway is not drift.
     assert ceiling_readout.unresolved_settings(
         {"device": "cuda", "max_seconds": 3600.0}
     ) == []
+
+
+#: ``steps`` past ``truncate``, which is the regime every real arm runs in --
+#: ``g25_equivariant`` and ``g28_ceil_local`` are 120 steps at truncate 12 --
+#: and the regime the pairing defect lived in. ``rollout.rollout`` clears its
+#: ``moves`` list at every truncation boundary, so with two segments
+#: ``moves[0]`` is the pose four perception-driven steps downstream of the
+#: start. The rest of this file runs at ``steps = 4``, a single segment, where
+#: ``moves[0]`` happens to BE the start and the defect is invisible: that is
+#: why it was not caught here.
+TRUNCATED = {"steps": 8, "truncate": 4}
+
+
+def test_i_the_two_runs_share_one_start_state_and_differ_only_in_perception(
+    monkeypatch, tmp_path, ubiquitin
+):
+    """The comparison is exactly paired: same start, different edge set.
+
+    **This is the property ``--native-edges`` is worthless without.** ``need``
+    is the window's distance from native at the start state, which is settled
+    before a step is taken and cannot depend on perception -- so if it moves
+    between the two runs of one checkpoint, something other than the edge set
+    moved too and no difference in ``align`` can be attributed. The four jobs of
+    23 Nov show exactly that: ``need`` 15.90 -> 16.14 A on ``g25_equivariant``,
+    12.34 -> 12.28 A on ``g28_ceil_local``, which is the same order as
+    ``g25``'s ``align`` 0.141 -> 0.208 and is what stopped that being readable
+    as a rise.
+
+    Three assertions, and the third is what keeps the first two from being
+    satisfied by a readout that does nothing:
+
+      * the damaged window and the start coordinates are **bit-identical** --
+        ``torch.equal``, not a tolerance. They are drawn by ``damage_start``
+        from a generator seeded off the checkpoint's own seed, above and before
+        the perception choice, so there is no float path by which they could
+        differ and nothing to justify a tolerance on;
+      * ``need`` is identical as a float, for the same reason: identical inputs
+        through identical ops;
+      * ``align`` **differs**, because it is the one thing that is supposed to.
+        Equal ``align`` would mean the flag changed nothing measurable and the
+        pairing had been bought by making the comparison vacuous.
+    """
+    topo, coords = ubiquitin
+    flagged: list = []
+    live: list = []
+    _readout(
+        monkeypatch, tmp_path, topo, coords, native_edges=True,
+        extra=TRUNCATED, bearings=flagged,
+    )
+    _readout(
+        monkeypatch, tmp_path, topo, coords, native_edges=False,
+        extra=TRUNCATED, bearings=live,
+    )
+    assert len(flagged) == len(live) == 1, "one crop each, or this compares runs"
+    a, b = flagged[0], live[0]
+
+    assert torch.equal(a["damaged"], b["damaged"]), (
+        "the two runs damaged different residues, so they are not two readings "
+        "of one start state"
+    )
+    assert torch.equal(a["start"], b["start"]), (
+        "the two runs started from different coordinates, so any difference in "
+        "align is confounded with a difference in the task"
+    )
+    assert a["need"] == b["need"], (
+        f"need moved between the two perceptions: {b['need']} -> {a['need']}. "
+        "It is a property of the start state and cannot depend on the edge set"
+    )
+    assert a["need"] == a["need"], "need must be a number on this crop"
+    assert a["align"] != b["align"], (
+        "align came out identical under the two edge sets, so either the flag "
+        "reached nothing or the rule is not moving -- and the pairing above is "
+        "then vacuous rather than earned"
+    )
+
+
+def test_j_undoing_the_pairing_makes_test_i_fail(
+    monkeypatch, tmp_path, ubiquitin
+):
+    """Proof by crippling: restore the defect, and ``need`` moves again.
+
+    ``cripple_pairing`` computes ``need`` the way the readout did before --
+    off ``result.moves[0]``, the start of the live truncation segment -- and
+    changes nothing else. If ``need`` still came out equal under that, test i
+    would be passing because the rollout is too static to tell the difference,
+    not because the start state is shared, and it would keep passing if the fix
+    were reverted.
+
+    The assertion is deliberately the *negation* of test i's: these two runs
+    still share a start state bit for bit, and the ``need`` computed from it is
+    still equal. It is only the ``need`` read off the rollout that moves. So
+    this localises the defect as well as proving the test: not the crop, not
+    the damage, not the seed -- the state ``need`` was read from.
+    """
+    topo, coords = ubiquitin
+    flagged: list = []
+    live: list = []
+    _readout(
+        monkeypatch, tmp_path, topo, coords, native_edges=True,
+        extra=TRUNCATED, bearings=flagged, cripple_pairing=True,
+    )
+    _readout(
+        monkeypatch, tmp_path, topo, coords, native_edges=False,
+        extra=TRUNCATED, bearings=live, cripple_pairing=True,
+    )
+    a, b = flagged[0], live[0]
+    # The paired half is untouched, which is what makes this a localisation.
+    assert torch.equal(a["start"], b["start"])
+    assert torch.equal(a["damaged"], b["damaged"])
+    assert a["need"] != b["need"], (
+        "with `need` read back off the rollout's own moves it came out equal "
+        "anyway, so test i's assertion would pass on the unfixed readout and "
+        "proves nothing. Either this crop's rollout moves too little to show "
+        "the defect, or `moves` is no longer being cleared at the truncation "
+        "boundary"
+    )
+
+
+def test_k_the_reconstructed_start_is_the_one_the_rollout_begins_at(
+    monkeypatch, tmp_path, ubiquitin
+):
+    """``damage_start`` reproduces ``growth_objective``'s draws, not a lookalike.
+
+    The fix trades one liability for another: ``need`` no longer depends on the
+    perception, but it is now computed from a state this script builds itself,
+    and a drift in ``growth_objective``'s draw ORDER would make it a plausible
+    number from a pose no rollout ever started at. That is the 6 Nov failure in
+    a third costume, so it is pinned rather than trusted.
+
+    At ``steps = 4`` and ``truncate = 12`` no boundary is crossed, nothing
+    clears ``moves``, and ``moves[0]`` therefore IS the rollout's start state --
+    which makes it the witness. The readout checks the same thing on every such
+    crop at runtime and prints if it fails; this asserts it.
+    """
+    topo, coords = ubiquitin
+    seen_moves: list = []
+
+    def capture(result, native, topo_, damaged, start_coords, config, local=False):
+        from aanca.growth import backbone_atoms
+
+        seen_moves.append((
+            len(result.moves),
+            backbone_atoms(result.moves[0][2], topo_)[:, 1].clone(),
+            backbone_atoms(start_coords, topo_)[:, 1].clone(),
+        ))
+        return REAL_BEARING(
+            result, native, topo_, damaged, start_coords, config, local=local
+        )
+
+    # Installed without ``bearings``, which would patch ``_bearing`` a second
+    # time and leave this one unreached.
+    monkeypatch.setattr(ceiling_readout, "_bearing", capture)
+    _readout(monkeypatch, tmp_path, topo, coords, native_edges=False)
+    assert seen_moves, "nothing was captured"
+    n_moves, first, reconstructed = seen_moves[0]
+    assert n_moves == STORED["steps"], (
+        "this crop crossed a truncation boundary, so `moves[0]` is not the "
+        "start state and cannot witness the reconstruction"
+    )
+    assert torch.equal(first, reconstructed), (
+        "the start state `damage_start` reconstructs is not the one the rollout "
+        "began at, so `need` is computed from a pose no run ever held"
+    )

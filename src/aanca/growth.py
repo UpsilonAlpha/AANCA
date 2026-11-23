@@ -72,7 +72,13 @@ from .backbone import (
     triad_from_frame,
 )
 from .torch_geometry import rotation_matrices
-from .torch_graph import FeatureTopology, sequence_links
+from .torch_graph import (
+    FeatureTopology,
+    FixedNeighbours,
+    select_neighbours,
+    select_neighbours_device,
+    sequence_links,
+)
 
 #: How far apart dormant residues are parked, Angstrom. Any value well beyond
 #: the 10 A interaction cutoff works; this one also keeps dormant residues far
@@ -820,7 +826,10 @@ def pairwise_distance_restraint(
     single number over both sets could fall because the window's internal
     geometry tidied up while its placement never moved -- the exact failure the
     project has spent seven arms unable to see -- so the caller gets both and
-    the weight applies to the first.
+    each half has its own weight: ``pairwise_weight`` charges the first and
+    ``pairwise_window_weight`` the second. They are two keys rather than one
+    for exactly the reason the halves are returned separately, and the second
+    defaults to zero so every arm up to g28 keeps the objective it ran under.
 
     That is not only a reporting argument. Walk the window linearly from the
     baseline to its native pose on 1UBQ and the internal half *rises* from 8.7
@@ -1645,10 +1654,12 @@ class GrowthTerms:
     #: reads 0.0258 and all of it is hydrogen bonds.
     clash: Tensor | None = None
     #: **The unclamped distance restraint across the hole, A^2, before
-    #: ``pairwise_weight``.** ``pairwise_anchor`` is over window-to-intact
-    #: pairs and is the half that carries placement; ``pairwise_window`` is
-    #: over window-to-window pairs and constrains only the window's internal
-    #: shape. Both are reported on **every** run, weighted or not, and summing
+    #: its own weight.** ``pairwise_anchor`` is over window-to-intact pairs,
+    #: is the half that carries placement and is charged by
+    #: ``pairwise_weight``; ``pairwise_window`` is over window-to-window pairs,
+    #: constrains only the window's internal shape and is charged by
+    #: ``pairwise_window_weight``, which defaults to zero.
+    #: Both are reported on **every** run, weighted or not, and summing
     #: them would hide which half of the term moved -- a window that tidied its
     #: own geometry without going anywhere would look like progress.
     #:
@@ -1707,6 +1718,93 @@ class GrowthPoolEntry:
     baseline_rmsd: float | None = None
 
 
+def native_edge_selection(
+    native_coords: Tensor,
+    topo: FeatureTopology,
+    config,
+    carries_identity: bool = False,
+) -> FixedNeighbours:
+    """``FixedNeighbours`` -- the edge set the NATIVE coordinates select.
+
+    **This is the task statement, not a leak.** The task this project is
+    mapping is ``Gala 2024``'s: *realise coordinates for this graph*, where the
+    target graph is the problem's own input
+    (``docs/claims/the-task-is-to-realise-coordinates-for-a-given-contact-graph.md``,
+    Ulban's decision of 23 Nov). The contrary reading -- that handing over the
+    contact graph leaks the structural-interaction topology an ablation would
+    want to read back out of the weights -- was sound only under the
+    discover-the-topology payoff, which the project has now discarded. It is
+    recorded as superseded by a decision rather than as having been shown
+    wrong, and the comments it left behind in
+    :class:`torch_graph.FixedNeighbours` and ``scripts/ceiling_readout.py`` are
+    the history, not the current reading.
+
+    **The only thing that differs from an ordinary step is the coordinates the
+    selection is computed from.** Everything else is read off the live
+    rollout's own code path rather than restated here:
+
+      * the same selector (``select_neighbours_device`` or the NumPy
+        ``select_neighbours``, picked by ``config.device_neighbours`` exactly as
+        ``torch_graph.build_graph`` picks it),
+      * the same ``k`` and ``cutoff`` the rollout perceives with, and
+        ``include_sequence_neighbours`` left at the default ``build_graph``
+        leaves it,
+      * the same topology ``step_once`` perceives through -- ``alive_topology``
+        with the all-true mask, since ``atom_mask`` is what the selection
+        flattens by. Under ``birth`` the live mask is narrower than all-true,
+        and the selection is still right: ``step_once`` intersects
+        ``edge_mask`` with ``alive[neighbours]`` after the graph is built, so a
+        dormant slot in a native neighbour list is not a sender,
+      * the same blinding, when the rollout carries an identity state and
+        ``config.blind``: ``step_once`` selects over ``blind_coords`` of the
+        live geometry, so selecting over unblinded native coordinates here
+        would be a second changed variable with side chains in it.
+
+    **``carries_identity`` is a bool, read by value, and it used to be a state
+    read by presence.** The parameter was ``identity: Tensor | None`` while the
+    branch tested ``identity is not None`` and never looked inside -- so
+    ``identity=False`` turned blinding ON, which is the reverse of what the
+    call site reads as, and three tests in the readout were passing exactly
+    that and getting blinded selection. A parameter whose meaning lives in its
+    presence rather than its value is the same class of defect as a setting
+    that appears to be used and is not, and that class has cost this project
+    retractions. It is a bool because the function never needed the tensor: it
+    asks one question, *does this rollout carry an identity state at all*, and
+    a caller that has only the answer (the readout, which cannot have the
+    state -- ``growth_objective`` builds it inside) can now say so without
+    inventing a marker object to stand in for it.
+
+    ``config.blind`` stays inside rather than being folded into the argument,
+    so blinding is decided here in one place and in the same two-part form
+    ``step_once`` uses. That is why the parameter is not called ``blind``: it
+    is not the decision, it is the half of it the caller knows.
+
+    Only the *selection* travels. ``FixedNeighbours`` recomputes every
+    distance, direction and envelope weight from the live coordinates every
+    step, so the rule still perceives the structure it has actually built -- it
+    is just told which residues to perceive it against.
+    """
+    from .blind import blind_coords
+
+    seen = native_coords
+    if config.growth is not None:
+        topo = alive_topology(
+            topo,
+            torch.ones(
+                topo.n_residues, dtype=torch.bool, device=native_coords.device
+            ),
+        )
+    if carries_identity and config.blind:
+        seen = blind_coords(seen, topo)
+    select = (
+        select_neighbours_device if config.device_neighbours else select_neighbours
+    )
+    neighbours, edge_mask = select(
+        seen.to(config.feature_dtype), topo, config.k, config.cutoff
+    )
+    return FixedNeighbours(neighbours=neighbours, edge_mask=edge_mask)
+
+
 def growth_objective(
     rule,
     native_coords: Tensor,
@@ -1728,9 +1826,11 @@ def growth_objective(
     clash_tolerance: float = 0.5,
     clash_bonded: bool = False,
     pairwise_weight: float = 0.0,
+    pairwise_window_weight: float = 0.0,
     freeze_context: bool = False,
     resume_from: "GrowthPoolEntry | None" = None,
     fixed_neighbours=None,
+    native_edges: bool = False,
 ) -> tuple[GrowthTerms, object]:
     """Supervised regrowth: from a seed, rebuild the native backbone.
 
@@ -1924,6 +2024,29 @@ def growth_objective(
     frozen = None
     if freeze_context and bool(damaged.any()):
         frozen = ~damaged
+    if native_edges:
+        # **The setting, and the training path for it.** Restored 23 Nov with
+        # the decision that the task is to realise coordinates for a given
+        # contact graph; see :func:`native_edge_selection`. It comes in through
+        # the same seam a caller-supplied selection does, so there is one
+        # mechanism and not two.
+        if fixed_neighbours is not None:
+            raise ValueError(
+                "native_edges and an explicit fixed_neighbours are two "
+                "neighbour selections for one rollout. Pass one: a fixed "
+                "selection that is silently overridden is the failure "
+                "FixedNeighbours.checked exists to prevent"
+            )
+        fixed_neighbours = native_edge_selection(
+            native_coords,
+            topo,
+            config,
+            # Whether this rollout carries an identity state at all, which is
+            # the only thing the selection asks. Named, and a bool rather than
+            # the state itself: the parameter used to take the state and branch
+            # on its presence, so a falsy value meant "blind this".
+            carries_identity=identity_start_state is not None,
+        )
     result = rollout(
         rule,
         begin,
@@ -1935,12 +2058,13 @@ def growth_objective(
         # **Passed through, never defaulted to anything but ``None``.** This is
         # the seam ``torch_graph.FixedNeighbours`` documents: it holds the
         # neighbour *selection* at an edge set the caller computed while every
-        # feature stays live. No training path in this project sets it -- the
-        # ``native_edges`` setting was retired on 9 Nov as a leak and cannot be
-        # expressed in the config any more -- and it is here so that a READOUT
-        # script can run the one-variable comparison without reimplementing the
-        # rollout beside the real one. A probe that drives its own loop is how
-        # this project earned four retractions.
+        # feature stays live. Two callers reach it: the ``native_edges``
+        # setting a few lines above -- restored 23 Nov as the task statement,
+        # see :func:`native_edge_selection` -- and a READOUT script running the
+        # one-variable comparison without reimplementing the rollout beside the
+        # real one. A probe that drives its own loop is how this project earned
+        # four retractions, and a training path that built its own selection
+        # beside this one would be the same mistake in the trainer.
         fixed_neighbours=fixed_neighbours,
     )
     final = result.state
@@ -2194,12 +2318,36 @@ def growth_objective(
         + orientation_weight * orientation.to(fape.dtype)
         + move_weight * move_term
         + clash_weight * clash_term
-        # Only the window-to-anchor half is charged. The window-to-window half
-        # is reported beside it so the two can be read apart, but weighting it
-        # would pay the rule for getting the window's internal shape right
-        # while leaving it where the baseline walk put it, and that is the
-        # result every arm has already produced.
+        # **Two weights, one per half, and `pairwise_weight` still means the
+        # anchor half alone.** The window-to-anchor half is the one that says
+        # where the window goes; the window-to-window half constrains only its
+        # internal shape, so charging them from one number would pay the rule
+        # for tidying the window up while leaving it where the baseline walk
+        # put it -- the result every arm has already produced. That is why
+        # `pairwise_weight` was anchor-only and why it stays anchor-only: every
+        # arm g14 to g28 resolved its objective through this expression, and
+        # widening the existing key's meaning would retroactively change what
+        # each of them was optimising.
+        #
+        # `pairwise_window_weight` is the separate key, defaulting to 0.0, so
+        # the sum above is bit-identical to what it was for any run that does
+        # not set it. The port sets it, because the published loss is over ALL
+        # pairs and its authors call that necessary to identify the target
+        # uniquely (docs/claims/the-task-is-to-realise-coordinates-for-a-given-
+        # contact-graph.md, decided 23 Nov).
+        #
+        # **The measurement against weighting it is real and is about a path,
+        # not about the objective.** Walking the window linearly to its native
+        # pose makes this half rise from 8.7 to 44.7 A^2 before falling,
+        # because a straight line between two poses passes through a
+        # contracted intermediate -- see `pairwise_distance_restraint`. That is
+        # a statement about linear interpolation, which is not the path
+        # gradient descent takes, so it is a reason to watch this half rather
+        # than a settled reason to leave it unweighted. The two halves stay
+        # reported separately either way, which is what keeps "the window's
+        # internal shape tidied up while its placement never moved" visible.
         + pairwise_weight * pairwise_anchor
+        + pairwise_window_weight * pairwise_window
     )
     return (
         GrowthTerms(

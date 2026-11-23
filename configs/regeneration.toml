@@ -60,8 +60,24 @@ max_rotation = 0.1
 max_translation = 0.3
 morphogen = false
 move_weight = 1.0  # teacher forcing: supervises every emitted move against the ideal one. CEILING, not a result.
+native_edges = false  # off in base; the given contact graph. Restored 23 Nov as the task statement. See below.
 orientation_weight = 0.0
 pairwise_weight = 0.0  # off in base; the g14/g15 arms turn it on. Ordinary supervision, available to a real run.
+# The WINDOW-TO-WINDOW half of the same restraint, as a second weight. Zero in
+# base, and zero is bit-identical to the objective every arm g14-g28 ran: the
+# meaning of `pairwise_weight` is unchanged and still anchor-only. The port
+# weights the full pair set (Ulban, 23 Nov), which is what this key is for.
+pairwise_window_weight = 0.0
+# The network's size. 96 and 128 are `AANCARule.__init__`'s own defaults, which
+# is what every arm in this file was built from -- the trainer had no key for
+# either until the port needed one, so these two lines reproduce g13-g28 rather
+# than changing them. Together they give 229,588 parameters; the published rule
+# that succeeds at the analogous task has ~5,000. The floor reachable from these
+# two alone is 17,552, because every head is `Linear(node_dim + hidden_dim, 64)`
+# with the 64 hardcoded and a growth rule's `node_dim` is 56. See
+# tests/test_network_size.py, which carries the measured counts.
+hidden_dim = 96
+message_dim = 128
 placement_rotation = 3.14159265
 placement_steps = 0
 placement_translation = 4.0
@@ -90,34 +106,56 @@ updates = 2000
 pairwise_weight = 0.01
 
 # ======================================================================
-# RETIRED 9 Nov: every native-edges arm, and everything that inherited one.
+# RETIRED 9 Nov, RESTORED 23 Nov: `native_edges`, the given contact graph.
 #
-# `native_edges` held the perception graph's neighbour SELECTION at the edge
+# `native_edges` holds the perception graph's neighbour SELECTION at the edge
 # set of the native coordinates. It was taken from the published automaton
 # (E(n)-equivariant Graph NCA, TMLR 2024), where the target graph is the
-# problem's own input and reading it is the task statement. Here there is no
-# target graph at inference, so the same wiring is a leak -- and the leak is of
-# the one thing the project is for. Who contacts whom IS the structural
+# problem's own input and reading it is the task statement.
+#
+# **It is back in the schema, because that is also the task here.** Ulban
+# decided on 23 Nov that this project's task is to realise coordinates for a
+# GIVEN contact graph, not to discover the contact topology
+# (docs/claims/the-task-is-to-realise-coordinates-for-a-given-contact-graph.md).
+# Under that task the native edge set is the problem statement rather than a
+# shortcut through it, so a section may express it again.
+#
+# **The 9 Nov reasoning is superseded by a decision, not shown to be wrong.**
+# It ran: there is no target graph at inference, so the same wiring is a leak
+# of the one thing the project is for -- who contacts whom IS the structural
 # interaction topology an ablation or an autoencoder on the rule would be
 # trying to recover; hand it over and the rule never learns it, so there is
-# nothing in the weights to read back. A ceiling on the claim is survivable; a
-# ceiling on the payoff is not.
+# nothing in the weights to read back. Every step of that is still valid *under
+# the discover-the-topology payoff*, and that payoff is the thing the decision
+# discards. Nothing measured contradicted it. Keep it here, because if the
+# project ever goes back to wanting the topology out of the weights, this
+# paragraph is the reason the setting has to go again.
 #
-# The setting is gone from the schema, so these sections can no longer be
-# expressed and are not commented out -- they are deleted. Their results stand
+# **What the four arms' numbers are, and are not.** Their results stand exactly
 # as recorded, and the tree that produced them is commit bd0c7f8:
 #
 #   g13_natedge  32489939  native_edges                  settled 11.42
 #   g15_both     32494313  native_edges + pairwise        settled 10.24
 #   g16_localrot  (never run)  g15 + lab_rotation = false
-#                 -- re-registered 15 Nov as `g23_localrot` off g20_orient,
-#                    because this comparator can no longer be expressed.
+#                 -- re-registered 15 Nov as `g23_localrot` off g20_orient.
 #   g17_long     32505354  g15 + updates = 10000          settled  6.69
 #   g18_seed1    32507434  g15 + seed = 1                 settled 10.21 (void)
 #
-# tests/test_config.py::test_the_retired_arms_can_no_longer_be_expressed holds
-# their recorded command lines and asserts the schema now rejects them, so the
-# removal is a measurement rather than an assumption.
+# **All four ran `move_weight = 1.0`.** Teacher forcing supplies the ideal move
+# at every step, which is a ceiling in any framing and is the ceiling the
+# decision does NOT lift. So 6.69 is what a teacher-forced rule did with a
+# given graph, and it must NEVER be set beside `g25`'s free-running 8.10 A:
+# that pair differs in two things and the pretty direction is the forced one.
+# The arm the decision actually specifies -- given graph, `move_weight = 0` --
+# has never been run.
+#
+# tests/test_config.py::test_the_native_edge_arms_can_be_expressed_again holds
+# the command lines of the two arms whose Slurm logs were transcribed verbatim
+# (g13_natedge and g15_both) and asserts the schema parses them again, so the
+# restoration is a measurement rather than an assumption. g17_long and
+# g18_seed1 are recorded above as diffs off g15 and their verbatim lines were
+# never transcribed; an earlier version of this banner claimed the test held
+# all four.
 # ======================================================================
 
 # ======================================================================
@@ -128,7 +166,11 @@ pairwise_weight = 0.01
 # written here. A ceiling is information fed into the rollout that no real run
 # has at inference: `move_weight` supplies the ideal move at every step, and
 # `native_edges` supplied the target contact graph as perception. Both are gone
-# from this arm. Native structure in the LOSS is not a ceiling -- it is ordinary
+# from this arm. (Of those two, only `move_weight` is still read as a ceiling:
+# the 23 Nov decision makes the given graph the task statement, so this arm's
+# `native_edges = false` is now a HARDER task than the one the project means to
+# be solving, not a cleaner one. It is kept as recorded; the banner above says
+# why.) Native structure in the LOSS is not a ceiling -- it is ordinary
 # supervised training, which ProteinMPNN, RFdiffusion and Chroma all do -- and
 # this arm still has it, in clamped FAPE and in the native CA-CA target of the
 # pairwise term. Rung 3 of the ladder is where the native target goes away.
@@ -575,9 +617,13 @@ steps_min = 40
 #     and is a real test; the full crop bounding box exceeds the budget, so a
 #     failure there would measure `steps` rather than capability.
 #
-# What CANNOT be done to help it: freezing the selection to the native edge
-# set. That was `native_edges`, removed 9 Nov as a leak of the one thing the
-# project exists to recover (`torch_graph.py:330`). It has to work on live
+# What this arm deliberately does NOT do: freeze the selection to the native
+# edge set. That is `native_edges`, which was removed on 9 Nov as a leak of the
+# one thing the project exists to recover (`torch_graph.py:330`) and restored on
+# 23 Nov as the task statement -- so it is available again, and an arm that
+# turns it on is a DIFFERENT task from this one rather than a cheat at this
+# one. Written when it was unavailable; this arm still asks the harder
+# question, which is whether the rule can work on live
 # graphs, which the forced sequence neighbours make possible -- residue i
 # always perceives i+-1 at any distance, so the chain can zip up from
 # connectivity before any contact comes inside the 10 A cutoff.

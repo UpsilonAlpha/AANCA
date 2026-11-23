@@ -50,7 +50,7 @@ import torch
 
 from aanca import checkpoint as ckpt
 from aanca.data import RepackingDataset, read_manifest
-from aanca.growth import GrowthConfig, growth_objective
+from aanca.growth import GrowthConfig, growth_objective, native_edge_selection
 from aanca.model import AANCARule
 from aanca.rollout import RolloutConfig
 
@@ -59,15 +59,56 @@ PDB = ROOT / "data" / "pdb"
 MANIFEST = ROOT / "data" / "manifest.json"
 
 
-#: A recorded setting the schema no longer has, and the readout flag that
-#: reproduces what it did. ``native_edges`` was removed from the trainer on
-#: 9 Nov as a leak, and ``g13_natedge``, ``g15_both`` and ``g17_long`` trained
-#: with it, so their ``args`` carry a key nothing in the current tree reads.
-#: Reading those weights without ``--native-edges`` is a *different experiment*
-#: from the one that produced them -- the same k-NN-every-step perception every
-#: other arm has -- and it would print under their tag. Mapped rather than
-#: merely listed so the refusal can say what to pass.
-RETIRED_SETTINGS = {"native_edges": "--native-edges"}
+#: Recorded settings the schema no longer has, mapped to the readout flag that
+#: reproduces each one. **Empty on purpose, and the machinery is kept.**
+#:
+#: ``native_edges`` lived here from 9 Nov, when it was removed from the trainer
+#: as a leak, until 23 Nov, when it was restored to ``build_schema`` as the
+#: task statement rather than a leak
+#: (``docs/claims/the-task-is-to-realise-coordinates-for-a-given-contact-graph.md``).
+#: It is therefore an ordinary setting again, which the readout resolves and
+#: reproduces with ``--native-edges`` -- see ``perception_mismatch``, which is
+#: where the part of that guard worth keeping went. A key that is *unresolved*
+#: is still refused by name, which is the general protection and is not about
+#: any one setting; this dict is only for the narrower case of a key the schema
+#: has lost that the readout can nonetheless reproduce, and there is none today.
+RETIRED_SETTINGS: dict[str, str] = {}
+
+
+def perception_mismatch(stored: dict, native_edges: bool) -> str | None:
+    """Why the readout's perception would not be the run's, or ``None``.
+
+    **The half of the retirement guard that outlived the retirement.** The
+    schema check asks whether a recorded key has a reader; this asks the
+    question that actually mattered -- whether reading these weights under this
+    flag is the experiment that produced them.
+
+    ``native_edges`` is a recorded setting again, so nothing in
+    ``unresolved_settings`` fires on it, and ``stored.get`` would drop it in
+    silence exactly as it did before 9 Nov. An arm trained with the native edge
+    set (``g13_natedge``, ``g15_both``, ``g17_long``, ``g18``) read *without*
+    ``--native-edges`` is being run under a perception it never had: the same
+    k-NN-every-step graph every other arm has, printed under its tag. That is
+    the 6 Nov failure -- a probe substituting its own behaviour for the run's
+    with nothing in the output to say so -- and it is refused.
+
+    The reverse is not a mismatch but the diagnostic itself: an arm trained on
+    live edges, read with ``--native-edges``, is the one-variable ceiling
+    comparison this script exists for, and the banner says so on every such run.
+    So only one direction is an error.
+    """
+    if bool(stored.get("native_edges")) and not native_edges:
+        return (
+            "native_edges = True was recorded, so this run perceived over the "
+            "edge set its NATIVE coordinates select. Reading it without "
+            "--native-edges rebuilds the graph from the live coordinates every "
+            "step, which is a different experiment from the one that produced "
+            "these weights, and the table would print under this run's tag. "
+            "Pass --native-edges to reproduce the run's perception; the result "
+            "is then this run's own number, and is not comparable to an arm "
+            "that rebuilt its graph from the live coordinates."
+        )
+    return None
 
 
 def unresolved_settings(stored: dict) -> list[str]:
@@ -102,55 +143,91 @@ def unresolved_settings(stored: dict) -> list[str]:
     return sorted(set(stored) - known - set(run_config.RUNTIME_ONLY))
 
 
-def native_selection(native, topo, config, identity: bool):
-    """``FixedNeighbours`` -- the edge set the NATIVE coordinates would select.
+#: **``aanca.growth.native_edge_selection``, not a copy of it here.** This file
+#: carried its own ``native_selection``, built the same way, from the day the
+#: flag was added until the trainer gained the selection on 23 Nov. Two
+#: functions whose entire content is "nothing differs but the coordinates the
+#: selection is computed from" is precisely where a silent divergence hides --
+#: one of them gains ``include_sequence_neighbours``, or stops blinding, and the
+#: readout's ceiling stops being the thing the trainer trained. Checked line by
+#: line against the local copy before deleting it: same selector choice off
+#: ``config.device_neighbours``, same ``k`` and ``cutoff``, same
+#: ``alive_topology`` with an all-true mask, same ``blind_coords`` under
+#: ``config.blind``, same ``feature_dtype``, ``include_sequence_neighbours``
+#: left at ``build_graph``'s default in both. They agreed.
+#:
+#: **The signature trap this alias was written to document is GONE, and the
+#: history is kept because it is the reason the argument is still named.** The
+#: library function's parameter was ``identity: Tensor | None``, tested with
+#: ``identity is not None`` and never read, so passing ``False`` to it turned
+#: blinding ON -- the reverse of what the call site read as, and three tests in
+#: ``tests/test_native_edges_readout.py`` were passing exactly that. It is now
+#: ``carries_identity: bool``, read by value, so a falsy argument means no
+#: blinding and the marker object this file used to build is unnecessary.
+native_selection = native_edge_selection
 
-    **The only thing that differs from an ordinary step is the coordinates the
-    selection is computed from.** Everything else is read off the live rollout's
-    own code path rather than restated here:
 
-      * the same selector (``select_neighbours_device`` or the NumPy
-        ``select_neighbours``, picked by ``config.device_neighbours``, exactly
-        as ``torch_graph.build_graph`` picks it),
-      * the same ``k`` and ``cutoff`` the run trained with, off its own stored
-        arguments, and ``include_sequence_neighbours`` at the default
-        ``build_graph`` leaves it,
-      * the same topology ``step_once`` perceives through -- ``alive_topology``
-        with the all-true mask a ``birth = "none"`` rollout carries, since
-        ``atom_mask`` is what the selection flattens by,
-      * the same blinding, when the run carries an identity state and
-        ``config.blind``: ``step_once`` selects over ``blind_coords`` of the
-        live geometry, so selecting over unblinded native coordinates here
-        would be a second changed variable with side chains in it.
+def identity_marker(stored: dict, rule) -> bool:
+    """Whether this rollout carries an identity state, for ``carries_identity``.
 
-    Only the *selection* travels. ``FixedNeighbours`` recomputes every distance,
-    direction and envelope weight from the live coordinates every step, so the
-    rule is still perceiving the structure it has actually built -- it is just
-    being told which residues to perceive it against.
+    The same test ``growth_objective`` uses to decide whether a rollout carries
+    an identity state at all -- the head existing, or the loss having a weight
+    -- so the blinding in the fixed selection matches the blinding in the live
+    one. A plain bool: the selection only ever asks whether there is a state,
+    and the readout does not have it to give. It returned ``True`` or ``None``
+    while the library parameter branched on presence; now that it branches on
+    value, ``False`` is the answer "no" rather than a value that would be read
+    as "yes".
     """
-    from aanca.blind import blind_coords
-    from aanca.growth import alive_topology
-    from aanca.torch_graph import (
-        FixedNeighbours,
-        select_neighbours,
-        select_neighbours_device,
+    return bool(float(stored.get("identity_weight") or 0.0)) or bool(
+        getattr(rule, "identity", False)
     )
 
-    seen = native
-    if config.growth is not None:
-        topo = alive_topology(
-            topo,
-            torch.ones(topo.n_residues, dtype=torch.bool, device=native.device),
-        )
-    if identity and config.blind:
-        seen = blind_coords(seen, topo)
-    select = (
-        select_neighbours_device if config.device_neighbours else select_neighbours
+
+def damage_start(native, topo, config, damage: int, generator):
+    """``(damaged, start_coords)`` -- the rollout's start state, drawn HERE.
+
+    **Drawn before and independently of the perception choice, because it is
+    the thing the two runs of ``--native-edges`` have to share.** It reproduces
+    exactly what ``growth_objective`` does for a damage run under
+    ``birth = "none"``, which is the only branch this readout can reach: it
+    refuses a run with ``damage <= 0`` and builds its own ``GrowthConfig`` with
+    ``birth="none"``, and it never passes ``resume_from``. In that branch the
+    start is two draws off the passed generator, in this order::
+
+        damaged     = damage_window(n, links, damage, generator, device)
+        start_coords = baseline_coords(native, topo, links, ~damaged,
+                                       growth.initial, generator)
+
+    Handed a *fresh* generator seeded the same way the readout seeds the one it
+    gives ``growth_objective``, those two calls are the generator's first two
+    consumers in both places, so the reconstruction is bit-identical to the
+    state the rollout actually starts from -- and it costs no rollout.
+
+    **Why reconstruct rather than read it off the rollout.** ``result.moves``
+    is cleared at every truncation boundary (``rollout.rollout``: "Only the
+    live segment's moves are kept"), so ``moves[0]`` is the pose at the start
+    of the LAST gradient window, not the start of the rollout. For a run with
+    ``steps = 120`` and ``truncate = 12`` that pose is 108 perception-driven
+    steps downstream of the start -- which is why ``need``, a property of the
+    start state, moved between the two runs of one checkpoint and broke the
+    pairing. See ``_bearing``.
+
+    The reconstruction's one liability is drift: if ``growth_objective``'s draw
+    order changes, this goes quietly wrong. ``_bearing`` cross-checks it against
+    ``moves[0]`` on every crop where the two must agree -- a rollout short
+    enough that no clearing happened -- and says so loudly if they do not.
+    """
+    from aanca.growth import baseline_coords, damage_window, growth_links
+
+    links = growth_links(topo)
+    damaged = damage_window(
+        topo.n_residues, links, damage, generator, native.device
     )
-    neighbours, edge_mask = select(
-        seen.to(config.feature_dtype), topo, config.k, config.cutoff
+    start = baseline_coords(
+        native, topo, links, ~damaged, config.growth.initial, generator
     )
-    return FixedNeighbours(neighbours=neighbours, edge_mask=edge_mask)
+    return damaged, start
 
 
 def held_out(stored: dict, state: dict, extra: int = 0):
@@ -201,7 +278,7 @@ def held_out(stored: dict, state: dict, extra: int = 0):
     return dataset, indices, len(pool)
 
 
-def _bearing(result, native, topo, damage, stored, seed, index, local=False):
+def _bearing(result, native, topo, damaged, start_coords, config, local=False):
     """``(align, step, net_over_path, series, need)`` over the damaged window.
 
     **``need`` is the window's RMSD at the START state**, before a single step
@@ -213,6 +290,31 @@ def _bearing(result, native, topo, damage, stored, seed, index, local=False):
     and made the one crop said to sit inside the window the crop that merely
     *ended* closest, which is true by construction. See
     ``docs/RETRACTIONS.md``.
+
+    **The start state is passed in, from ``damage_start``, and is NOT read off
+    the rollout -- which is the fix for the one defect ``--native-edges`` had
+    as a comparison.** This function used to take ``first`` from
+    ``result.moves[0]`` and call it the start. ``rollout.rollout`` clears
+    ``moves`` at every truncation boundary and keeps only the live segment, so
+    ``moves[0]`` is the pose at the start of the LAST gradient window: for
+    ``steps = 120, truncate = 12`` that is step 108, reached by 108 steps the
+    perception graph drove. ``need`` therefore depended on the edge set, and the
+    jobs of 23 Nov duly show it moving between the two runs of one checkpoint
+    (``g25_equivariant`` 15.90 -> 16.14 A, ``g28_ceil_local`` 12.34 -> 12.28 A)
+    although only the edge set was meant to change -- which cost the comparison
+    its pairing and with it ``g25``'s 0.141 -> 0.208. Drawn before the
+    perception choice instead, ``need`` is bit-identical between the two runs by
+    construction and the only thing left differing is the edge set.
+
+    It is cross-checked, not trusted: whenever the rollout was short enough that
+    no truncation boundary cleared ``moves`` (``len(moves) == config.steps``),
+    ``moves[0]`` *is* the genuine start and the two must be equal. A
+    disagreement there means ``growth_objective``'s draw order has moved away
+    from ``damage_start``'s reconstruction, and it is printed rather than
+    absorbed.
+
+    ``net_over_path`` and ``series`` stay over the live segment, where the moves
+    are; that window is the one the gradient reaches and is what they are for.
 
     ``align`` is the cosine between the emitted translation and the direction
     the residue must travel to reach its native CA -- the quantity a loss value
@@ -237,20 +339,51 @@ def _bearing(result, native, topo, damage, stored, seed, index, local=False):
     ratio distinguishes them.
     """
     from aanca.backbone import frame_from_triad
-    from aanca.growth import backbone_atoms, damage_window, growth_links
+    from aanca.fape import ca_rmsd_on
+    from aanca.growth import backbone_atoms
 
     moves = getattr(result, "moves", [])
     nan = float("nan")
-    if not moves:
-        return nan, nan, nan, [], nan, nan
-    links = growth_links(topo)
-    damaged = damage_window(
-        topo.n_residues, links, damage,
-        torch.Generator().manual_seed(seed + index), native.device,
-    )
-    if not bool(damaged.any()):
-        return nan, nan, nan, [], nan, nan
     ca_native = backbone_atoms(native, topo)[:, 1]
+
+    # **The need: the window's RMSD before any step is taken, on BOTH fit
+    # masks, because the first version of this returned only the second and
+    # `gained` then subtracted two different superpositions.**
+    #
+    #   need      fit on EVERY residue, the damaged window included. This is
+    #             what `growth_objective` passes to `backbone_rmsd_on`
+    #             (`geometric = final.alive`, and a damage run is 100 % alive),
+    #             so it is the ONLY mask that makes `need - rmsd_dmg` a
+    #             like-for-like difference.
+    #   need_fit  fit on the intact context alone -- what `backbone_rmsd_on`'s
+    #             docstring says the fit should be, since putting the damaged
+    #             residues in the fit lets the superposition absorb part of the
+    #             error being asked about.
+    #
+    # Measured on the helix baseline, the mask is worth 1.06 A (10.77 against
+    # 11.83), which is the whole of the 1.02 A that three trained arms and an
+    # untrained one all appeared to "gain". Both are printed so the convention
+    # can never again be invisible in the column.
+    #
+    # Computed from the passed-in start state, which is why it is the same
+    # number under either perception. See this function's docstring.
+    ca_start = backbone_atoms(start_coords, topo)[:, 1]
+    intact = ~damaged
+    everything = torch.ones_like(damaged)
+    need = need_fit = nan
+    if bool(damaged.any()) and int(everything.sum()) >= 3:
+        need = float(ca_rmsd_on(
+            ca_start[everything], ca_native[everything],
+            ca_start[damaged], ca_native[damaged],
+        ))
+    if bool(damaged.any()) and int(intact.sum()) >= 3:
+        need_fit = float(ca_rmsd_on(
+            ca_start[intact], ca_native[intact],
+            ca_start[damaged], ca_native[damaged],
+        ))
+
+    if not moves or not bool(damaged.any()):
+        return nan, nan, nan, [], need, need_fit
 
     cosines, lengths, series = [], [], []
     path = None
@@ -302,41 +435,25 @@ def _bearing(result, native, topo, damage, stored, seed, index, local=False):
         lengths.append(emitted.norm(dim=-1).mean())
 
     if not cosines:
-        return nan, nan, nan, [], nan, nan
+        return nan, nan, nan, [], need, need_fit
     net = (previous - first).norm(dim=-1)[damaged].mean()
     walked = path[damaged].mean()
-    # **The need: the window's RMSD before any step is taken, on BOTH fit
-    # masks, because the first version of this returned only the second and
-    # `gained` then subtracted two different superpositions.**
-    #
-    #   need      fit on EVERY residue, the damaged window included. This is
-    #             what `growth_objective` passes to `backbone_rmsd_on`
-    #             (`geometric = final.alive`, and a damage run is 100 % alive),
-    #             so it is the ONLY mask that makes `need - rmsd_dmg` a
-    #             like-for-like difference.
-    #   need_fit  fit on the intact context alone -- what `backbone_rmsd_on`'s
-    #             docstring says the fit should be, since putting the damaged
-    #             residues in the fit lets the superposition absorb part of the
-    #             error being asked about.
-    #
-    # Measured on the helix baseline, the mask is worth 1.06 A (10.77 against
-    # 11.83), which is the whole of the 1.02 A that three trained arms and an
-    # untrained one all appeared to "gain". Both are printed so the convention
-    # can never again be invisible in the column.
-    from aanca.fape import ca_rmsd_on
-    intact = ~damaged
-    everything = torch.ones_like(damaged)
-    need = need_fit = nan
-    if int(everything.sum()) >= 3:
-        need = float(ca_rmsd_on(
-            first[everything], ca_native[everything],
-            first[damaged], ca_native[damaged],
-        ))
-    if int(intact.sum()) >= 3:
-        need_fit = float(ca_rmsd_on(
-            first[intact], ca_native[intact],
-            first[damaged], ca_native[damaged],
-        ))
+    # **The reconstruction, checked against the rollout wherever the two must
+    # agree.** `moves` is cleared at every truncation boundary, so `moves[0]`
+    # is the genuine start state only when no boundary was crossed -- exactly
+    # when the rollout recorded one move per step. On those crops the
+    # reconstruction is testable at no cost, and a mismatch means
+    # `growth_objective`'s draw order has moved away from `damage_start`.
+    # Printed rather than absorbed: a `need` quietly computed from a state no
+    # rollout started at is the 6 Nov failure in a third costume.
+    if len(moves) == config.steps:
+        gap = float((first - ca_start).abs().max())
+        if gap > 1e-5:
+            print(f"  *** THE START STATE RECONSTRUCTION HAS DRIFTED: it is")
+            print(f"  *** {gap:.3g} A from the pose the rollout actually began")
+            print("  *** at, on a rollout short enough that `moves[0]` IS the")
+            print("  *** start. `damage_start` no longer reproduces")
+            print("  *** `growth_objective`'s draws. Every `need` is suspect.")
     return (
         float(torch.stack(cosines).mean()),
         float(torch.stack(lengths).mean()),
@@ -397,10 +514,15 @@ def main() -> int:
             "measure itself against anyway. Any number produced under it is a "
             "CEILING -- the most a rule of this shape could do if its "
             "perception graph were correct -- and is NEVER a regeneration "
-            "number and never comparable to one. Training on it was retired on "
-            "9 Nov for exactly that reason, the `native_edges` setting was "
-            "removed from the config schema, and the arms that used it are "
-            "retired; this is readout-only and leaves no weights behind. Only "
+            "number and never comparable to one. **That reading holds for an "
+            "arm that trained on live edges, which is what this flag is for.** "
+            "On an arm that RECORDED `native_edges` it is instead a "
+            "reproduction of the perception that run trained under: the "
+            "setting was removed from the schema on 9 Nov as a leak and "
+            "restored on 23 Nov as the task statement "
+            "(docs/claims/the-task-is-to-realise-coordinates-for-a-given-"
+            "contact-graph.md), so the readout says which of the two it is on "
+            "every run and refuses to read such an arm without this flag. Only "
             "the selection is frozen: distances, directions and the envelope "
             "are recomputed from the live coordinates every step, so with and "
             "without the flag on one checkpoint is a one-variable comparison"
@@ -445,17 +567,28 @@ def main() -> int:
         print("  *** A key this tree no longer reads would therefore be")
         print("  *** dropped in silence. Treat every number below as")
         print("  *** unattributed until this is fixed.")
+    # **A recorded setting the schema HAS, read under a perception the run
+    # never had, must not be read past in silence either.** The schema check
+    # above cannot see this one: ``native_edges`` resolves now, so it is the
+    # value and the flag that have to agree rather than the key that has to
+    # exist. See ``perception_mismatch``.
+    mismatch = perception_mismatch(stored, args.native_edges)
+    if mismatch:
+        print(f"checkpoint : {path}")
+        print("  *** REFUSING: this checkpoint's recorded perception is not the")
+        print("  *** one the readout was asked for, so the numbers would not be")
+        print("  *** this run's. Naming it rather than ignoring it:")
+        print(f"  ***   {mismatch}")
+        return 1
     reconciled = {
         # A retired setting is accounted for when the readout was asked to
         # reproduce it, or when the run recorded it OFF -- a falsy value is
         # what the schema's absence already means, so there is nothing for the
-        # operator to reconcile.
+        # operator to reconcile. ``RETIRED_SETTINGS`` is empty today, so this
+        # set is too; it is the mechanism for the next retirement, and the
+        # branch below is what refuses in the meantime.
         key for key in unresolved
-        if key in RETIRED_SETTINGS
-        and (
-            not stored.get(key)
-            or (key == "native_edges" and args.native_edges)
-        )
+        if key in RETIRED_SETTINGS and not stored.get(key)
     }
     if set(unresolved) - reconciled:
         print(f"checkpoint : {path}")
@@ -539,6 +672,16 @@ def main() -> int:
         ),
     )
     seed = int(stored.get("seed", 0))
+    # **The global torch stream, seeded, because it is unseeded otherwise and
+    # so differs between any two processes.** Measured: ``native_selection``
+    # consumes nothing from it, and nothing in the start state or the rollout
+    # reads it -- those all take the explicit generator -- so this is not the
+    # defect that moved ``need``. But ``--untrained`` draws its weights from it,
+    # which made that control irreproducible run to run, and an unseeded stream
+    # is an unexamined difference between two runs that are supposed to differ
+    # in one thing. Seeded from the run's own seed, so it is a property of the
+    # checkpoint and not of the day.
+    torch.manual_seed(seed)
     rows = []
     rng = random.Random(seed)
     for index in indices:
@@ -567,6 +710,18 @@ def main() -> int:
                     ) * args.perturb
                 )
         rule.eval()
+        # **Everything that consumes randomness is drawn HERE, above the
+        # perception choice, so the two runs of ``--native-edges`` share it.**
+        # The damaged window and the baseline fill are the rollout's start
+        # state, and the start state is not a function of perception -- but
+        # ``need`` used to be read off ``result.moves[0]``, which is the start
+        # of the LAST truncation window and therefore is. Reconstructing the
+        # start before the rollout makes the pairing structural rather than
+        # hoped for: with and without the flag, ``need`` is now bit-identical.
+        damaged, start_coords = damage_start(
+            native, topo, config, damage,
+            torch.Generator().manual_seed(seed + index),
+        )
         # Built per crop, because the selection is a function of this crop's
         # topology and its native coordinates. ``identity`` is the same test
         # ``growth_objective`` uses to decide whether a rollout carries an
@@ -575,8 +730,7 @@ def main() -> int:
         if args.native_edges:
             fixed = native_selection(
                 native, topo, config,
-                identity=bool(float(stored.get("identity_weight") or 0.0))
-                or bool(getattr(rule, "identity", False)),
+                carries_identity=identity_marker(stored, rule),
             )
         with torch.no_grad():
             terms, result = growth_objective(
@@ -593,7 +747,7 @@ def main() -> int:
         if terms.rmsd_damaged is None:
             continue
         align, step, ratio, series, need, need_fit = _bearing(
-            result, native, topo, damage, stored, seed, index,
+            result, native, topo, damaged, start_coords, config,
             local=bool(stored.get("equivariant_move")),
         )
         rows.append((
@@ -645,10 +799,22 @@ def main() -> int:
     if args.native_edges:
         print("NATIVE EDGES: the neighbour SELECTION was held at the edge set")
         print("  *** the native coordinates select, for every step of every")
-        print("  *** crop. Features stayed live. This hands the rule the")
-        print("  *** answer's contact topology, which it does not have at")
-        print("  *** inference -- every number below is a CEILING and is NOT a")
-        print("  *** regeneration result. Training on this was retired 9 Nov.")
+        print("  *** crop. Features stayed live.")
+        if stored.get("native_edges"):
+            # The run trained this way, so this is a reproduction of its own
+            # perception and not a ceiling imposed on it from outside.
+            print("  *** This run RECORDED native_edges, so this reproduces the")
+            print("  *** perception it trained under. Under")
+            print("  *** docs/claims/the-task-is-to-realise-coordinates-for-a-")
+            print("  *** given-contact-graph.md the target graph is the task's")
+            print("  *** own input rather than a leak, so these numbers are the")
+            print("  *** run's -- but they are NOT comparable to an arm that")
+            print("  *** rebuilt its graph from the live coordinates.")
+        else:
+            print("  *** This run did NOT record native_edges, so the flag hands")
+            print("  *** the rule a contact topology it never trained with and")
+            print("  *** does not have at inference: every number below is a")
+            print("  *** CEILING and is NOT a regeneration result.")
     else:
         print("perception graph rebuilt from the live coordinates every step "
               "(no --native-edges)")
@@ -679,6 +845,11 @@ def main() -> int:
     print("  *** metric's docstring asks for; the gap between it and `need` is")
     print("  *** how much error the superposition absorbs, ~1 A, and it is NOT")
     print("  *** anything the rule did.")
+    print("  *** `need` and `needfit` are computed from the start state drawn")
+    print("  *** BEFORE the perception choice, so they are bit-identical with")
+    print("  *** and without --native-edges. They were previously read off")
+    print("  *** `moves[0]`, which is the start of the last truncation window,")
+    print("  *** and so moved between the two runs of one checkpoint.")
     cap = 0.3
     used = 100 * sum(r[5] for r in rows) / n / cap
     print(f"\n  step against the {cap:g} A cap: {used:.1f}% used")

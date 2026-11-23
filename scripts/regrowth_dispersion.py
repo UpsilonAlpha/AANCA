@@ -33,8 +33,10 @@ And the sweep answers the question a single N cannot:
 **Rolled to convergence, not to a fixed horizon**, on the rule's **own**
 successive coordinates: the chunk-to-chunk CA movement of the damaged window
 falling below ``--tol``. Never on RMSD to native -- a stopping rule that reads
-the target puts the answer back inside the rollout, which is what ``native_edges``
-was removed for. Runs that hit ``--max-steps`` are reported as unconverged
+the target puts the answer back inside the rollout. (``native_edges`` was
+removed on 9 Nov under that heading and restored on 23 Nov as the task
+statement; a *stopping rule* that reads the target is not covered by that
+decision, and the convergence criterion here stays on the rule's own motion.) Runs that hit ``--max-steps`` are reported as unconverged
 rather than silently truncated, because some graph-CA rules oscillate instead of
 settling. ``steps`` is reported beside the spread: a rule that never moves
 converges immediately, so settling time means nothing on its own.

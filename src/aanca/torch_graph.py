@@ -326,15 +326,23 @@ class FixedNeighbours:
     information while the information it reads is local to somewhere else. This
     class is the seam where a different selection can be injected.
 
-    **What used to come through here, and why it no longer does.** The 8 Nov
+    **What comes through here, and the one reversal in its history.** The 8 Nov
     diagnostic held the selection at the edge set of the *native* coordinates,
     copying E(n)-equivariant Graph Neural Cellular Automata (TMLR 2024), which
-    message-passes over the target graph. That is sound where the graph is the
-    problem's input; here it is a leak of the one thing the project exists to
-    recover, since who contacts whom *is* the structural-interaction topology an
-    ablation on the rule would be trying to read out of it. The
-    ``native_edges`` setting was removed on 9 Nov and the arms that used it are
-    retired (``configs/regeneration.toml``).
+    message-passes over the target graph. On 9 Nov that was judged a leak of the
+    one thing the project exists to recover -- who contacts whom *is* the
+    structural-interaction topology an ablation on the rule would be trying to
+    read out of it -- and the ``native_edges`` setting was removed.
+
+    **Restored 23 Nov**, because the published reading is also this project's:
+    the task is to realise coordinates for a *given* contact graph, so reading
+    the graph is the task statement rather than a shortcut through it
+    (``docs/claims/the-task-is-to-realise-coordinates-for-a-given-contact-graph.md``;
+    the setting is ``growth.native_edge_selection``). The 9 Nov argument is
+    superseded by that decision rather than refuted: it holds exactly under the
+    discarded discover-the-topology payoff. The four arms that trained with it
+    stand as recorded and were all teacher-forced
+    (``configs/regeneration.toml``).
 
     **The seam is kept deliberately.** A selection the rule *computes* -- scored
     candidate edges pruned to a per-residue budget -- arrives the same way, and

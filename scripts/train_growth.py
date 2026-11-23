@@ -143,6 +143,30 @@ WARM_START_MUST_MATCH = (
     # regeneration one would splice two experiments into one curve, and the
     # held-out numbers are not even comparable between them.
     "damage",
+    # ``hidden_dim`` and ``message_dim`` are the only entries here that are
+    # architecture in the strongest sense: they set the SHAPE of every weight
+    # tensor the checkpoint holds, so a warm start across either one does not
+    # reinterpret the weights -- it cannot load them at all. That is exactly
+    # the case the list was written for: the comment above says
+    # "mat1 and mat2 shapes cannot be multiplied" is the wrong thing to tell
+    # someone who warm-started from the wrong run, and ``load_state_dict``
+    # would raise precisely that (or, worse, a size-mismatch report over
+    # twenty tensors) several screens after the run began. Named here, it is
+    # refused up front with the two numbers printed.
+    #
+    # ``pairwise_window_weight`` is deliberately NOT here, for the same reason
+    # ``pairwise_weight``, ``clash_weight`` and ``fape_weight`` are not: a
+    # weight changes what the loss charges and not what a weight MEANS, so the
+    # splice it would permit is the ordinary one of continuing training under
+    # a changed objective, which this project does on purpose. The entries
+    # here are shapes, data, and the two settings (``move_weight``,
+    # ``damage``) that change which *question* a run is asking.
+    "hidden_dim", "message_dim",
+    # ``native_edges`` decides which graph the rule perceives over, which is a
+    # difference in the task statement rather than in a weight: a warm start
+    # across it would hand a rule trained to find its own neighbourhood a given
+    # one, or the reverse, and put the two curves on the same axis.
+    "native_edges",
 )
 
 
@@ -186,6 +210,31 @@ def identity_track(args) -> bool:
     if args.identity_track == "off":
         return False
     return bool(args.identity_weight)
+
+
+def build_rule(args) -> AANCARule:
+    """The rule a section asks for, as a function so a test can build one.
+
+    Lifted out of ``main`` when ``hidden_dim`` and ``message_dim`` became
+    settings, for the reason the project keeps relearning: a setting that
+    *appears* to be used and is not has cost retractions, and the only way to
+    assert that one reaches the model is to construct the model the way the
+    run does. ``main`` called ``AANCARule`` inline, two hundred lines past the
+    manifest and the dataset, so nothing short of a full run could check it.
+    Behaviour is unchanged -- this is the same call with the same arguments.
+    """
+    return AANCARule(
+        growth=True,
+        birth=args.birth,
+        hidden_dim=args.hidden_dim,
+        message_dim=args.message_dim,
+        morphogen=args.morphogen,
+        activation_init=args.activation_init,
+        max_rotation=args.max_rotation,
+        max_translation=args.max_translation,
+        identity=identity_track(args),
+        identity_keep=args.identity_keep,
+    )
 
 
 def build_config(args, activation: str) -> RolloutConfig:
@@ -292,7 +341,21 @@ def score(rule, dataset, indices, args, config, seed: int = 0) -> dict[str, floa
                 clash_tolerance=args.clash_tolerance,
                 clash_bonded=args.clash_bonded,
                 pairwise_weight=args.pairwise_weight,
+                # Passed for the same reason as the line above it: a weight
+                # that reaches the training step and not the evaluation makes
+                # the held-out `total` a different sum from the one being
+                # optimised. Both halves stay in the reported columns
+                # (`pair_anchor`, `pair_window`) either way.
+                pairwise_window_weight=args.pairwise_window_weight,
                 freeze_context=args.freeze_context,
+                # **The held-out score has to perceive the way training did.**
+                # The same reason `move` and `clash` are passed above: a
+                # setting that reaches the training step and not the evaluation
+                # makes the eval a different experiment from the run, and this
+                # one changes perception rather than a weight, so the held-out
+                # number would be the k-NN-every-step rule's and would print
+                # under a native-edges arm's tag.
+                native_edges=args.native_edges,
             )
             sums["total"] += float(terms.total)
             sums["fape"] += float(terms.fape)
@@ -382,19 +445,29 @@ def report(scores: dict[str, float], identity: bool) -> str:
             "   (both unweighted; clash reads 0.00002 on a crystal)"
         )
     if scores.get("dmg_n", 0):
-        # **Printed on every regeneration run, weighted or not.** The anchor
-        # half is the one `--pairwise-weight` charges and the one that carries
-        # placement; the window half is its control. Both unweighted and in
-        # A^2, so they are comparable against the displacement they describe
+        # **Printed on every regeneration run, weighted or not, and the two
+        # halves stay apart.** The anchor half is the one `--pairwise-weight`
+        # charges and the one that carries placement; the window half is
+        # charged by `--pairwise-window-weight` and is the control when that is
+        # zero. Keeping them in separate columns is load-bearing rather than
+        # tidy: a single number could fall because the window's internal shape
+        # tidied up while its placement never moved, which is the failure the
+        # project spent seven arms unable to see. Both printed unweighted and
+        # in A^2, so they are comparable against the displacement they describe
         # and against an arm that did not use the term -- which is the whole
         # reason the objective computes them unconditionally (job 32405172).
+        #
+        # The line no longer claims which half is weighted, because since the
+        # port that depends on the section: `report` is handed scores and not
+        # settings, and the banner at the top of the run prints the weights.
         lines.append(
             f"\n  pairwise (A^2, unclamped): anchor "
             f"{scores['pair_anchor']:>8.2f}   window "
-            f"{scores['pair_window']:>7.2f}   (both 0 on a crystal; only "
-            "anchor is weighted.\n  The ideal-helix start reads 53/17 on the "
-            "LAPTOP's 412 and the cluster's\n  are a different 412, so read "
-            "it against this run's own first evaluation)"
+            f"{scores['pair_window']:>7.2f}   (both 0 on a crystal; each half "
+            "has its own\n  weight -- see the banner.  The ideal-helix start "
+            "reads 53/17 on the\n  LAPTOP's 412 and the cluster's are a "
+            "different 412, so read\n  it against this run's own first "
+            "evaluation)"
         )
     if scores.get("dmg_n", 0):
         lines.append(
@@ -468,6 +541,32 @@ def build_schema() -> argparse.ArgumentParser:
     parser.add_argument("--steps", type=int, default=40)
     parser.add_argument("--truncate", type=int, default=12)
     parser.add_argument("--k", type=int, default=32)
+    parser.add_argument(
+        "--native-edges", action="store_true",
+        help=(
+            "hold the rollout's neighbour SELECTION at the edge set the NATIVE "
+            "coordinates select, instead of rebuilding it each step from the "
+            "live ones. **THE TASK STATEMENT, not a ceiling.** The task this "
+            "project is mapping is E(n)-equivariant Graph NCA's (TMLR 2024) -- "
+            "realise coordinates for THIS graph -- where the target graph is "
+            "the problem's own input, so reading it is the problem rather than "
+            "a shortcut through it "
+            "(docs/claims/the-task-is-to-realise-coordinates-for-a-given-"
+            "contact-graph.md, decided 23 Nov). The contrary reading retired "
+            "this setting on 9 Nov, as a leak of the structural-interaction "
+            "topology an ablation on the rule would want to recover; that "
+            "reasoning holds only under the discover-the-topology payoff, "
+            "which the project has discarded, and it is recorded as superseded "
+            "by a decision rather than as shown wrong. The ceiling that is "
+            "still a ceiling is --move-weight, which supplies the ideal move: "
+            "every arm that ran with native edges (g13, g15, g17, g18) also "
+            "ran --move-weight 1.0, so their numbers are NOT comparable with a "
+            "free-running one. Only the selection is held: distances, "
+            "directions and the envelope are recomputed from the live "
+            "coordinates every step, so with and without this on one rule is a "
+            "one-variable comparison"
+        ),
+    )
     parser.add_argument("--update-schedule", default="bernoulli")
     parser.add_argument(
         "--pool-probability", type=float, default=0.0,
@@ -618,6 +717,31 @@ def build_schema() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--pairwise-window-weight", type=float, default=0.0,
+        help=(
+            "weight on the WINDOW-TO-WINDOW half of the same unclamped CA-CA "
+            "restraint, in A^2. **A second weight, not a change to what "
+            "--pairwise-weight means**: that key stays anchor-only, so every "
+            "arm g14 to g28 resolves to the objective it actually ran under "
+            "and 0.0 here is bit-identical to the loss before this setting "
+            "existed. The port sets it, because the published loss is over "
+            "ALL pairs and its authors call that necessary to identify the "
+            "target state uniquely (Ulban, 23 Nov; "
+            "docs/claims/the-task-is-to-realise-coordinates-for-a-given-"
+            "contact-graph.md). What is being overridden is a real "
+            "measurement and it is worth knowing what kind: walking the "
+            "window LINEARLY to its native pose makes this half rise from 8.7 "
+            "to 44.7 A^2 before falling, because a straight line between two "
+            "poses passes through a contracted intermediate -- so it says the "
+            "straight line is a bad path, not that the loss is a bad "
+            "objective, and gradient descent does not take the straight line. "
+            "Watch pair_window, which is reported separately from pair_anchor "
+            "on every run and stays so: a single number over both halves "
+            "could fall because the window tidied its own shape while its "
+            "placement never moved"
+        ),
+    )
+    parser.add_argument(
         "--fape-weight", type=float, default=1.0,
         help=(
             "how hard FAPE pulls the structure onto the native. 1.0 is every "
@@ -699,6 +823,51 @@ def build_schema() -> argparse.ArgumentParser:
             "carry the chain-transported field from aanca.morphogen and feed "
             "it to perception: a route between two residues that does not "
             "depend on them being within the perception cutoff"
+        ),
+    )
+    # **The network's size, which had no key at all until the port needed one.**
+    # These two are not new architecture: they are the two width arguments
+    # `AANCARule.__init__` has always taken, surfaced so a section can choose
+    # them. Every run before this setting existed was built from the
+    # constructor's own defaults, so 96 and 128 here reproduce all of them, and
+    # the defaults are stated rather than left implicit for the same reason
+    # `[base.inputs]` states everything: a change to the model's default must
+    # not silently reinterpret a recorded arm.
+    #
+    # Why the port needs them: the published rule that succeeds at the
+    # analogous task has ~5,000 parameters and ours is built at 229,588
+    # (docs/claims/the-port-must-reproduce-the-published-result-on-point-
+    # clouds-before-it-is-run-on-proteins.md, last line of the port table).
+    # The banner already prints `rule.parameter_count()`, so an arm's size is
+    # readable in its own log the moment it is set.
+    #
+    # **The floor is 17,552, not 5,000, and that is a fact about the heads and
+    # the featuriser rather than about these keys.** Every head is
+    # `Linear(state_dim, 64)` with the 64 hardcoded, `state_dim` is
+    # `node_dim + hidden_dim`, and a growth rule's `node_dim` is 56 (32
+    # featuriser channels plus the 24-channel closure block) -- so four heads
+    # cost ~14.6 kparam at `hidden_dim = 1` and nothing in this constructor can
+    # make them smaller. Measured counts are in the test beside this
+    # (`tests/test_network_size.py`). Reaching the published 5 kparam would
+    # need the head width exposed too, and it is NOT exposed here, because
+    # doing so is a change to the model rather than a surfacing of it.
+    parser.add_argument(
+        "--hidden-dim", type=int, default=96,
+        help=(
+            "free hidden channels each residue carries between steps. "
+            "`AANCARule`'s own default, and one of the two knobs that set the "
+            "network's size; it widens the gated update AND every head, since "
+            "a head reads `node_dim + hidden_dim`. NOT warm-startable across "
+            "-- see WARM_START_MUST_MATCH"
+        ),
+    )
+    parser.add_argument(
+        "--message-dim", type=int, default=128,
+        help=(
+            "width of the edge embedding and the message MLP: the other size "
+            "knob, and the larger of the two at the default (the edge embed "
+            "and message MLP are 145,664 of the 229,588). `AANCARule`'s own "
+            "default. NOT warm-startable across -- see WARM_START_MUST_MATCH"
         ),
     )
     parser.add_argument("--max-births", type=int, default=8)
@@ -1041,16 +1210,7 @@ def main() -> int:
         print("no training entries left after holding some out")
         return 1
 
-    rule = AANCARule(
-        growth=True,
-        birth=args.birth,
-        morphogen=args.morphogen,
-        activation_init=args.activation_init,
-        max_rotation=args.max_rotation,
-        max_translation=args.max_translation,
-        identity=identity_track(args),
-        identity_keep=args.identity_keep,
-    ).to(device)
+    rule = build_rule(args).to(device)
     optimiser = torch.optim.Adam(rule.parameters(), lr=args.lr)
 
     config = build_config(args, args.activation)
@@ -1083,10 +1243,29 @@ def main() -> int:
     if args.init_from and not (args.resume and last_path.exists()):
         warm = ckpt.load(Path(args.init_from), map_location=device)
         stored = warm.get("args") or {}
-        changed = {
-            key: (stored.get(key), vars(args).get(key))
+        # **A key the checkpoint does not carry means the setting's default,
+        # not ``None``.** Settings are added over a project's life, and a run
+        # from before one was added is the run that setting's default
+        # describes: every checkpoint between 9 and 23 Nov predates
+        # ``native_edges`` coming back and every one of them perceived by
+        # rebuilt k-NN, which is `native_edges = false`. Comparing a missing
+        # key against ``False`` as ``None`` would refuse every one of those
+        # warm starts, and a check that cries wolf is a check that gets
+        # deleted. The pre-9-Nov checkpoints that really did train on native
+        # edges carry the key, with ``True`` in it, so the case this guards is
+        # the one it still catches.
+        schema_defaults = {
+            action.dest: action.default
+            for action in build_schema()._actions  # noqa: SLF001
+        }
+        was_stored = {
+            key: stored.get(key, schema_defaults.get(key))
             for key in WARM_START_MUST_MATCH
-            if stored.get(key) != vars(args).get(key)
+        }
+        changed = {
+            key: (was_stored[key], vars(args).get(key))
+            for key in WARM_START_MUST_MATCH
+            if was_stored[key] != vars(args).get(key)
         }
         if changed:
             detail = ", ".join(
@@ -1190,6 +1369,15 @@ def main() -> int:
         + (
             f", pairwise {args.pairwise_weight:g} (unclamped, A^2)"
             if args.pairwise_weight
+            else ""
+        )
+        # Named as the half it charges, not as "pairwise" again: the banner is
+        # how an arm says which of the two pair sets its loss was over, and
+        # "pairwise 0.01" alone has meant anchor-only for every arm so far.
+        + (
+            f", pairwise-window {args.pairwise_window_weight:g} "
+            "(the window-to-window half; FULL pair set)"
+            if args.pairwise_window_weight
             else ""
         )
     )
@@ -1326,6 +1514,7 @@ def main() -> int:
                 clash_tolerance=args.clash_tolerance,
                 clash_bonded=args.clash_bonded,
                 pairwise_weight=args.pairwise_weight,
+                pairwise_window_weight=args.pairwise_window_weight,
                 freeze_context=args.freeze_context,
                 # **Training only.** The held-out evaluation above keeps the clamp
                 # unconditionally, because a reported `fape` has to mean the same
@@ -1336,6 +1525,7 @@ def main() -> int:
                 fape_clamp_prob=args.fape_clamp_prob,
                 orientation_weight=args.orientation_weight,
                 damage=args.damage,
+                native_edges=args.native_edges,
             )
             if not torch.isfinite(terms.total):
                 raise _SkipUpdate

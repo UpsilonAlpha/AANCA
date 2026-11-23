@@ -335,3 +335,170 @@ def test_the_term_carries_a_gradient_to_the_window(regeneration):
     grad = moving.grad[damaged]
     assert torch.isfinite(grad).all()
     assert float(grad.abs().max()) > 0.0
+
+
+# ---------------------------------------------------------------------------
+# The window-to-window half, weighted. A SECOND weight, not a widening of
+# `pairwise_weight`: the port weights the full pair set (Ulban, 23 Nov,
+# docs/claims/the-task-is-to-realise-coordinates-for-a-given-contact-graph.md)
+# while every arm g14-g28 charged the anchor half alone, and both have to stay
+# expressible. What the measurement above says about the internal half -- that
+# a LINEAR walk to the native pose makes it rise from 8.7 to 44.7 A^2 before
+# falling -- is a fact about a straight line and not about the loss, so it is
+# the reason to watch `pair_window` rather than a reason to leave it unweighted.
+# ---------------------------------------------------------------------------
+
+
+def _regeneration_objective(coords, topo, **weights):
+    """One objective evaluation on the regeneration task, seed fixed.
+
+    A fresh rule per call, seeded identically, so two calls differ in nothing
+    but the weights handed in -- which is what makes the totals subtractable.
+    """
+    config = RolloutConfig(
+        steps=4, truncate=99, k=24, blind=True,
+        growth=GrowthConfig(birth="none", initial="helix"),
+    )
+    torch.manual_seed(0)
+    rule = AANCARule(growth=True, birth="none", identity=True)
+    terms, _ = growth_objective(
+        rule, coords, topo, config, torch.Generator().manual_seed(0),
+        identity_weight=0.0, damage=12, **weights,
+    )
+    return terms
+
+
+def test_the_window_half_is_unweighted_by_default_and_the_total_is_unchanged(
+    ubiquitin,
+):
+    """**The compatibility assertion: zero is bit-identical, not merely close.**
+
+    Every recorded arm's objective has to resolve to the sum it actually
+    optimised, and the way that goes wrong is a new key that defaults to
+    something, or that gets folded into an existing one. So this compares the
+    total at ``pairwise_window_weight = 0`` against the total with the argument
+    left out entirely -- i.e. against the call every existing arm makes -- and
+    requires exact equality of the floats, with a nonzero ``pair_window`` on
+    both sides so the comparison is not vacuous.
+
+    Cut the wiring (drop ``+ pairwise_window_weight * pairwise_window`` from
+    ``growth_objective``'s ``total``) and this test still passes, which is the
+    point of it: it is the half that says the default is inert. The two tests
+    below are the ones that fail.
+    """
+    topo, coords, _links = ubiquitin
+    absent = _regeneration_objective(coords, topo, pairwise_weight=0.01)
+    stated = _regeneration_objective(
+        coords, topo, pairwise_weight=0.01, pairwise_window_weight=0.0
+    )
+    assert float(absent.pairwise_window) > 0.0, "nothing to be charged for"
+    assert float(stated.total.detach()) == float(absent.total.detach())
+    # And the two halves are still reported apart, which is what makes "the
+    # window tidied itself up while its placement never moved" visible.
+    assert float(stated.pairwise_anchor) != float(stated.pairwise_window)
+
+
+def test_the_window_weight_changes_the_objective(ubiquitin):
+    """The setting does what it claims: the total rises by weight x the half.
+
+    Exactly, not approximately -- the term enters ``total`` linearly, so the
+    difference between two weights is the measured half times the difference.
+    That is the assertion a dead key cannot pass: with the wiring cut the two
+    totals are equal and this fails with
+    ``0.0 != 16.6...`` on the first comparison.
+    """
+    topo, coords, _links = ubiquitin
+    off = _regeneration_objective(
+        coords, topo, pairwise_weight=0.0, pairwise_window_weight=0.0
+    )
+    on = _regeneration_objective(
+        coords, topo, pairwise_weight=0.0, pairwise_window_weight=1.0
+    )
+    half = float(off.pairwise_window)
+    assert half > 0.0
+    # Reported unweighted, so both arms agree on the measurement.
+    assert float(on.pairwise_window) == pytest.approx(half, rel=1e-6)
+    assert float(on.total.detach()) - float(off.total.detach()) == pytest.approx(
+        half, rel=1e-4
+    )
+
+
+def test_the_two_halves_are_charged_independently(ubiquitin):
+    """``pairwise_weight`` still means the anchor half ALONE.
+
+    The failure this guards is the tempting simplification: make
+    ``pairwise_weight`` charge both halves and add a key to switch the second
+    off. That would silently change what g14's 0.01 meant. So the four corners
+    are checked -- neither, anchor only, window only, both -- and the total
+    must be additive across them, which is only true if each weight multiplies
+    its own half.
+    """
+    topo, coords, _links = ubiquitin
+    neither = _regeneration_objective(
+        coords, topo, pairwise_weight=0.0, pairwise_window_weight=0.0
+    )
+    anchor_only = _regeneration_objective(
+        coords, topo, pairwise_weight=1.0, pairwise_window_weight=0.0
+    )
+    window_only = _regeneration_objective(
+        coords, topo, pairwise_weight=0.0, pairwise_window_weight=1.0
+    )
+    both = _regeneration_objective(
+        coords, topo, pairwise_weight=1.0, pairwise_window_weight=1.0
+    )
+
+    base = float(neither.total.detach())
+    anchor = float(neither.pairwise_anchor)
+    window = float(neither.pairwise_window)
+    assert anchor > 10.0 and window > 0.0
+
+    assert float(anchor_only.total.detach()) - base == pytest.approx(
+        anchor, rel=1e-4
+    ), "pairwise_weight no longer charges the anchor half alone"
+    assert float(window_only.total.detach()) - base == pytest.approx(
+        window, rel=1e-4
+    ), "pairwise_window_weight does not charge the window half"
+    assert float(both.total.detach()) - base == pytest.approx(
+        anchor + window, rel=1e-4
+    ), "the two halves are not charged independently"
+
+
+def test_both_of_the_trainer_s_objective_calls_pass_the_new_weight():
+    """**The 32405172 failure, which was a call site and not a term.**
+
+    ``move`` and ``clash`` were computed ``if weight:`` while ``score()`` never
+    passed the weight, so the held-out column was not unprinted -- it was
+    structurally absent, a zero from a branch nobody took, printed as a number
+    that looked real, and g8_ceiling's first 1,250 updates cannot be read. The
+    term being right is therefore not enough: ``scripts/train_growth.py`` calls
+    ``growth_objective`` twice, once for the held-out score and once for the
+    training step, and a weight that reaches one and not the other makes the
+    evaluation a different experiment from the run.
+
+    Read off the source with ``ast`` rather than by running a rollout, because
+    the alternative is a GPU and 400 structures. Delete either keyword and this
+    fails naming the line.
+    """
+    import ast
+
+    source = (
+        Path(__file__).resolve().parent.parent / "scripts" / "train_growth.py"
+    ).read_text(encoding="utf-8")
+    calls = [
+        node
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "growth_objective"
+    ]
+    assert len(calls) == 2, (
+        f"expected the held-out call and the training call, found {len(calls)}"
+    )
+    for call in calls:
+        passed = {kw.arg for kw in call.keywords}
+        assert "pairwise_weight" in passed and "pairwise_window_weight" in passed, (
+            "the growth_objective call at line "
+            f"{call.lineno} does not pass both pairwise weights, so one half "
+            "of the term is charged in training and not in the evaluation "
+            f"(it passes {sorted(passed)})"
+        )

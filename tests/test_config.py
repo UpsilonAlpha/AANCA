@@ -50,12 +50,26 @@ RECORDED = {
     ),
 }
 
-#: RETIRED 9 Nov with the `native_edges` setting. Kept verbatim, because these
-#: are still the record of what those jobs ran with -- but the schema no longer
-#: accepts the flag, so no section can reproduce them and
-#: ``test_the_retired_arms_can_no_longer_be_expressed`` asserts exactly that.
-#: The tree that can still run them is commit bd0c7f8.
-RETIRED = {
+#: The native-edge arms. RETIRED 9 Nov with the ``native_edges`` setting and
+#: RESTORED 23 Nov with it, when Ulban decided the project's task is to realise
+#: coordinates for a GIVEN contact graph
+#: (``docs/claims/the-task-is-to-realise-coordinates-for-a-given-contact-graph.md``),
+#: which makes the native edge set the task statement rather than a leak.
+#:
+#: Kept verbatim, because these are the record of what those jobs ran with --
+#: the ``args :`` line each printed into its own Slurm log, not memory and not
+#: HANDOFF. Two of the four were transcribed; ``g17_long`` (32505354, g15 +
+#: ``updates = 10000``, settled 6.69) and ``g18_seed1`` (32507434, g15 +
+#: ``seed = 1``, settled 10.21, void) were recorded only as diffs off g15 and
+#: are not reconstructed here, because a line nobody transcribed is not a
+#: record. The tree they ran on is commit bd0c7f8.
+#:
+#: **All four carry ``--move-weight 1.0``.** That is teacher forcing, which is
+#: a ceiling in any framing and is the one the 23 Nov decision does not lift,
+#: so none of their numbers belongs on an axis with a free-running arm's.
+#: ``test_the_native_edge_arms_can_be_expressed_again`` asserts both halves:
+#: the line parses, and it parses as a teacher-forced native-edge run.
+NATIVE_EDGE_ARMS = {
     "g13_natedge": (
         "--tag g13_natedge --split train --updates 2000 --eval-every 250 "
         "--seeds 16 --steps 120 --resume --birth none --initial helix "
@@ -155,17 +169,34 @@ def test_a_flag_must_be_a_bool(schema, data):
         run_config.to_namespace(schema, inputs, "g14_pairwise", RUNTIME)
 
 
-@pytest.mark.parametrize("section", sorted(RETIRED))
-def test_the_retired_arms_can_no_longer_be_expressed(schema, section):
-    """The native-edges removal is real, not cosmetic.
+@pytest.mark.parametrize("section", sorted(NATIVE_EDGE_ARMS))
+def test_the_native_edge_arms_can_be_expressed_again(schema, section):
+    """The restoration is real, not cosmetic -- and the ceiling that remains is named.
 
-    If the schema ever accepts one of these lines again, the ceiling is back:
-    the rule would be reading the target contact graph, which is the
-    structural-interaction topology the whole interpretability argument needs
-    it to learn for itself.
+    This test used to assert the opposite, that these lines no longer parse,
+    and the removal it protected was protecting a payoff the project discarded
+    on 23 Nov: the native edge set is the task statement under
+    realise-coordinates-for-a-given-graph, so an arm that reads it has to be
+    expressible. If the schema stops accepting these lines, the trainer can no
+    longer state the task.
+
+    The second half is what stops the restoration being read as vindication.
+    Each of these runs was *also* teacher-forced, and that is the ceiling the
+    decision leaves in place, so the assertion is not merely that the line
+    parses but that it parses as what it was: a native-edge run with the ideal
+    move supplied at every step.
     """
-    with pytest.raises(SystemExit):
-        schema.parse_args(RETIRED[section].split())
+    args = schema.parse_args(NATIVE_EDGE_ARMS[section].split())
+    assert args.native_edges is True, (
+        f"{section}'s own recorded command line no longer resolves to a "
+        "native-edge run, so the trainer cannot state the task the project "
+        "decided on 23 Nov it is solving"
+    )
+    assert args.move_weight == 1.0, (
+        f"{section} ran teacher-forced, and that ceiling is NOT lifted by the "
+        "23 Nov decision: its numbers are not comparable with a free-running "
+        "arm's"
+    )
 
 
 def test_an_int_key_refuses_a_float(schema, data):
@@ -304,6 +335,18 @@ HISTORICAL_DEFAULTS = {
     # when the arms ran, and False reproduces them because dropping the
     # bonded residue pair whole is exactly what the old code did.
     "clash_bonded": False,
+    # The same kind of assertion again, and the reason differs between the
+    # three. `pairwise_window_weight` did not exist when the arms ran and 0.0
+    # reproduces them because charging only the anchor half is exactly what the
+    # old `total` did -- that is checkable in the diff and is checked in
+    # `tests/test_pairwise_restraint.py`. `hidden_dim` and `message_dim` did
+    # not exist either, and 96 and 128 reproduce the arms because the trainer
+    # constructed `AANCARule` from its own defaults, which are those two
+    # numbers; `git show 3b97972^:src/aanca/model.py` is the record, and the
+    # banner's parameter count is the independent half -- 229,588 is the count
+    # at exactly this pair and at no other.
+    "pairwise_window_weight": 0.0,
+    "hidden_dim": 96, "message_dim": 128,
     "pool_probability": 0.0, "steps_min": 0,
     "placement_rotation": 3.14159265, "placement_steps": 0,
     "placement_translation": 4.0, "reach_weight": 0.086, "seed": 0,
