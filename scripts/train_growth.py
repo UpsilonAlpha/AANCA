@@ -1019,15 +1019,21 @@ def main() -> int:
         return 1
 
     wanted = args.structures + args.eval_structures
-    pool = available[:wanted] if len(available) >= wanted else available
+    # **`catalogue`, not `pool`.** The Growing-NCA sample pool below is also
+    # called `pool`, in the same function scope, and shadows this list from
+    # its assignment onward. That collision cost run 33304426: the checkpoint
+    # writer's `pool[i].pdb_id` resolved to the sample pool, which is keyed by
+    # `(structure index, crop seed)` tuples, so an integer index could never
+    # be a key and every run raised `KeyError` at its first best checkpoint.
+    catalogue = available[:wanted] if len(available) >= wanted else available
     dataset = RepackingDataset(
-        pool,
+        catalogue,
         concentrations=(0.0,),
         crop_size=args.crop_size,
         device=device,
-        cache_limit=max(len(pool), 1),
+        cache_limit=max(len(catalogue), 1),
     )
-    indices = list(range(len(pool)))
+    indices = list(range(len(catalogue)))
     random.Random(args.seed).shuffle(indices)
     eval_indices = indices[: args.eval_structures]
     train_indices = indices[args.eval_structures :]
@@ -1142,6 +1148,23 @@ def main() -> int:
         ckpt.set_rng_state(state["rng"])
         ckpt.restore_python_rng(rng, state["python_rng"])
         print(f"resumed from {last_path} at update {start_update}")
+
+    # **Resolved once, before the first update, not inside the checkpoint
+    # writer.** That is where it was, and run 33304426 spent nine minutes and
+    # a full held-out evaluation before dying on it. A run that cannot name
+    # the proteins it held out should refuse in the first second, when the
+    # only thing lost is the queue wait.
+    try:
+        eval_pdb_ids = [catalogue[i].pdb_id for i in eval_indices]
+    except (IndexError, KeyError, AttributeError) as problem:
+        print(
+            f"cannot resolve eval_indices against this {len(catalogue)}-structure "
+            f"catalogue: {problem!r}. These ids are what lets a probe refuse a "
+            "pool mismatch instead of silently measuring different proteins, so "
+            "this refuses rather than training a run whose checkpoints could not "
+            "be checked."
+        )
+        return 1
 
     print(
         f"device {device}, split {args.split}: {len(train_indices)} training, "
@@ -1470,7 +1493,7 @@ def main() -> int:
                         # measuring the wrong proteins in silence. Added 21 Nov
                         # on exactly that hazard being found in
                         # `scripts/geometric_floor.py`.
-                        "eval_pdb_ids": [pool[i].pdb_id for i in eval_indices],
+                        "eval_pdb_ids": eval_pdb_ids,
                         "update": update,
                     },
                 )
@@ -1487,6 +1510,10 @@ def main() -> int:
                     "args": recorded_args(args),
                     "runtime": runtime_args(args),
                     "eval_indices": eval_indices,
+                    # The resume checkpoint carries the ids too, so a probe
+                    # pointed at last.pt is as checkable as one pointed at
+                    # best.pt rather than falling back to a warning.
+                    "eval_pdb_ids": eval_pdb_ids,
                 },
             )
 

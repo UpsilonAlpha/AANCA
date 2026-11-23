@@ -84,8 +84,30 @@ probe pointed at `last.pt` is as checkable as one pointed at `best.pt`.
     tests and the full suite passed over the broken line for two days,
     because nothing asserted what a checkpoint *contains*. A regression test
     on the checkpoint's contents is part of this fix.
+  * **The guard covers one of the two trainers.** `scripts/train.py` records
+    `eval_indices` and no `eval_pdb_ids` at all, and its structure list is not
+    called `pool`, so it never had this bug and still has no ids. Both probes
+    therefore fall back to the same warning for *every* `train.py`
+    checkpoint, new or old, which means the warning cannot be read as "this
+    checkpoint is stale" -- only as "this checkpoint has no ids". The growth
+    arms all come from `train_growth.py`, so this does not touch them.
   * It says nothing about the architecture, the objective, or any number in
     the record.
+
+## Verification of the fix
+
+A one-update run of the real driver on 9 structures, held-out split
+`[7, 5, 1]` after the seed-0 shuffle -- deliberately not in order, since an
+in-order split would not exercise the fault -- writes both `best.pt` and
+`last.pt` with `eval_pdb_ids = ['3Q5T', '4JDZ', '4DVT']`, equal to the ids
+resolved independently from the manifest. The same config on the pre-fix code
+dies exactly as the cluster did, `KeyError: 7` at the same line.
+`tests/test_growth_checkpoint_ids.py` holds two tests, both of which fail on
+the pre-fix code: one asserts the checkpoint's *contents* against
+independently resolved ids (and that the split is not in order, so it cannot
+silently stop testing anything), and one parses the trainer with `ast` and
+asserts the structure list and the sample pool do not share a name. Suite:
+966 passed.
 
 ## Supports
 - [[the-capacity-test-has-never-been-run-with-a-working-actuator-and-no-identity-break]]
