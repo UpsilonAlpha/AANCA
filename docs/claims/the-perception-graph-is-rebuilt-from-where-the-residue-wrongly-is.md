@@ -72,15 +72,39 @@ bearing than the teacher-forced one, which is independent corroboration of the
 capacity NO rather than a separate finding.
 
 **One defect in the instrument, found by reading `need` rather than `align`.**
-The comparison is nearly paired, not exactly paired: the window's starting
-distance moves between the two runs of the same checkpoint -- 15.90 -> 16.14 A
-on `g25`, 12.34 -> 12.28 A on `g28` -- although only the edge set was meant to
-change. The likely mechanism is that building the native selection draws on the
-same generator, shifting the RNG stream and so the crop `load_crop` returns, as
-that function re-crops on every visit by design. `g28`'s null survives this
-easily. **`g25`'s 0.141 -> 0.208 does not and must not be reported as a rise**,
-being the same order as the noise a crop difference can induce. Fix the pairing
-before this flag is used again.
+The window's starting distance moved between the two runs of the same
+checkpoint -- 15.90 -> 16.14 A on `g25`, 12.34 -> 12.28 A on `g28` -- although
+only the edge set was meant to change. **`g25`'s 0.141 -> 0.208 must not be
+reported as a rise**, the two runs not having been paired.
+
+**The mechanism I gave for it was wrong, and the true one is worse.** I wrote
+that building the native selection draws on the shared generator and shifts
+which crop `load_crop` returns. Measured in separate processes, that is false
+in every part: the crop seeds and coordinates are byte-identical between the
+two runs, and `alive_topology`, `blind_coords` and both neighbour selectors
+leave `torch.get_rng_state()` bit-identical. `native_selection` consumes no
+randomness at all.
+
+**What actually happened is that `need` was never the start state.**
+`rollout.rollout` clears its `moves` list at every truncation boundary
+(`rollout.py:898`, *"Only the live segment's moves are kept"*), and the readout
+took the start from `moves[0]`. For `steps = 120, truncate = 12` that pose is
+**108 perception-driven steps downstream of the start**, so `need` was a
+function of the edge set by construction -- and it moved in both directions,
+which an RNG shift would not predictably do. Every test had run at `steps = 4`,
+a single segment, where `moves[0]` genuinely is the start.
+
+**This reaches beyond the pairing: `need` as printed in EVERY earlier log of a
+`steps > truncate` run is the distance at the start of the last gradient
+window, not at the start of the rollout.** That includes the
+"crops whose START distance exceeds the window" line those logs print, and the
+median I quoted from it
+([[teacher-forcing-a-sound-actuator-leaves-the-bearing-at-zero]], where it is
+now marked for re-measurement). Fixed by drawing the start state from a
+reconstruction of `growth_objective`'s damage branch, above and independently
+of the perception choice, with a drift guard that compares the two whenever no
+boundary was crossed. The fix changes **no `align` value** -- only `need`,
+`needfit` and `gained`.
 
 ## Why this matters more than the step size
 

@@ -222,6 +222,13 @@ not asking for nothing. It asks confidently, in the wrong direction.
 
 ## What this does NOT establish
 
+  * **The control was drawn from an unseeded stream, so it is not
+    reproducible.** `--untrained --perturb 0.05` took its perturbation from the
+    torch global generator, which `main()` never seeded, so the -0.141 cannot
+    be reproduced run to run. Now seeded and verified reproducible across
+    processes, but **that number was measured before the fix** and should be
+    re-taken. Its interval crossed zero either way, so nothing read from it
+    changes.
   * **The control is not a clean null, and the pre-registered one was a
     different number.** The within-arm untrained-perturbed control reads
     -0.141, where the pre-registration cited a convention-matched null of
@@ -230,10 +237,19 @@ not asking for nothing. It asks confidently, in the wrong direction.
     phrase "indistinguishable from an untrained head" should not be used. The
     claim is **indistinguishable from zero**, which is what the bucket was
     defined on.
-  * **The arrival caveat attaches to `rmsd_dmg`, not to `align`.** The readout
-    flags that the gradient window is `truncate 12 x 0.3 A = 3.6 A` while the
-    damaged window starts a median 10.95 A from native, 10 of 12 crops beyond
-    it, so those crops *cannot be taught to arrive*. True, and it is why no
+  * **The arrival caveat attaches to `rmsd_dmg`, not to `align` -- and the
+    number I quoted for it was mis-measured.** The readout flags that the
+    gradient window is `truncate 12 x 0.3 A = 3.6 A` against the window's start
+    distance, and I quoted "a median 10.95 A from native, 10 of 12 crops beyond
+    it". **That 10.95 A was read at step 108, not at the start**: the readout
+    took the start from `result.moves[0]`, and the rollout clears `moves` at
+    every truncation boundary, so for `steps = 120, truncate = 12` it was the
+    pose entering the last gradient window
+    ([[the-perception-graph-is-rebuilt-from-where-the-residue-wrongly-is]]).
+    The true start distance is larger, so the caveat's *direction* is unchanged
+    and if anything understated; the figure is **pending re-measurement** with
+    the corrected readout and must not be quoted until then. The caveat itself
+    stands: those crops cannot be taught to arrive. True, and it is why no
     `rmsd_dmg` here means anything. It does not touch `align`, which is a
     per-step bearing and needs no arrival -- which is precisely why the
     pre-registration made `align` the primary readout. And **raising
