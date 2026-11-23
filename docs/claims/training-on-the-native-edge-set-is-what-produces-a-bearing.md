@@ -24,6 +24,63 @@ them, so "never learned to use them" does not apply to them. Jobs
 --native-edges)` -- the refusal guard reconciling correctly in production
 rather than in a test.
 
+## RETRACTED WITHIN THE HOUR: the edge set is not the variable, `lab_rotation` is
+
+**The attribution in this note's title is withdrawn.** Three further readouts,
+submitted before this was written and read after, settle it against me.
+`g19_nomove` and `g20_orient` use the **live k-NN edge set**, no teacher
+forcing and no native edges -- and read `align` **+0.293** and **+0.329**, with
+every crop positive, indistinguishable from the native-edge arms. Resolving
+every differing setting through `config.resolve`:
+
+    arm              lab_rot  native  teacher  orient  upd     align
+    g17_long          True     yes     yes      0     10000   +0.384
+    g20_orient        True     no      no       2.5   10000   +0.329
+    g13_natedge       True     yes     yes      0       750   +0.312
+    g19_nomove        True     no      no       0      9250   +0.293
+    g15_both          True     yes     yes      0      1750   +0.159
+    ---------------------------------------------------------------
+    g25_equivariant  FALSE     no      no       2.5   10000   +0.122
+    g28_ceil_local   FALSE     no      yes      0      2000   +0.036
+
+**Every arm with `lab_rotation = True` reads 0.159 to 0.384. Both arms with
+`lab_rotation = False` read 0.036 and 0.122.** The edge set varies *within* the
+upper group and makes no systematic difference; the teacher varies within it
+too. The one setting that sorts the table is the rotation convention -- the
+setting the project "fixed".
+
+**The leading explanation is the instrument, and it is pre-registered.**
+`align` is a cosine between the emitted move and the ideal one, and the readout
+prints *"emitted move rotated into the lab frame for comparison"*. If that
+rotation matches the convention of a `lab_rotation = True` run and not a
+`lab_rotation = False` one, the split is an artefact of the measurement rather
+than a property of the rules. Bucket 4 of
+[[teacher-forcing-a-sound-actuator-leaves-the-bearing-at-zero]] names exactly
+this -- *"re-check the readout's frame convention before reading anything into
+it: that exact class of error has already cost this project a retraction"* --
+and although no value here is below its -0.10 trigger, a systematic split on
+precisely the rotation setting is the same warning arriving by a different
+route. **Nothing in this note should be quoted until that convention is
+re-derived.**
+
+**The discriminating arm, predicted before it was read.** `g14_pairwise` is
+`lab_rotation = True`, live edges, teacher-forced, 2,000 updates, `pairwise
+0.01` -- which makes it `g28` with the rotation convention flipped and almost
+nothing else (`g28` has `pairwise 0`). So:
+
+  * if the rotation convention is the variable, `g14` reads roughly **0.15 to
+    0.35**;
+  * if teacher forcing on live edges is, `g14` reads roughly **0.04**, like
+    `g28`.
+
+Job 33321241 was submitted before this paragraph and is read below. Recorded
+this way round so the prediction cannot be fitted to the answer.
+
+**What survives of this note:** the five `align` numbers, the shared crop
+indices, and the observation that no arm on this architecture has ever shown a
+bearing clear of the null *with the local rotation*. What does not survive is
+the claim that the native edge set is what produced one.
+
 ## align, with the spread, on the twelve held-out crops
 
     arm            edge set   teacher   upd      mean    95% CI            neg
