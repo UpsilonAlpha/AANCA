@@ -126,6 +126,18 @@ not asking for nothing. It asks confidently, in the wrong direction.
     teacher-forced ceiling comparable only to `g8`'s and `g10`'s, never to the
     rung-1 arms or the 4.0 A bar. The context was free here.
   * **One variable is against `base`, not against `g10`.**
+  * **The NO names an architecture, and the implicated feature is the EDGE
+    SET, not the message passing.** Teacher forcing supervised the emitted
+    move; it did nothing to the *perception*, which is still a k-NN rebuilt
+    every step from the displaced coordinates
+    ([[the-perception-graph-is-rebuilt-from-where-the-residue-wrongly-is]]).
+    So this null is what that node predicted a correct implementation of a
+    mis-specified perception would produce, and the verdict reads: invariant
+    perception **over an error-derived neighbourhood** plus a local move head
+    cannot be taught to aim. It is not a verdict on message passing, which
+    `Gala 2024` shows succeeding at this task on 8 targets with 5K parameters
+    and no anchors at all, message-passing over the **target** graph
+    ([[placing-a-node-from-local-distances-needs-a-globally-rigid-neighbourhood]]).
   * **A NO does not establish that no local rule could aim**, only that this
     one cannot be taught to under the strongest supervision available. The
     bearing may have to be **constructed** rather than perceived -- by
