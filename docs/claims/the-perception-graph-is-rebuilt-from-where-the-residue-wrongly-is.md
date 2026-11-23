@@ -36,6 +36,52 @@ mechanical reading of why "the grid is already there and the rule is not
 reading it": two-thirds of it is there, and the missing third is the one that
 would tell a residue which native neighbours to measure itself against.
 
+## MEASURED 23 Nov: handing the rule the native edge set releases no bearing
+
+Jobs 33319941/42/43/62, exit 0 each, both perceptions on each of two
+checkpoints, with every log stating its own perception so neither can be
+mistaken for the other. `align`, mean over the twelve held-out crops:
+
+    checkpoint            live k-NN edges    NATIVE edges
+    g28_ceil_local             0.036            0.038
+    g25_equivariant            0.141            0.208
+
+**`g28`'s live reading reproduces the recorded +0.036 exactly, per crop as well
+as in the mean**, which is what licenses reading the rest: the readout is
+deterministic and the comparison is of the thing it claims.
+
+**Neither arm's bearing moves out of the null band** (-0.10 to +0.25, from
+[[teacher-forcing-a-sound-actuator-leaves-the-bearing-at-zero]]), and `g25`'s
+0.208 lands on the convention-matched null of +0.206 almost exactly. So **the
+strongest form of this node's hypothesis is dead**: the bearing is NOT sitting
+in the native neighbourhood waiting to be read. Whatever the edge set withholds,
+it is not something these weights could use if handed it.
+
+**This was pre-registered as the ambiguous branch and it must not be read as
+closing anything.** A jump would have been conclusive; a null is not, because
+neither set of weights ever trained on edges it did not see, so "cannot use
+them" and "never learned to use them" are indistinguishable here. The
+unambiguous version needs training on the native edge set, which under
+[[the-task-is-to-realise-coordinates-for-a-given-contact-graph]] is now the
+task statement rather than a leak.
+
+**A new number falls out, and it is not a small one: `g25_equivariant` -- the
+project's best arm at 8.10 A -- has `align` 0.141, inside the null band.** Its
+bearing had never been read. So the best free-running arm has no more of a
+bearing than the teacher-forced one, which is independent corroboration of the
+capacity NO rather than a separate finding.
+
+**One defect in the instrument, found by reading `need` rather than `align`.**
+The comparison is nearly paired, not exactly paired: the window's starting
+distance moves between the two runs of the same checkpoint -- 15.90 -> 16.14 A
+on `g25`, 12.34 -> 12.28 A on `g28` -- although only the edge set was meant to
+change. The likely mechanism is that building the native selection draws on the
+same generator, shifting the RNG stream and so the crop `load_crop` returns, as
+that function re-crops on every visit by design. `g28`'s null survives this
+easily. **`g25`'s 0.141 -> 0.208 does not and must not be reported as a rise**,
+being the same order as the noise a crop difference can induce. Fix the pairing
+before this flag is used again.
+
 ## Why this matters more than the step size
 
 It stands behind the four routes that all say the rule does not move the window

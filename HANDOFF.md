@@ -797,6 +797,54 @@ unfixed form: `equivariant_move` touches only the translation, and the two
 halves are independent. Pinned as
 `test_a_lab_frame_rotation_is_not_equivariant_either`.
 
+## The native-edge readout: a clean null, and the free-lunch version is dead
+
+Jobs 33319941/42/43/62, exit 0, both perceptions on each of two checkpoints.
+`align` means over the twelve held-out crops:
+
+    checkpoint            live k-NN edges    NATIVE edges
+    g28_ceil_local             0.036            0.038
+    g25_equivariant            0.141            0.208
+
+`g28`'s live run **reproduces the recorded +0.036 exactly, per crop as well as
+in the mean**, which is what makes the rest readable. Neither arm leaves the
+-0.10 to +0.25 null band, and `g25`'s 0.208 sits on the +0.206
+convention-matched null almost exactly.
+
+**So the bearing is not sitting in the native neighbourhood waiting to be
+read.** That kills the free-lunch form of the edge-set hypothesis. It was
+pre-registered as the ambiguous branch and **closes nothing**: neither set of
+weights ever trained on edges it did not see, so "cannot use them" and "never
+learned to use them" are indistinguishable from here. The unambiguous version
+is training on the native edge set, which is now the task statement.
+
+**A new number, and not a small one: `g25_equivariant`, the best arm at
+8.10 A, has `align` 0.141** -- inside the null band, never read before. The
+best free-running arm has no more of a bearing than the teacher-forced one.
+Independent corroboration of the capacity NO, not a separate finding.
+
+**One instrument defect, found by reading `need` instead of `align`.** The two
+runs of the same checkpoint are nearly paired, not exactly paired: the window's
+start distance moves, 15.90 -> 16.14 A on `g25` and 12.34 -> 12.28 A on `g28`,
+though only the edge set was meant to change -- most likely because building
+the native selection draws on the same generator and shifts the RNG stream,
+and `load_crop` re-crops on every visit by design. `g28`'s null survives it;
+**`g25`'s 0.141 -> 0.208 must NOT be reported as a rise**, being the same order
+as that noise. Fix the pairing before the flag is used again.
+
+Two guards were found silently broken on the way here, and both now fire,
+proven by probe rather than by argument: the readout was **ignoring recorded
+settings the schema no longer has** (a doctored checkpoint carrying
+`native_edges = True` printed a full table at exit 0 under live perception --
+precisely the g13 failure mode), and the argmap's **"Broken wikilinks" check
+read only edge links**, so a prose link pointing at nothing was invisible to a
+section of that name. An audit found **one rotten prose link across 94 notes**
+(a memory-file slug, a separate namespace, written into a claim node), so the
+map was not rotten; the hole was that nothing would have said if it were.
+Suite: 974 passed, confirmed independently of the agent that wrote the tests.
+
+---
+
 ## THE TASK, decided 23 Nov: realise coordinates for a given contact graph
 
 **Ulban chose realise-coordinates over discover-topology.** Read
