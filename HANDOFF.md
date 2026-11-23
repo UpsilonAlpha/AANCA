@@ -797,6 +797,74 @@ unfixed form: `equivariant_move` touches only the translation, and the two
 halves are independent. Pinned as
 `test_a_lab_frame_rotation_is_not_equivariant_either`.
 
+## THE DAY'S RESULT: the rotation convention is the binding constraint, and the capacity question answers YES
+
+**Supersedes both the capacity NO recorded this morning and the native-edge
+attribution recorded this afternoon.** Read
+`docs/claims/teacher-forcing-a-sound-actuator-leaves-the-bearing-at-zero.md`
+first; the gating question
+`the-architecture-can-place-residues-under-some-supervision` is now
+**supported**.
+
+`align` read on eight arms, all on the same twelve crop indices:
+
+    lab_rotation = TRUE    g17 0.384  g14 0.367  g20 0.329  g13 0.312
+                           g19 0.293  g15 0.159
+    lab_rotation = FALSE   g25 0.122  g28 0.036
+
+**Nothing else sorts the table** -- not the edge set (varies within the upper
+group), not teacher forcing (varies within it), not the orientation term, not
+training length. `g14_pairwise` is `g28` with the convention flipped and
+little else -- same teacher, same live edges, same 2,000 updates, same crops --
+and reads **+0.367 against 0.036**, a prediction committed (`e3aceca`) before
+the number was read.
+
+**The instrument was re-derived from the code and CLEARED.** `rigid_relax`
+maps the translation with `shift = frame @ shift` and adds it in lab
+coordinates in **both** cases; `lab_rotation` touches only `rot`, through
+`rot = frame @ rot @ frame.T`. The readout does the same single mapping, and
+both take `frame` from the same coordinates -- `rollout.py:613` records the
+pre-move state and `rigid_relax` is called on the next line with that object.
+So no mismatch, either setting, and the split belongs to the rules.
+
+**The mechanism.** Conjugation makes *both* heads' outputs frame-relative, and
+the frame is the accumulated product of every rotation the residue has already
+emitted, so the same axis-angle means something different each step and a
+bearing in that basis must be re-derived against a moving target.
+`rigid_relax`'s docstring already recorded the corollary: the identity break's
+amplitude **trebles** when the rotation is local (16.6/17.6 against 50.2/53.9).
+Twist does not refute this -- twist is a *relative* quantity for bonded pairs,
+so `g25` can hold 8.8 degrees while every absolute frame drifts. I said twist
+refuted it; it does not.
+
+**So a mathematically correct fix was a practical regression.** The
+representability argument in
+`the-emitted-move-was-applied-in-the-lab-frame-and-perception-is-invariant`
+stands and is pinned by tests; the *inference* that the lab-frame application
+held these arms back is undercut. That node is qualified accordingly.
+
+**The port drops the rotation head rather than choosing a convention for it.**
+Gala's update is `x_i += mean_j (x_i - x_j) * phi_x(m_ij)`: pure translation,
+equivariant by construction, no frame to drift. The problem dissolves. Two
+further port facts from the schema work: `native_edges` is now a config key
+again (recorded in checkpoints, warm-start guarded, the retirement banner
+rewritten and the test inverted to assert expressibility *and*
+`move_weight == 1.0`, so the restoration is never read as vindicating 6.69);
+and **"small network" has no setting behind it** -- `AANCARule` is built from
+its own defaults at 229,588 parameters and `build_schema` has no width or depth
+key, so the port as specified cannot be launched today without adding one. That
+gap was not in my spec.
+
+**Also outstanding:** `native_edge_selection` in `src/aanca/growth.py` and
+`native_selection` in `scripts/ceiling_readout.py` are now two copies of one
+function whose entire point is "nothing differs but the coordinates" -- exactly
+where a silent divergence hides. Consolidation is routed to the agent that owns
+the readout, along with three readout tests that now fail *by design*: the
+refusal machinery was correct only while `native_edges` was absent from the
+schema.
+
+---
+
 ## THE BEARING EXISTS, WITH THE NATIVE EDGE SET (23 Nov, jobs 33320676/77/78)
 
 Full account:

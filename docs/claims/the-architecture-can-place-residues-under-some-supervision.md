@@ -1,11 +1,26 @@
 ---
 type: question
-status: open
+status: supported
+sources: [33321241, 33321243, 33320678]
 ---
 
 # The architecture can place residues correctly under *some* amount of supervision
 
-**REOPENED the same evening -- see the note at the end of this block before reading on.**
+**ANSWERED YES, 23 Nov, after a day that passed through NO and back.** Under
+teacher forcing the architecture reaches `align` **+0.367** (`g14_pairwise`,
+33321241) with the rotation applied in the **lab frame**, and six arms with
+that convention read 0.159 to 0.384. The two arms with the conjugated local
+rotation -- `g28` 0.036 and `g25` 0.122 -- are the only ones that do not, and
+the readout's frame convention was re-derived from the code and **cleared**, so
+that split is a property of the rule and not of the instrument. **It is the
+conjugated rotation that leaves the bearing at zero, not the architecture.**
+[[teacher-forcing-a-sound-actuator-leaves-the-bearing-at-zero]] carries the
+re-derivation and the mechanism. The arm chain is not ended by a null, because
+the null belonged to one setting.
+
+**The reading below is kept as the record of the NO this passed through**, with
+its reasoning, because the scope it was given before the number existed is what
+made the flip detectable.
 
 **ANSWERED NO, 23 Nov 2026, by `g28_ceil_local` (33308293), against buckets
 pre-registered and pushed before the number existed.** The top rung was run in

@@ -73,5 +73,29 @@ them either.
 - [[fape-can-teach-the-frame-head-which-way-to-move]]
 - [[identity-supplies-the-trunk-that-geometry-reads]]
 
+## QUALIFIED 23 Nov: the defect is real and fixing it was a regression
+
+The representability argument here stands and is pinned by
+`tests/test_move_equivariance.py`. **The inference that the lab-frame
+application was what held these arms back does not.** `align` read on eight
+arms sorts cleanly by the rotation convention and by nothing else: six arms
+with the rotation in the **lab** frame read 0.159 to 0.384, and the only two
+with it conjugated into the residue's basis read 0.036 and 0.122. The readout's
+own convention was re-derived from the code and cleared, so the split is the
+rules'
+([[teacher-forcing-a-sound-actuator-leaves-the-bearing-at-zero]]).
+
+The mechanism is that conjugation makes **both** heads' outputs frame-relative,
+and the frame is the accumulated product of every rotation the residue has
+already emitted, so a bearing expressed in it must be re-derived against a
+moving target. `rigid_relax`'s own docstring already recorded the corollary --
+the identity break's amplitude trebles when the rotation is local.
+
+So a mathematically correct fix for the defect named here made the bearing
+harder to learn. The resolution is not to choose a convention but to **drop the
+rotation head**, as the published rule does: `x_i += mean_j (x_i - x_j) *
+phi_x(m_ij)` is pure translation, equivariant by construction, with no frame to
+drift.
+
 ## Supports
 - [[the-architecture-can-place-residues-under-some-supervision]]

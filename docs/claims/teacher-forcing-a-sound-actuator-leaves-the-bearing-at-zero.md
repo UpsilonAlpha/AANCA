@@ -53,10 +53,69 @@ scope all stand as written; what is suspended is the inference from 0.036 to
 "cannot be taught to aim". The arm-chain-ends clause also goes back into
 suspension: it was earned by a null, and the null is not currently readable.
 
-**What to do next, in this order:** re-derive the frame convention of `align`
-against both `lab_rotation` settings from the code and from a synthetic case
-where the right answer is known by construction, before any further arm. This
-is a readout question and costs no GPU.
+## The convention was re-derived immediately, and the instrument is CLEARED
+
+Done from the code, as the bucket demanded, before any further arm.
+
+  * `growth.rigid_relax` maps the translation to the lab with
+    `shift = frame @ shift` and adds it in lab coordinates **in both cases**.
+    `lab_rotation` touches only `rot`, via the conjugation
+    `rot = frame @ rot @ frame.T`. The translation path is identical either
+    way.
+  * `ceiling_readout._bearing` does the same single thing --
+    `emitted = frame @ emitted` -- whenever the run is `equivariant_move`,
+    which all eight arms are.
+  * Both compute `frame` from the **same coordinates**: `rollout.py:613`
+    records `moves.append((axis_angle, translation, coords, moving))` with
+    `coords` documented as *"the pre-move state"*, and `rigid_relax` is called
+    on the next line with that same object.
+
+**So there is no convention mismatch, for either setting, and the split is
+real.** The instrument is cleared on the translation path, which is the only
+path `align` uses.
+
+## What the split is, then: the conjugated rotation makes the bearing's own frame non-stationary
+
+With `lab_rotation = False` the rotation is conjugated into the residue's own
+basis, so **both** heads' outputs are interpreted through the current frame --
+and that frame is the accumulated product of every rotation the residue has
+already emitted. The same axis-angle therefore means a different rotation at
+every step, and a bearing expressed in that basis has to be re-derived against
+a moving target. With `lab_rotation = True` the rotation has a fixed lab
+meaning and only the translation is frame-relative.
+
+This function's own docstring already records the measured corollary: the
+identity break's **amplitude trebles** when the rotation is local -- 16.6 and
+17.6 degrees against 50.2 and 53.9, two arms either side of one variable.
+
+**And twist does not refute it, though I first said it did.** Twist is the
+geodesic error of a *bonded pair's relative* rotation. A rule can hold relative
+geometry well while every residue's absolute frame drifts, which is what breaks
+a frame-relative bearing. `g25`'s twist 8.8 with `align` 0.122 is therefore not
+the counter-example I took it for; the two quantities are not measuring the same
+thing.
+
+## Consequence: this arm's NO belongs to the conjugated rotation, and the capacity question answers YES
+
+`g14_pairwise` -- teacher-forced, live edges, 2,000 updates, the same twelve
+crops, differing from this arm in `lab_rotation` and `pairwise` -- reads
+**+0.367**. So under the strongest supervision the architecture **can** be
+taught to aim. It is the conjugated rotation, not the architecture, that leaves
+the bearing at zero.
+
+[[the-architecture-can-place-residues-under-some-supervision]] therefore closes
+**YES**, scoped to the lab-frame rotation, and the arm-chain-ends clause does
+not apply -- it was earned by a null that turns out to belong to one setting.
+**What this note measured stands exactly as measured**; what changes is the
+subject of the sentence. `g28_ceil_local` reads 0.036 because its rotation is
+conjugated, not because a local rule cannot aim.
+
+**The port should drop the rotation head entirely rather than choose a
+convention for it.** Gala's update is
+`x_i += mean_j (x_i - x_j) * phi_x(m_ij)` -- pure translation, with no
+per-node rotation at all, equivariant by construction and with no frame to
+drift. The problem dissolves instead of being tuned
+([[the-port-must-reproduce-the-published-result-on-point-clouds-before-it-is-run-on-proteins]]).
 
 ## The guard first, because it decides which checkpoint may be read
 
@@ -201,8 +260,28 @@ not asking for nothing. It asks confidently, in the wrong direction.
     more heavily than I do should know the arm's relative-rotation error ran
     1.5-2x the project's band throughout, while never breaking.
 
-## Refutes
-- [[the-architecture-can-place-residues-under-some-supervision]]
+## The edge changed, and why
+
+This node was written as a **refutation** of
+[[the-architecture-can-place-residues-under-some-supervision]] and it is now a
+**support** of it. Recorded rather than silently re-pointed, because the
+validator flagged the contradiction and the reason matters: the 0.036 is
+unchanged, but its subject turned out to be the conjugated rotation rather than
+the architecture, and the arm is now the **contrast case** that localises the
+cause -- the only teacher-forced arm with a local rotation, against `g14`'s
++0.367 with a lab rotation under otherwise matched settings. A result that
+refutes a claim and a result that identifies which variable drives it can be
+the same measurement read with different scope.
+
+**What is NOT refuted is the actuator node.**
+[[the-emitted-move-was-applied-in-the-lab-frame-and-perception-is-invariant]]
+makes a *representability* claim, pinned by `tests/test_move_equivariance.py`,
+and an `align` number cannot touch it. What today's table does undercut is the
+**inference** drawn from it -- that the lab-frame application was therefore the
+thing holding these arms back. Six lab-rotation arms aim and both
+local-rotation arms do not, so the fix for a real mathematical defect was a
+regression in practice. That tension is live and belongs to that node.
 
 ## Supports
+- [[the-architecture-can-place-residues-under-some-supervision]]
 - [[the-capacity-test-has-never-been-run-with-a-working-actuator-and-no-identity-break]]
