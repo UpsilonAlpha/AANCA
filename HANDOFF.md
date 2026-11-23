@@ -797,6 +797,32 @@ unfixed form: `equivariant_move` touches only the translation, and the two
 halves are independent. Pinned as
 `test_a_lab_frame_rotation_is_not_equivariant_either`.
 
+**IN FLIGHT, 23 Nov: 33308293 `g28_ceil_local`** on `gpu_rocm`/bun159, started
+13:57:43 AEST, 2,000 updates, ~75-100 min, so readable from roughly 15:15. The
+resubmission of the arm 33304426 lost. Commit `408e813` confirmed on the cluster
+by `git pull` before submitting, and the queue held nothing but the code-server
+session, so one GPU slot and none of Ulban's own work crowded.
+
+**Four confirmations in the header this time, not three.** `config :
+configs/regeneration.toml [g28_ceil_local]`; the `CEILING CHECK: --move-weight 1`
+banner; **no `TRANSLATION ONLY` line** and an `EQUIVARIANT MOVE` line in its
+place, which is the positive confirmation that the rotation is local; and --
+better than inferring it from the config -- the weights line reads `identity 0`
+directly, so the one thing that kept `g9_ceil_noid` alive to 2,000 updates is
+confirmed on this arm from its own output.
+
+**Read it against the pre-registered buckets in
+`docs/claims/the-capacity-test-has-never-been-run-with-a-working-actuator-and-no-identity-break.md`,
+and check the twist guard FIRST to decide which checkpoint is readable.**
+
+A lead this header hands over, worth one cheap check: it prints `covalent runs
+per crop: mean 9.5 (range 1-19) over 8 crops` at startup, while the evaluation
+block prints `segments 15.7`. The record has carried those two as a
+disagreement between `growth.py`'s "about nine covalent runs" and the placement
+node's "15.7 anchors". They are in the SAME log, which makes it likely they are
+two different quantities measured at two different times rather than one
+quantity measured inconsistently. Check the definitions before quoting either.
+
 **DEAD, 23 Nov: 33304426 `g28_ceil_local` crashed at update ~250, `train exit : 1`.**
 NOT on the science. `scripts/train_growth.py` had two variables named `pool` in
 one function scope -- the structure list, and the Growing-NCA sample pool keyed
