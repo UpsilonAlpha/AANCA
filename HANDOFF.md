@@ -843,9 +843,22 @@ representability argument in
 stands and is pinned by tests; the *inference* that the lab-frame application
 held these arms back is undercut. That node is qualified accordingly.
 
-**The port drops the rotation head rather than choosing a convention for it.**
-Gala's update is `x_i += mean_j (x_i - x_j) * phi_x(m_ij)`: pure translation,
-equivariant by construction, no frame to drift. The problem dissolves. Two
+**The port keeps the rotation head at `lab_rotation = true`, and my first
+recommendation here was too simple.** I wrote that it should drop the head
+entirely, as Gala's rule has none. That is right about their task and
+under-specifies ours: **a point cloud has no orientation and a backbone does**
+-- `twist`, the project's primary geometry metric, is a bonded pair's relative
+rotation, a quantity their task does not contain. A rule with no rotation head
+can place CAs and cannot orient residues. So the port uses the convention six
+arms demonstrably aim under, which is an existing setting rather than new
+machinery.
+
+The alternative is a different shape of project: predict inter-residue geometry
+locally and recover coordinates with a separate global solve, i.e. Chroma's
+predict-then-solve, already in the map. That would let the rotation head go at
+the cost of no longer being one local rule with no global coordinator -- which
+is the thesis. **Worth deciding before the port is built on either
+assumption.** Two
 further port facts from the schema work: `native_edges` is now a config key
 again (recorded in checkpoints, warm-start guarded, the retirement banner
 rewritten and the test inverted to assert expressibility *and*

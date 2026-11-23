@@ -110,12 +110,35 @@ not apply -- it was earned by a null that turns out to belong to one setting.
 subject of the sentence. `g28_ceil_local` reads 0.036 because its rotation is
 conjugated, not because a local rule cannot aim.
 
-**The port should drop the rotation head entirely rather than choose a
-convention for it.** Gala's update is
-`x_i += mean_j (x_i - x_j) * phi_x(m_ij)` -- pure translation, with no
-per-node rotation at all, equivariant by construction and with no frame to
-drift. The problem dissolves instead of being tuned
-([[the-port-must-reproduce-the-published-result-on-point-clouds-before-it-is-run-on-proteins]]).
+## What the port should do about the rotation, and a tension I first stated too simply
+
+My first reading was that the port should **drop the rotation head entirely**,
+since Gala's update is `x_i += mean_j (x_i - x_j) * phi_x(m_ij)` -- pure
+translation, equivariant by construction, with no frame to drift, so the
+problem dissolves instead of being tuned. That is right about their task and
+**under-specifies ours.**
+
+**A point cloud has no orientation; a backbone does.** Their nodes are points
+and a position is the whole state. A residue has an N-CA-C frame, and the
+project's own primary geometry metric, `twist`, is the geodesic error of a
+bonded pair's *relative rotation* -- a quantity that does not exist in the
+published task. A rule with no rotation head can place CAs and cannot orient
+residues, so dropping the head is a faithful port of a task that is missing
+half of ours.
+
+**So the port keeps the rotation head and sets `lab_rotation = true`**, which
+is the convention six arms demonstrably aim under, and which is an existing
+setting rather than new machinery. The faithful-port argument then applies to
+everything else in the spec.
+
+**The tension is recorded rather than resolved**, because the alternative is a
+different shape of project: predict inter-residue *geometry* with the local
+rule and recover coordinates with a separate global solve, which is Chroma's
+predict-then-solve and is already in the map
+([[placing-a-node-from-local-distances-needs-a-globally-rigid-neighbourhood]]).
+That route would let the rotation head go, at the cost of no longer being one
+local rule with no global coordinator -- which is the thesis. Worth putting to
+Ulban before the port is built on either assumption.
 
 ## The guard first, because it decides which checkpoint may be read
 
