@@ -797,6 +797,55 @@ unfixed form: `equivariant_move` touches only the translation, and the two
 halves are independent. Pinned as
 `test_a_lab_frame_rotation_is_not_equivariant_either`.
 
+## THE BEARING EXISTS, WITH THE NATIVE EDGE SET (23 Nov, jobs 33320676/77/78)
+
+Full account:
+`docs/claims/training-on-the-native-edge-set-is-what-produces-a-bearing.md`.
+
+    arm            edge set  teacher  upd      align   95% CI            neg
+    g17_long       NATIVE     yes    10000   +0.384  [+0.300, +0.468]    0/11
+    g13_natedge    NATIVE     yes      750   +0.312  [+0.149, +0.475]    2/11
+    g15_both       NATIVE     yes     1750   +0.159  [-0.026, +0.344]    4/11
+    g25_equivariant  live     no     10000   +0.122  [-0.002, +0.246]    1/11
+    g28_ceil_local   live     yes     2000   +0.036  [-0.043, +0.114]    6/12
+
+**`g17_long`'s entire CI sits above the pre-registered null band and every one
+of its crops is positive**, where `g28` has six of twelve negative. Bucket:
+0.25-0.50, **direction only** -- its own wording is adopted, so the direction
+is the result and **the magnitude is not**. 0.384 is a third of the 0.96 the
+same architecture reaches on a handed gradient.
+
+**This is the unambiguous branch.** Holding native edges at *measurement* time
+changed nothing, which was registered as uninterpretable because those weights
+never trained on edges they did not see. These four arms **did** train on them.
+
+**`g28` is the control that nearly reduces it to one variable**: teacher-forced,
+identity off, fixed actuator, live edges -> 0.036. So teacher forcing alone
+produces no bearing, and the edge set is what differs. Not literally one
+variable -- `g13`/`g15`/`g17` carry `--lab-rotation`, the **broken** actuator,
+plus more updates and `pairwise 0.01`. **The broken-actuator arms with native
+edges aim 5-10x better than the fixed-actuator arm with live edges**, so the
+actuator was not the binding constraint it was taken for.
+
+**Length alone is not it.** `g15` -> `g17` is the same settings at 1,750 vs
+10,000 updates: +0.159 -> +0.384. `g25` ran the same 10,000 updates on live
+edges and reads +0.122 with its CI crossing zero.
+
+**This does not reopen the capacity question -- it confirms its scoping.** The
+NO was written for *invariant perception over an error-derived neighbourhood*,
+and that scope was fixed before this was measured. Change the neighbourhood and
+the architecture aims.
+
+**Every number here is a ceiling twice over** (teacher-forced, graph given), so
+no `rmsd_dmg` from them is a regeneration result, and the readout resamples
+crops per run so no placement number compares across them. One seed each;
+`g18_seed1` (`g15` at `seed = 1`) is still running and will be **the project's
+first same-settings different-seed comparison**. The `g13`-vs-`g15` gap
+(+0.312 vs +0.159, intervals overlapping) is a standing warning that
+differences at this scale may be seed noise.
+
+---
+
 ## The objective, measured from g25's own curve (23 Nov) -- read this before building the port
 
 `runs/g25_equivariant/history.json`, 40 evaluations over **10,000 updates**,
