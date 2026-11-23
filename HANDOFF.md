@@ -19,6 +19,60 @@ That is the whole central argument. Not a design method, not a competitor to
 diffusion: a study of whether a local update rule can learn enough real physics
 from structure data to put destroyed atoms back where they belong.
 
+### IS THE FAILURE INHERENT TO THE ARCHITECTURE, OR IS IT THIS APPROACH? (23 Nov)
+
+The central question a reader will ask, and the record answers it more clearly
+than any single arm does. **On present evidence it is the approach, and the
+reason is that the objective supplies a magnitude and never a bearing.**
+
+  * **The architecture can aim.** Handed a diffused concentration gradient that
+    says which way to go, the same rule reaches **cosine 0.96 in a hundred
+    updates** ([[a-residue-can-follow-the-morphogen-gradient]]). Directed motion
+    is representable and learnable by this architecture, measured.
+  * **Nothing ever tells it which way.** `g10_equiv_ceil` **teacher-forced the
+    exact ideal move at every step for 2,000 updates**, with the translation
+    equivariance fix in, and the emitted bearing was **-0.096 against a +0.206
+    null** -- below an untrained head
+    ([[the-equivariance-fix-did-not-release-a-bearing]]). The fix made aiming
+    representable and nothing started aiming. Clamped FAPE is *"a magnitude and
+    not a bearing"* ([[fape-can-teach-the-frame-head-which-way-to-move]]).
+  * **Today's mode collapse is what that predicts.** An objective that supplies
+    a magnitude, with no term rewarding a torsion
+    ([[the-clash-term-does-not-see-the-ramachandran-plot]]), gets a rule that
+    converges on one average local conformation and sprays it regardless of
+    context. Which is exactly what the cross-tabulation measured.
+
+**What is NOT settled, and the two experiments that would settle it.** Neither
+has been run, both are cheap, both are one variable from an existing arm:
+
+  1. **A ceiling arm with `lab_rotation = false`.** The capacity ladder's top
+    rung has been attempted twice and failed twice -- `g8_ceiling` with both
+    halves of the move in the lab frame, `g10_equiv_ceil` with the rotation half
+    still there. The rotation half is a *measured* defect worth 0.39 A and the
+    lowest twist in the record (g25). **No ceiling arm has ever run with both
+    actuator fixes**, so "teacher forcing does not work" has never been tested on
+    a working actuator. ~70 min of GPU. If it still fails, the limitation is
+    architectural -- invariant perception plus a local move head cannot be taught
+    to aim even when handed the answer -- and that is a real negative result
+    about this class of model. If it succeeds, every rung-1 failure in the record
+    is about the objective.
+  2. **The morphogen field trained on regeneration.** The gradient is a
+    candidate bearing -- a vector, in the right frame, non-local in a way one
+    hop is not. Nothing has trained it on this task, and the chemotaxis task
+    that measured cosine 0.96 handed the rule a source whose position *was* the
+    answer, which regeneration does not. Explicitly flagged in that node as a
+    hypothesis.
+
+**The one question that IS about the class rather than this instance.** An NCA's
+power in its original setting comes from a grid that supplies position for free.
+A backbone has no grid; the surviving context is the grid
+([[in-regeneration-the-surviving-context-is-the-grid]]), and a destroyed
+residue's correct position is a *global* geometric constraint that no single hop
+reads. So the bearing cannot be perceived, it has to be **constructed** --
+by diffusion, by more hops, or by iterative registration. **Whether a local rule
+can construct it is the real question about AANCAs**, and it is unanswered.
+"Can it regrow a helix" was never the hard part.
+
 ### What this is explicitly not
 
 Read against the RFD4-Proteina preprint on 14 Nov
