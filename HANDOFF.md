@@ -95,7 +95,49 @@ realisation here** — the agent predicted its 1,000-update arm would reproduce
 two-arm comparison in this trainer must be checked for that before a difference
 is attributed to the thing under test.
 
-**What the long run actually shows, 27 evaluations to update 6,750:**
+### THE RUN IS ESSENTIALLY COMPLETE, and "plateaus" was also wrong
+
+**77 evaluations to update 19,250. `n` is 15 and `diverged` is 0 at every
+single one, and `start` is pinned at 8.774 throughout.** Block means, because
+reading individual evaluations off this series produced two wrong calls in a
+row and the per-evaluation spread is ~0.15-0.4 A:
+
+    updates        rmsd_dmg mean    sd     min
+        0- 2000         2.702      0.244  2.313
+     2000- 5000         2.461      0.175  2.186
+     5000- 8000         2.422      0.416  1.964
+     8000-11000         2.119      0.167  1.962
+    11000-14000         2.079      0.130  1.878
+    14000-17000         2.075      0.109  1.935
+    17000-20000         2.009      0.118  1.882
+
+**Monotone in the block mean, every block.** So it is not a plateau: 8.774 ->
+2.70 A inside the first 2,000 updates, then a further 0.7 A over the remaining
+18,000. Diminishing but real, and the spread narrows as it goes (0.244 ->
+0.118), which is a settling rule rather than a stalled one. **Best single
+evaluation 1.878 A** at update 11,500; `fit_intact` tracks it at ~1.98.
+
+**I was wrong twice on this one series and the reason is the same both times:**
+four or nine evaluations of a noisy quantity were read as a direction. First as
+a degradation, then as a plateau. Neither survived more data. **The series is
+only to be read in block means, and that is now the rule for it.**
+
+### `pair_window` moves for the first time in the project
+
+    pair_anchor  4.42 -> 1.45
+    pair_window  3.28 -> 1.95
+
+**`pair_window` is the quantity that never improved.** In `g25` it went
+22.2 -> 23.38 over 10,000 updates and was recorded as *"the only quantity here
+with no progress"*, because it was the deliberately unweighted half of the
+restraint. Weighting the full pair set put a gradient on it, and **it falls by
+40 %.** That is the 23 Nov full-pair-set decision paying off in the one place
+it was predicted to.
+
+(The A^2 values are not comparable with `g25`'s: different pool, and the
+restraint's mean is over a different denominator.)
+
+### The earlier reading, kept for the record, 27 evaluations to update 6,750
 
     update   250    500   1000   2000   3000   4000   5000   6000   6750
     rmsd_dmg 3.047  2.641 2.775  2.500  2.573  2.734  2.571  2.457  2.887
@@ -107,7 +149,7 @@ evaluations, `start` pinned at 8.774 throughout, so no row is a survivor mean.
 **And the rule plateaus.** It reaches ~2.6-3.0 Å within 250 updates and then
 does not improve for the next 6,500: the band is 2.46-3.05 with no trend.
 
-**So the open question changes shape.** It is not "why does it degrade" but
+**SUPERSEDED: see the block means above -- it does not plateau either.** It is not "why does it degrade" but
 **"why does it stop improving after 250 updates"** — a rule that gets most of
 the way in 1 % of its budget and then sits there. That is a different question
 from any this project has asked, and the full-length run plus a Bunya run
