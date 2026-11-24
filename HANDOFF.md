@@ -844,6 +844,48 @@ unfixed form: `equivariant_move` touches only the translation, and the two
 halves are independent. Pinned as
 `test_a_lab_frame_rotation_is_not_equivariant_either`.
 
+## 24 Nov: our rule is NOT E(n)-GNCA, which is why yesterday was hard
+
+Ulban: *"this should be a simple task, just replicate e(n) graph nca on
+proteins."* He is right, and the reason is sharper than overcomplication.
+**Yesterday I was trying to turn our rule into the published one by setting
+config keys. It cannot be done, and not because of sizes.**
+
+    what it emits   Gala: ONE SCALAR per neighbour    ours: axis-angle + translation
+    how it moves    x_i += sum (x_i - x_j) phi(m_ij)  ours: rigid_relax, in the
+                                                      residue's N-CA-C basis
+    frames          NONE                              frame_head, every step
+    parameters      ~5,000                            229,588
+
+`rollout.step_once` moves coordinates **only** through `growth.rigid_relax`
+(line ~614), which is frame-based, and the rule has a `frame_head`. Gala's rule
+has no frames anywhere: `phi_x` emits a scalar and the coordinate update is a
+mean of neighbour-difference vectors.
+
+**Every problem that consumed 23 Nov is downstream of having frames** -- the
+lab-versus-local rotation convention, frame drift, blinding inside the
+neighbour selection, and whether `align` measures anything at all. A frameless
+rule has nothing to express a bearing *in*, so none of those questions arise.
+
+**So two decisions I put to Ulban dissolve rather than needing answers:** there
+is no rotation head to choose a convention for, and the 17,552-parameter floor
+was a fact about **our** four heads at `Linear(node_dim + hidden_dim, 64)` over
+a 56-channel featuriser, not about the published rule.
+
+**The simple task is simpler than what I was doing.** Not a config section on
+`AANCARule` -- a new frameless module implementing the four published lines, in
+roughly a hundred of them, reusing the project's graph builder, damage operator,
+crops and the metrics that do not assume frames. In flight now.
+
+**One limit, recorded once rather than papered over: the published rule places
+points and produces no residue orientation.** So it answers *"can a local rule
+realise coordinates for a given contact graph"* -- the task Ulban chose on
+23 Nov -- and not yet *"can it rebuild a backbone"*. `twist` cannot exist for
+it, being a bonded pair's relative rotation, so it is left out rather than fed
+something meaningless.
+
+---
+
 ## STOPPED: the code-server session expired at ~17:50 AEST, 23 Nov
 
 Ulban asked me to work autonomously until it expired, and it has. The tab's
