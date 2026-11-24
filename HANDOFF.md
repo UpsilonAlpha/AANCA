@@ -6,7 +6,63 @@ journal is `docs/JOURNAL.md`; the claims and their evidence are one note each in
 
 ---
 
-## 0. Current state — 2026-11-23
+## 0. Current state — 2026-11-24: the port diverges because we left out a published tanh
+
+**The newest thing in this file, and it supersedes the stabilisation plan in
+"§ 24 Nov: THE PORT RUNS".** The port was faithful to Gala's four printed
+equations and those equations are not the method. Read from the authors' public
+repo `gengala/egnca`, at `trainers/geometric_graph.py` — the trainer for *our*
+task, the fixed point-cloud target, whose defaults differ from `gae.py`'s and
+`dsystem.py`'s:
+
+    setting                  theirs (geometric_graph)   ours        bounds?
+    ---------------------------------------------------------------------------
+    tanh on phi_x output     has_coord_act=True         ABSENT      yes
+    phi_x output layer       weight.data.zero_(),       xavier      yes
+                             bias=False                 gain 1e-3
+    h update                 is_residual=True           ABSENT      no
+    hidden activation        -act tanh                  SiLU        yes
+    node-feature norm        -nt pn (PairNorm)          ABSENT      yes
+
+**Four of the five bound something, and we removed all four while keeping the
+one unbounded channel that drives the blow-up.** `||x_i - x_j||^2` enters
+`phi_m` unnormalised, so `phi_x` is near-linear in the squared distance
+(measured: −0.27 at 10 Å, −1.42 at 20 Å, −4.07 at 33 Å). One step maps an edge
+of length d to `|1 + phi_x| d`, which **expands once `phi_x < −2`, at about
+23 Å** — and expanding raises d², which raises `|phi_x|`, which raises d. 33 Å
+to 1e7 Å in four steps. **With the published tanh, `phi_x` ∈ (−1, 1), so
+`|1 + phi_x| ∈ (0, 2)` and the runaway branch does not exist.**
+
+**The optimiser settings we had were already the published ones** — `lr` 1e-3,
+`wd` 1e-5, `clip` 1.0, 15–25 steps, pool 256, std 0.5. So there was never a
+knob to find, which is why a 1,000-update sweep over all three left one to four
+crops gone at every setting: **~10 % of training rollouts overflow to a
+non-finite loss and are skipped**, so the far crops contribute no gradient at
+any learning rate. The rule is never charged for exploding.
+
+**Two corrections to the record.** The port note's `phi_x` gain-1e-3
+initialisation is described there as the reference E(n)-GNN practice; the
+authors' GNCA code zero-initialises that layer outright, so ours was a
+workaround for the missing bound rather than a faithful choice. And the
+recorded open question about whether `h' = phi_h(h, m)` should be residual is
+**closed: `is_residual` defaults True.**
+
+**Not taken: the norm division.** `coord_diff / (sqrt(radial).detach() + 1)`
+exists in both repos and would make the step scale-free, but it is off by
+default in every model class and no trainer enables it. It is registered as the
+next thing to try if the five published settings do not hold the far crops, and
+it is a change to the rule rather than a removal of a departure.
+
+**Also learned, and it widens a known gap:** their code evaluates persistence
+to **10,000–100,000 steps** against a 15–25 step training horizon. Nothing here
+measures persistence past the horizon at all.
+
+Full sourcing, the per-step divergence trace and the sweep table:
+`docs/claims/the-divergence-is-a-missing-published-tanh-not-a-property-of-the-rule.md`.
+
+---
+
+## 0a. Current state — 2026-11-23
 
 ### READ THIS FIRST: §0's framing below is superseded in one important way
 

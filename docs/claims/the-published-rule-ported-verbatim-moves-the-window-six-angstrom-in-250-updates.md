@@ -18,6 +18,35 @@ standard block shape. Against `AANCARule`'s 229,588 and its 17,552 floor
 
 **`status: open`, and the reason is in the third column.**
 
+## SUPERSEDED IN PART, 24 Nov: "verbatim" was true of the paper and false of the method
+
+**The divergence below is not a property of the rule. It is a tanh we left
+out**, and in the authors' own code for this exact task it is on by default
+([[the-divergence-is-a-missing-published-tanh-not-a-property-of-the-rule]],
+which carries the mechanism, the five departures and the sources). Three
+consequences for *this* note specifically:
+
+  * **"Next, in this order -> 1. Stabilise ... Lower `lr` or tighten `clip`
+    first" was the wrong instruction.** The published `lr` is 1e-3, the
+    published `clip` is 1.0, and the published `weight_decay` is 1e-5 -- which
+    is exactly what this config already had. There was no knob to find. A
+    1,000-update sweep over `lr`, `clip` and `weight_decay` left one to four
+    crops gone at every setting tried, because ~10 % of training rollouts
+    overflow to a non-finite loss and are **skipped**, so the far crops
+    contribute no gradient at any learning rate.
+  * **The `phi_x` small-gain departure below is mis-described.** It reads as the
+    reference E(n)-GNN initialisation; the authors' GNCA code zero-initialises
+    that layer outright (`weight.data.zero_()`, `bias=False`) with the xavier
+    gain-1e-3 line commented out. Ours is neither theirs nor necessary -- it
+    was a workaround for the missing bound.
+  * **The open question below about the residual is closed.** `is_residual`
+    defaults **True** in the trainer for this task, so `h' = phi_h(h, m)` is
+    the wrong form and the body's "cannot be settled from the note alone" no
+    longer holds.
+
+The departures list below is otherwise correct, and the anchors, the
+Gaussian-noise half and the absent-metrics sections stand unchanged.
+
 ## The run, on the LAPTOP pool, CPU, 0.21 s/update
 
     update  total  anchor  window  rmsd_dmg  (fit_intact, start)   n  diverged

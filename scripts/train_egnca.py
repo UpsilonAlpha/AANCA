@@ -545,6 +545,18 @@ def main() -> int:
                 resume_from=resume,
                 **objective_kwargs(args),
             )
+            # **An undamaged crop carries a finite loss with no graph behind
+            # it.** ``damage_window`` returns an all-false mask when the crop's
+            # longest covalent run is shorter than ``damage``, and
+            # ``pairwise_distance_restraint`` over an empty window is a
+            # constant zero with no ``grad_fn`` -- so ``isfinite`` passes and
+            # ``backward()`` raises "does not require grad", which killed a
+            # 1,000-update run inside its first 250. ``score`` already counts
+            # these crops out of the held-out mean; this is the training side
+            # of the same statement, and it is a skip rather than a zero
+            # because a crop with nothing to fill is not a filled crop.
+            if terms.damaged_mask is None or not bool(terms.damaged_mask.any()):
+                raise _SkipUpdate
             if not torch.isfinite(terms.total):
                 raise _SkipUpdate
             optimiser.zero_grad()

@@ -23,11 +23,44 @@
 # ablations come after it moves
 # (docs/claims/the-task-is-to-realise-coordinates-for-a-given-contact-graph.md).
 #
-# KNOWN, MEASURED, AND NOT YET FIXED. At these settings half the held-out set
-# goes non-finite by update 750 on a laptop run, and the `diverged` column is
-# what says so -- the trainer's own docstring has the table. Read `n` and
-# `diverged` before any other column. The first knobs to try are `lr` and
-# `clip`, in their own sections.
+# KNOWN, MEASURED, AND ONLY PART FIXED. At the PUBLISHED lr of 1e-3 half the
+# held-out set goes non-finite by update 750 on a laptop run, and the `diverged`
+# column is what says so. `[port.inputs]` now overrides `lr` to 3e-4, which is
+# the single smallest departure that holds all fifteen crops finite in most
+# evaluations of a 3,000-update run -- BUT IT DOES NOT FIX THE RULE. Measured on
+# the laptop pool at lr 1e-3, 3e-4 and 1e-4 alike, about 10 % of TRAINING
+# rollouts still overflow to a non-finite loss and are skipped, so the far crops
+# contribute no gradient at any learning rate and divergence recurs
+# intermittently for the whole run. Read `n` and `diverged` before any other
+# column; a row with a `start` below 8.77 is a mean over survivors.
+#
+# AND THE KNOBS ARE NOT WHERE THE FIX IS -- 24 Nov. `lr`, `clip` and
+# `weight_decay` below are ALREADY the published values for this task
+# (`trainers/geometric_graph.py` in `gengala/egnca`: -lr 1e-3, -wd 1e-5,
+# -gcv 1.0). There was never a knob to find. A 1,000-update sweep over all
+# three left one to four crops gone at every setting tried, and an `lr = 3e-4`
+# override was briefly added here and then dropped as a departure invented to
+# compensate for something missing. What is missing is a **tanh on `phi_x`'s
+# output**, which the authors' code for this task switches on by default
+# (`has_coord_act=True`), together with a zero-initialised output layer, a
+# residual `h` update, a tanh hidden activation and PairNorm on the node
+# features. See
+# docs/claims/the-divergence-is-a-missing-published-tanh-not-a-property-of-the-rule.md
+# -- until those five land, this config diverges as described above and the
+# 250-update row is the only one to quote.
+#
+# THE MECHANISM, SO A FUTURE KNOB IS NOT TRIED BLIND. Nothing about the weights
+# or the gradients goes non-finite: the coordinates do, inside the rollout, in
+# five to nine of the twenty-five steps. `||x_i - x_j||^2` enters `phi_m`
+# unnormalised, so `phi_x`'s scalar is close to linear in the squared distance
+# (measured at update 1,000: -0.27 at 10 A, -1.42 at 20 A, -4.07 at 33 A), and
+# one step maps an edge of length d to |1 + phi_x| * d. That is a contraction
+# until `phi_x` passes -2, around d ~ 23 A, and an expansion above it -- which
+# then raises d^2, which raises `phi_x`, which raises d again. The helix
+# baseline starts a 12-residue window with its longest contact edge between
+# 17 and 34 A depending on the crop, so some crops begin inside the expanding
+# regime and reach 1e30 A in four steps. The crops that do are the ones with the
+# longest starting edge, and they are the same ones each time.
 
 [base.inputs]
 # the authors name gradient clipping as what stabilised their training
@@ -64,6 +97,19 @@ updates = 20000
 weight_decay = 0.00001          # the authors' other named stabiliser
 
 # The port itself. Stated as nothing, because the base IS the port: there is no
-# earlier arm of this trainer for it to differ from.
+# earlier arm of this trainer for it to differ from, and every optimiser value
+# in `[base.inputs]` is the authors' own for this task. **It is empty on
+# purpose, and an `lr` was deliberately removed from it.**
+#
+# What the sweep that produced that `lr` is worth keeping for, since it will
+# not be run again: `clip` is close to inert here and can be harmful, because
+# the median pre-clip gradient norm is ~90-175 against `clip = 1`, so the clip
+# always binds, Adam receives a direction of fixed norm and the step size is
+# set by `lr` alone -- `clip 0.01` was the second-worst arm tried.
+# `weight_decay` is largely cancelled by the same mechanism: Adam adds `wd * p`
+# into the gradient BEFORE clipping, and the clip then rescales everything by
+# about 1/100, so the published 1e-5 acts like ~1e-7. The authors' two named
+# stabilisers are therefore both weaker here than their values suggest, which
+# is worth knowing when reading their recipe.
 [port]
 [port.inputs]
