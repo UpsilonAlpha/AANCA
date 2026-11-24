@@ -83,15 +83,41 @@ against 3.377 — and it is a mean over the ten crops that survived, which
 `start` walking 8.774 → 6.748 proves, since the start state cannot depend on
 the weights. **An unstable arm wins by discarding its hard cases.**
 
-**What is now open, and it is the next question.** With the five on the
-objective does not fall: held-out `rmsd_dmg` 2.92 → 3.38 over 1,000 updates.
-A rising *training* total is expected (the replay pool fills with rolled-out
-states, so each sample is a harder question), but held-out `rmsd_dmg` is scored
-on a fixed fifteen crops from the same start and cannot be explained that way.
-1,000 updates is 5 % of the configured 20,000 and four evaluations are not a
-trend, so a full-length run is the measurement — **running now locally, and
-Bunya is reachable again (bun149:43652) for the run where the comparators
-live.**
+**WITHDRAWN the same day: the 2.92 → 3.38 Å "degradation" does not replicate,
+and it was never a trend.** The full-length run of the *same section at the
+same seed* gives, over the same interval, `rmsd_dmg` **3.047 → 2.641 →
+2.775** — noise of the same size, in the other direction. Four evaluations of
+a series with a ±0.3 Å spread cannot carry a direction, and I read one as if it
+could. **The lesson is the instrument, not the rule: the seed does not fix the
+realisation here** — the agent predicted its 1,000-update arm would reproduce
+`--section port` line for line and it does not (2.921/2.952/3.377 against
+3.047/2.641/2.775), so changing `updates` alone changes the stream. Any future
+two-arm comparison in this trainer must be checked for that before a difference
+is attributed to the thing under test.
+
+**What the long run actually shows, 27 evaluations to update 6,750:**
+
+    update   250    500   1000   2000   3000   4000   5000   6000   6750
+    rmsd_dmg 3.047  2.641 2.775  2.500  2.573  2.734  2.571  2.457  2.887
+    n          15     15    15     15     15     15     15     15     15
+    diverged    0      0     0      0      0      0      0      0      0
+
+**The stability holds completely** — `n` 15 and `diverged` 0 at every one of 27
+evaluations, `start` pinned at 8.774 throughout, so no row is a survivor mean.
+**And the rule plateaus.** It reaches ~2.6-3.0 Å within 250 updates and then
+does not improve for the next 6,500: the band is 2.46-3.05 with no trend.
+
+**So the open question changes shape.** It is not "why does it degrade" but
+**"why does it stop improving after 250 updates"** — a rule that gets most of
+the way in 1 % of its budget and then sits there. That is a different question
+from any this project has asked, and the full-length run plus a Bunya run
+(reachable again, `bun149:43652`) are the instruments for it.
+
+**One number worth stating carefully.** 2.457 Å at update 6,000 is **below the
+4.0 Å absolute bar**, against its own 8.774 Å start, on fifteen crops with
+nothing diverged. **It is not comparable to any arm**: laptop pool, easier
+crops, and the contact graph is given. But within its own run the port does
+what no arm has done.
 
 **The port's honest headline is now 8.774 → 2.92 Å at update 250**, on fifteen
 crops with nothing diverged and nothing skipped. It replaces 8.77 → 2.63 Å,

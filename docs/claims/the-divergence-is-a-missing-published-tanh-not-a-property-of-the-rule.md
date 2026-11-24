@@ -175,6 +175,44 @@ to dismiss it:
     be explained by the pool. **This is the open question, and it is the next
     one.**
 
+### WITHDRAWN, same day: that rise does not replicate and was never a trend
+
+The full-length run of the **same section at the same seed** gives, over the
+same interval, `rmsd_dmg` **3.047 -> 2.641 -> 2.775** -- noise of the same
+magnitude in the other direction. Four evaluations of a series whose spread is
+about +/- 0.3 A cannot carry a direction, and reading one as if it could was
+the error. **Nothing was wrong with the measurement; the inference was wrong.**
+
+**And the seed does not fix the realisation in this trainer.** The 1,000-update
+arm was predicted to reproduce `--section port` line for line and does not
+(2.921 / 2.952 / 3.377 against 3.047 / 2.641 / 2.775), so changing `updates`
+alone changes the stream. **Any two-arm comparison here must be checked for
+that before a difference is attributed to the thing under test** -- which also
+weakens the five-on/four-off contrast above to the extent that it rests on
+small differences, though not the parts that rest on `diverged`, `n` and the
+non-finite count, where the gap is 0 against 145 and categorical.
+
+### What 27 evaluations to update 6,750 do show
+
+    update   250    500   1000   2000   3000   4000   5000   6000   6750
+    rmsd_dmg 3.047  2.641 2.775  2.500  2.573  2.734  2.571  2.457  2.887
+    n          15     15    15     15     15     15     15     15     15
+    diverged    0      0     0      0      0      0      0      0      0
+
+**The stability holds completely**: `n` 15 and `diverged` 0 at all 27, `start`
+pinned at 8.774, so no row is a survivor mean. **And the rule plateaus** --
+~2.6-3.0 A inside 250 updates, then a 2.46-3.05 band with no trend for 6,500
+more.
+
+**So the open question is "why does it stop improving after 250 updates",** not
+why it degrades. A rule that gets most of the way in 1 % of its budget and then
+sits there is a different failure from any this project has recorded.
+
+**2.457 A at update 6,000 is below the 4.0 A absolute bar**, against its own
+8.774 A start, fifteen crops, nothing diverged -- and **not comparable to any
+arm**, because the pool is the laptop's, the crops are easier and the contact
+graph is given.
+
 **The 250-update row is also the honest version of the port's headline.**
 8.774 -> 2.92 A on fifteen crops with nothing diverged and nothing skipped
 replaces the old 8.77 -> 2.63 A, which was measured before the bound and
