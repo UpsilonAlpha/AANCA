@@ -1057,6 +1057,41 @@ on his behalf.** The interactive job 33303464 had been up 7:50 when last seen.
 Reconnect from `https://onbunya.rcc.uq.edu.au/pun/sys/dashboard`; "Limited
 Login" is the button that routes around an AAF outage if the normal one fails.
 
+### READ FRESH 24 Nov, all three complete, and the prediction they "confirm" was vacuous
+
+Bunya reconnected (`bun149:43652`) and all three logs read in full at exit 0 --
+so the 19-byte reads *were* the dying session, as suspected, and the jobs ran
+through. The `mean` row's `align`:
+
+    g21_pool      0.212    need 16.36   start exceeds window 12/12
+    g22_random    0.220    need 16.86   start exceeds window 12/12
+    g26_fullbptt  0.286    need 12.45   start exceeds window  0/12
+
+**All three land inside the registered 0.15-0.40 band, and that settles
+nothing, because the band contains the null.** The convention-matched null is
+**+0.206**. `g21` at 0.212 and `g22` at 0.220 are *at* it, and both sit inside
+the pre-registered −0.10 to +0.25 null band, which is the architectural-NO
+bucket. Only `g26` at 0.286 clears it, barely.
+
+**So the fault is mine and it is in the prediction, not the measurement.** A
+band of 0.15-0.40 whose lower half straddles a +0.206 null cannot be confirmed
+by a reading of 0.212: the refutation clause (anything under 0.15) was the only
+part of it that could ever have fired. **A prediction interval that includes
+the null is not a test**, and three arms landing in it is three arms' worth of
+GPU time that distinguishes nothing. Any future band on `align` must exclude
++0.206 before it is registered.
+
+**And `g26` is not comparable to the other two anyway.** Its crops are easier
+by the readout's own diagnostic -- `need` 12.45 against 16.36/16.86, and
+**0/12** crops whose start distance exceeds the window against **12/12** for
+both others. Whatever its 0.286 means, it is not "the same measurement, higher
+number", so the one arm that clears the null is the one measured on a different
+set. Not chased further; recorded so it is not later quoted as the clear case.
+
+These three were never touched by the `carries_identity` blinding, which hit
+the native-edge arms (`g13`/`g15`/`g17`/`g18`), so unlike those they need no
+re-run.
+
 ### Three readouts were in flight and their results should be there
 
 `g21_pool` 33322914, `g22_random` 33322915, `g26_fullbptt` 33322919 -- `align`
