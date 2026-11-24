@@ -311,13 +311,25 @@ def resume_drift(stored: dict, args, allow=("updates",)) -> dict:
     }
 
 
-def snapshot(args: argparse.Namespace, section: str, source: str | Path) -> str:
+def snapshot(
+    args: argparse.Namespace,
+    section: str,
+    source: str | Path,
+    trainer: str = "scripts/train_growth.py",
+) -> str:
     """The run's fully resolved settings as a TOML section, for the run directory.
 
     Written beside the checkpoint so a finished run carries its own settings
     rather than pointing at a config file that may have moved on. Fully
     resolved and explicit for the same reason ``check_base_is_complete``
     exists: the snapshot has to mean the same thing when read next year.
+
+    ``trainer`` is the script that can read this file back, and it is a
+    parameter because there is now more than one: ``scripts/train_egnca.py``
+    trains a different rule with a different schema, and a snapshot of one of
+    its runs that named ``train_growth.py`` would send the reader to a trainer
+    that refuses the file -- every key would be unknown. It defaults to
+    ``train_growth.py`` so every existing caller's output is unchanged.
     """
     lines = [
         "# Resolved settings for one run. Written by the trainer; not an input.",
@@ -325,7 +337,7 @@ def snapshot(args: argparse.Namespace, section: str, source: str | Path) -> str:
         "#",
         "# **Readable back by the trainer that wrote it:**",
         "#",
-        f"#     python scripts/train_growth.py <this file> --section {section}",
+        f"#     python {trainer} <this file> --section {section}",
         "#",
         "# which is why the settings sit under [base.inputs] and the run's own",
         "# section is empty. The first version of this function emitted them",

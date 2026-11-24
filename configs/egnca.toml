@@ -1,0 +1,69 @@
+# The E(n)-GNCA port: Gala's rule verbatim, on this project's regeneration task.
+#
+#   .venv/Scripts/python.exe scripts/train_egnca.py configs/egnca.toml --section port
+#   .venv/Scripts/python.exe scripts/train_egnca.py configs/egnca.toml --list-sections
+#
+# A SEPARATE FILE FROM configs/regeneration.toml, and not because it is tidier.
+# Every arm in that file is an `AANCARule` with frames, births, identity,
+# sterics and closures, and its [base.inputs] states a weight for each. This
+# rule has none of them: it places CA positions and produces no residue
+# orientation (see `aanca.egnca`). Three settings carry its whole objective, and
+# a section of this file is not comparable column-for-column with a section of
+# that one -- the readouts are different quantities.
+#
+# Nothing that changes a result is a command-line option: see `aanca.config`.
+# [base.inputs] states every setting explicitly so a later change to a parser
+# default cannot reinterpret a run recorded here.
+#
+# WHAT THE PORT CHANGES AT ONCE, AND WHY THAT IS ALLOWED HERE. Six things
+# differ from g28 together: the rule, the rollout length, full BPTT, the
+# removal of the step cap, the native edge set, and the full pair set.
+# One-variable arms are correct when ablating *from* something that works, and
+# this project has never had that -- so this is a replication target, and the
+# ablations come after it moves
+# (docs/claims/the-task-is-to-realise-coordinates-for-a-given-contact-graph.md).
+#
+# KNOWN, MEASURED, AND NOT YET FIXED. At these settings half the held-out set
+# goes non-finite by update 750 on a laptop run, and the `diverged` column is
+# what says so -- the trainer's own docstring has the table. Read `n` and
+# `diverged` before any other column. The first knobs to try are `lr` and
+# `clip`, in their own sections.
+
+[base.inputs]
+# the authors name gradient clipping as what stabilised their training
+clip = 1.0
+crop_size = 128
+cutoff = 10.0
+# the task: destroy this many consecutive residues, keep the rest at crystal pose
+damage = 12
+# a clock setting, not a scientific one: the two selections agree bit-for-bit
+# on this rule's output
+device_neighbours = false
+eval_every = 250
+eval_structures = 16
+# Gala's widths. The published ~5K count is quoted against this pair; ours is
+# 5,329 (tests/test_egnca.py)
+hidden_dim = 16
+initial = "helix"
+k = 24
+lr = 0.001
+message_dim = 32
+# the task statement: realise coordinates for THIS contact graph
+native_edges = true
+# window-to-context, unclamped, A^2
+pairwise_weight = 1.0
+# window-to-window. Both live => the FULL pair set, which is the published loss
+pairwise_window_weight = 1.0
+pool_probability = 0.5          # the replay pool, as published
+seed = 0
+split = "train"
+steps = 25                      # "15 to 25 steps, sampled uniformly"
+steps_min = 15
+structures = 400
+updates = 20000
+weight_decay = 0.00001          # the authors' other named stabiliser
+
+# The port itself. Stated as nothing, because the base IS the port: there is no
+# earlier arm of this trainer for it to differ from.
+[port]
+[port.inputs]

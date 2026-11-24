@@ -844,6 +844,71 @@ unfixed form: `equivariant_move` touches only the translation, and the two
 halves are independent. Pinned as
 `test_a_lab_frame_rotation_is_not_equivariant_either`.
 
+## 24 Nov: THE PORT RUNS, and it moves the window further and faster than any arm
+
+Full account, with every caveat:
+`docs/claims/the-published-rule-ported-verbatim-moves-the-window-six-angstrom-in-250-updates.md`.
+`src/aanca/egnca.py`, `scripts/train_egnca.py`, `configs/egnca.toml`,
+`tests/test_egnca.py` (26 tests, each with its crippling demonstrated).
+**5,329 parameters** -- Gala's own widths, 6.6 % above the paper's rounded 5K,
+against `AANCARule`'s 229,588. Suite **1028 passed, 0 failed**.
+
+    update  total  anchor  window  rmsd_dmg  (fit_intact, start)   n  diverged
+       250  6.075   2.960   3.115     2.501   (2.629,     8.774)   15         0
+       500  4.240   1.769   2.471     2.194   (2.302,     7.203)   11         4
+       750  3.769   1.676   2.093     2.140   (2.223,     5.402)    7         8
+
+**What is real: 8.77 -> 2.63 A `fit_intact` in 250 updates, 15 crops, zero
+divergences** -- a 6.1 A improvement against its own start, where `g25` managed
+5.03 A over **10,000** updates with 43x the parameters. The metric is the
+project's own `fape.backbone_rmsd_on` ("CA RMSD read off `read`, superposed on
+`superpose`"), called with the same two superpositions every arm uses, so this
+is the same quantity and not a new one. The carrier keeps each residue's native
+orientation, which cannot flatter a CA-only metric.
+
+**Why NO absolute number here may sit beside an arm's.** It ran on the
+**laptop** pool -- 954 structures against Bunya's 23,760, so a different 416
+proteins and the same crop index is a different protein. The start distance
+proves it: **8.77 A here against 12-16 A on Bunya.** Easier crops, and the
+standing project rule forbids the comparison. Separately, `native_edges = true`
+means the contact graph is **given**, which is the task statement since 23 Nov
+but is not what `g25` was doing.
+
+**And rows 500 and 750 are survivorship, not progress.** `start` falls
+8.77 -> 7.20 -> 5.40 and the start state cannot depend on the weights, so what
+moved is which crops were averaged -- the hard ones went non-finite and left the
+mean. **Eight of fifteen gone by 750.** The `diverged` column was added before
+the table was read, which is why this was caught rather than published.
+
+**Next, in order:** stabilise (lower `lr` from 1e-3 or tighten `clip` from 1.0;
+the published stabilisers are weight decay and gradient clipping, and this rule
+has no step cap by design -- **this is making the recipe run, not adding an
+arm**); then re-run on **Bunya**, where every comparator lives; then build the
+readout nothing has: **persistence past the training horizon**, which is the
+published rule's headline claim (damage at t=24, 1,000 further steps, *"can
+maintain the target state after any number of time steps t > 15"*). The pool
+trains toward it and no readout measures it.
+
+**Departures from the published method, all recorded in the node:** we have
+anchors and the published task has none; the loss omits context x context; their
+Gaussian-noise batch half is not ported; `phi_x` starts at gain 1e-3, which the
+paper does not state and which is *necessary* at protein scale (a neighbour
+difference is ~10 A, not unit scale, and default init overflows a 20-step
+rollout before training); `h' = phi_h(h, m)` is non-residual as the claim node
+records it, which the paper does not settle; and there are no edge attributes.
+
+**Two inconsistencies created and named:** `pairwise_window_weight` now
+defaults to 0.0 in `train_growth.py` and 1.0 in `train_egnca.py` -- deliberate
+in both and confusing together; and `FixedNeighbours`' docstring guarantee
+about recomputing distances is **vacuous** for a rule with no edge features.
+
+**Metrics absent rather than zeroed**, with a test asserting the absence:
+`twist`, `fape`, `bond`, `clash`, chi, `identity`, `recovery`, `alive`,
+`completion`, `reach`. Each would be handed the carrier's native orientation and
+read near-perfect.
+
+---
+
 ## 24 Nov: our rule is NOT E(n)-GNCA, which is why yesterday was hard
 
 Ulban: *"this should be a simple task, just replicate e(n) graph nca on
