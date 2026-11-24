@@ -51,9 +51,21 @@ orientation, unchanged, as a carrier -- nothing in the objective or the report
 reads them, and the one place they are read is named at
 :func:`egnca_neighbours`.
 
+**The rule is the authors' code's rule, not only the paper's four lines.** The
+paper prints the four equations above and omits five settings that the authors'
+own code for *this* task -- ``trainers/geometric_graph.py`` with
+``FixedTargetGAE``, ``EncoderEGNCA`` and ``EGC`` in ``gengala/egnca`` -- carries
+on by default: a tanh on ``phi_x``'s output, that layer zero-initialised and
+unbiased, a residual ``h`` update, a tanh hidden activation, and PairNorm on the
+node features. All five are on here, with the authors' defaults, and
+:class:`EGNCARule` names each one against the default it carries there. Written
+from the equations alone the port diverged, and
+``docs/claims/the-divergence-is-a-missing-published-tanh-not-a-property-of-the-rule.md``
+is the account of why.
+
 **Where this port departs from the published setup, stated so a result from it
-is not read as a replication of theirs.** The *rule* is verbatim. The *task* is
-this project's, and four things differ:
+is not read as a replication of theirs.** The *rule* is theirs. The *task* is
+this project's, and three things differ:
 
   * **The start state is anchored.** Gala draw every node from an isotropic
     Gaussian and record "no anchors. Every node starts random." Regeneration
@@ -71,12 +83,6 @@ this project's, and four things differ:
     Gaussian noise, partly globally and partly locally. Here every sample
     carries the project's own damage operator instead. The replay pool is
     ported; this half of their recipe is not.
-  * **``phi_x``'s output layer starts at a small gain**, which the claim
-    document does not record because the paper does not state it. It is the
-    reference E(n)-GNN implementation's initialisation and it is necessary at
-    protein scale, where a neighbour difference is ~10 A rather than the unit
-    scale of a normalised point cloud. It bounds nothing; see
-    :class:`EGNCARule`.
 
 Nothing here tests persistence past the training horizon, which is the
 published rule's headline claim -- damage at t=24, then 1,000 further steps.
@@ -105,11 +111,44 @@ HIDDEN_DIM = 16
 MESSAGE_DIM = 32
 
 #: What :class:`EGNCARule` holds at :data:`HIDDEN_DIM` / :data:`MESSAGE_DIM`
-#: with no edge attributes: 5,329 parameters against the paper's "5K".
+#: with no edge attributes: 5,328 parameters against the paper's "5K".
 #: ``tests/test_egnca.py`` pins it and derives it block by block, so a change to
 #: the architecture has to come through that file rather than leaving the
 #: comparison with the published figure stale in prose.
-PUBLISHED_COUNT = 5_329
+#:
+#: It was 5,329 while ``phi_x``'s output layer carried a bias. The authors
+#: build that layer as ``nn.Linear(message_dim, 1, bias=False)``, so the one
+#: parameter is gone and the count is theirs rather than ours.
+PUBLISHED_COUNT = 5_328
+
+#: The hidden activation, selectable because the authors select it: ``-act``
+#: in ``trainers/geometric_graph.py`` defaults to ``'tanh'`` and sets the same
+#: activation in all three MLPs. ``silu`` is kept because it is what this port
+#: ran before the authors' code was read, so the departure can be reproduced.
+ACTIVATIONS = {"tanh": nn.Tanh, "silu": nn.SiLU}
+
+#: ``-nt``/``--norm_type`` in the same trainer, whose default is ``'pn'``.
+NORM_TYPES = ("pn", "none")
+
+
+def pair_norm(h: Tensor, scale: float = 1.0, eps: float = 1e-6) -> Tensor:
+    """PyG's ``PairNorm(scale=1.0)``, written out rather than imported.
+
+    The authors' ``-nt`` default is ``'pn'``, which builds
+    ``torch_geometric.nn.PairNorm(scale=1.0)``. ``torch_geometric`` is **not** a
+    dependency of this package (``pyproject.toml`` declares ``numpy`` and
+    ``biotite``), and PairNorm in its default mode is two lines: centre the rows,
+    then rescale so the mean squared row norm is ``scale ** 2``. Written here so
+    the behaviour is readable at the call site and testable without a new
+    dependency that would have to hold on the laptop and on the cluster
+    mid-experiment.
+
+    Applied to the **node features only, never to the coordinates** -- a
+    normaliser on ``x`` would not be equivariant under translation and is not
+    what their encoder does.
+    """
+    centred = h - h.mean(dim=0, keepdim=True)
+    return scale * centred / (centred.pow(2).sum(-1).mean() + eps).sqrt()
 
 
 class EGNCARule(nn.Module):
@@ -130,12 +169,44 @@ class EGNCARule(nn.Module):
     protein port passes none either -- a residue type or an RBF expansion would
     be a second change on top of the port.
 
-    **No step-size cap and no bounded activation on ``phi_x``.** The published
-    rule's coordinate update is unbounded and the authors stabilise training
-    with weight decay and gradient clipping instead; they report exploding
-    gradients. A cap here would be the project's own 0.3 A actuator bound
-    smuggled back in, and that bound is a third of the journey the window has to
-    travel.
+    **No step-size cap.** ``has_coord_act`` bounds ``phi_x``'s scalar *output*
+    in (-1, 1), which is the authors' own default -- but that is a bound on the
+    **coefficient**, not on the displacement: the vector it multiplies is
+    ``x_i - x_j``, so one edge's contribution is up to ``||x_i - x_j||`` and the
+    step this rule may take grows without limit with the neighbourhood's own
+    scale -- measured over two decades of scale in ``tests/test_egnca.py``,
+    under the test named for that distinction. A cap on the displacement would
+    be the project's own
+    0.3 A actuator bound smuggled back in, and that bound is a third of the
+    journey the window has to travel.
+
+    **The five settings below are the authors' defaults, not options this port
+    invented.** Each is a *removal of a departure of ours*: the port was written
+    from the paper's four printed equations, and the paper omits five things
+    that the authors' own code for this task
+    (``trainers/geometric_graph.py``, ``FixedTargetGAE``, ``EncoderEGNCA``,
+    ``EGC`` in ``gengala/egnca``) switches on by default. They are named here
+    with the default they carry there, and
+    ``docs/claims/the-divergence-is-a-missing-published-tanh-not-a-property-of-the-rule.md``
+    records why the port diverged without them.
+
+    ``has_coord_act``
+        ``nn.Tanh() if has_coord_act else nn.Identity()`` as ``phi_x``'s last
+        element. Their ``parser.set_defaults(has_coord_act=True)``, with
+        ``-nca`` to disable it, so **on** is the published setting.
+    ``is_residual``
+        ``h' = h + phi_h(h, m)``. ``is_residual`` defaults **True** in that
+        trainer, which settles a question this module's note had recorded as
+        unanswerable from the paper: the published update is residual.
+    ``activation``
+        ``-act`` defaults ``'tanh'`` there, and sets the hidden activation in
+        all three MLPs.
+    ``norm_type``
+        ``-nt`` defaults ``'pn'``: PairNorm on the node features after each
+        step. See :func:`pair_norm`.
+
+    The fifth is ``phi_x``'s output layer, which is not an argument because the
+    authors do not make it one: see ``__init__``.
     """
 
     def __init__(
@@ -143,6 +214,10 @@ class EGNCARule(nn.Module):
         hidden_dim: int = HIDDEN_DIM,
         message_dim: int = MESSAGE_DIM,
         edge_dim: int = 0,
+        has_coord_act: bool = True,
+        is_residual: bool = True,
+        activation: str = "tanh",
+        norm_type: str = "pn",
     ) -> None:
         super().__init__()
         if hidden_dim < 1 or message_dim < 1:
@@ -152,37 +227,69 @@ class EGNCARule(nn.Module):
             )
         if edge_dim < 0:
             raise ValueError(f"edge_dim must not be negative, got {edge_dim}")
+        if activation not in ACTIVATIONS:
+            raise ValueError(
+                f"activation must be one of {', '.join(sorted(ACTIVATIONS))}, "
+                f"got {activation!r}"
+            )
+        if norm_type not in NORM_TYPES:
+            raise ValueError(
+                f"norm_type must be one of {', '.join(NORM_TYPES)}, got "
+                f"{norm_type!r}"
+            )
+        if not isinstance(has_coord_act, bool) or not isinstance(is_residual, bool):
+            raise ValueError(
+                "has_coord_act and is_residual are switches and must be bools, "
+                f"got {has_coord_act!r} and {is_residual!r}"
+            )
         self.hidden_dim = hidden_dim
         self.message_dim = message_dim
         self.edge_dim = edge_dim
+        self.has_coord_act = has_coord_act
+        self.is_residual = is_residual
+        self.activation = activation
+        self.norm_type = norm_type
+        act = ACTIVATIONS[activation]
         self.phi_m = nn.Sequential(
             nn.Linear(1 + 2 * hidden_dim + edge_dim, message_dim),
-            nn.SiLU(),
+            act(),
             nn.Linear(message_dim, message_dim),
-            nn.SiLU(),
+            act(),
         )
         self.phi_x = nn.Sequential(
             nn.Linear(message_dim, message_dim),
-            nn.SiLU(),
-            nn.Linear(message_dim, 1),
+            act(),
+            # **No bias, and the weight starts at exactly zero.** The authors'
+            # ``EGC`` builds this layer as ``nn.Linear(message_dim, 1,
+            # bias=False)`` and then calls
+            # ``last_coord_layer.weight.data.zero_()``; the
+            # ``xavier_uniform_(..., gain=0.001)`` line sits **commented out**
+            # beside it. So the rule emits no displacement at all until
+            # training moves this weight, which is a stronger start than the
+            # small-gain initialisation this port used to carry -- that one was
+            # described here as "the reference E(n)-GNN initialisation" and was
+            # in fact a workaround for the missing ``has_coord_act`` tanh,
+            # chosen so an untrained rollout would not overflow.
+            nn.Linear(message_dim, 1, bias=False),
+            nn.Tanh() if has_coord_act else nn.Identity(),
         )
         self.phi_h = nn.Sequential(
             nn.Linear(hidden_dim + message_dim, message_dim),
-            nn.SiLU(),
+            act(),
             nn.Linear(message_dim, hidden_dim),
         )
-        # **``phi_x``'s last layer starts small, and this is an initialisation
-        # rather than a cap.** It is what the reference E(n)-GNN
-        # implementation does (``xavier_uniform_`` at gain 1e-3 on the
-        # coordinate MLP's output) and it is necessary rather than cosmetic
-        # here: a neighbour difference is ~10 A on a protein, so at the default
-        # ``Linear`` init the very first step displaces a residue by tens of
-        # Angstrom and a 20-step rollout overflows to non-finite before
-        # training has begun -- measured on 1UBQ. The weight is free to grow
-        # from there, so nothing bounds the step the rule may take, which is
-        # the property the port is testing.
-        nn.init.xavier_uniform_(self.phi_x[-1].weight, gain=1e-3)
-        nn.init.zeros_(self.phi_x[-1].bias)
+        self.last_coord_layer.weight.data.zero_()
+
+    @property
+    def last_coord_layer(self) -> nn.Linear:
+        """``phi_x``'s output ``Linear``, on the authors' own name for it.
+
+        A property rather than an attribute: assigning the same module twice
+        would list it a second time in ``named_children``, and
+        ``tests/test_egnca.py::test_the_rule_has_no_frame_machinery`` asserts
+        this rule's children are exactly the three MLPs.
+        """
+        return self.phi_x[2]
 
     def parameter_count(self) -> int:
         """Total trainable parameters, on ``AANCARule.parameter_count``'s name."""
@@ -236,7 +343,9 @@ class EGNCARule(nn.Module):
         held residue still **sends** messages -- it is part of the
         neighbourhood the window reads -- and both its coordinate and its
         hidden state are left exactly as they came in, so nothing about it
-        drifts over a rollout.
+        drifts over a rollout. That restore happens **after** PairNorm, so a
+        held residue's ``h`` is the one it arrived with even though the
+        normaliser read it.
         """
         if x.dim() != 2 or x.shape[-1] != 3:
             raise ValueError(f"x must be (R, 3), got {tuple(x.shape)}")
@@ -286,6 +395,17 @@ class EGNCARule(nn.Module):
         m_i = m_ij.sum(dim=1)  # (R, message)
         x_new = x + shift
         h_new = self.phi_h(torch.cat([h, m_i], dim=-1))
+        # ``is_residual`` is the authors' default (True): the node update adds
+        # to the state rather than replacing it.
+        if self.is_residual:
+            h_new = h + h_new
+        # PairNorm, on the node features only and after the step, which is
+        # where their encoder applies it. Note that it reads **all** rows: the
+        # centring is over the whole structure, held residues included, which
+        # is what makes it a normaliser over the graph rather than over the
+        # window.
+        if self.norm_type == "pn":
+            h_new = pair_norm(h_new)
 
         if moving is not None:
             if moving.shape != (x.shape[0],) or moving.dtype is not torch.bool:
@@ -592,10 +712,11 @@ def egnca_objective(
         if bool(damaged.any())
         else None,
     )
-    # **A diverged rollout reports nan, it does not raise.** ``phi_x`` is
-    # unbounded by design and the authors report exploding gradients, so a
-    # non-finite end state is an ordinary outcome of this rule rather than a
-    # bug -- and ``ca_rmsd_on``'s SVD raises ``_LinAlgError`` on one, which
+    # **A diverged rollout reports nan, it does not raise.** The displacement
+    # is unbounded even with the authors' tanh on ``phi_x`` -- the tanh bounds
+    # the coefficient and the vector it scales is ``x_i - x_j`` -- and the
+    # authors report exploding gradients, so a non-finite end state is an
+    # ordinary outcome of this rule rather than a bug -- and ``ca_rmsd_on``'s SVD raises ``_LinAlgError`` on one, which
     # would take down a training run several hours in instead of skipping an
     # update. The trainer's own non-finite guard is what handles it.
     if (

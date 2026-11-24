@@ -1,4 +1,5 @@
-# The E(n)-GNCA port: Gala's rule verbatim, on this project's regeneration task.
+# The E(n)-GNCA port: Gala's rule as their own code runs it, on this project's
+# regeneration task.
 #
 #   .venv/Scripts/python.exe scripts/train_egnca.py configs/egnca.toml --section port
 #   .venv/Scripts/python.exe scripts/train_egnca.py configs/egnca.toml --list-sections
@@ -23,33 +24,44 @@
 # ablations come after it moves
 # (docs/claims/the-task-is-to-realise-coordinates-for-a-given-contact-graph.md).
 #
-# KNOWN, MEASURED, AND ONLY PART FIXED. At the PUBLISHED lr of 1e-3 half the
-# held-out set goes non-finite by update 750 on a laptop run, and the `diverged`
-# column is what says so. `[port.inputs]` now overrides `lr` to 3e-4, which is
-# the single smallest departure that holds all fifteen crops finite in most
-# evaluations of a 3,000-update run -- BUT IT DOES NOT FIX THE RULE. Measured on
-# the laptop pool at lr 1e-3, 3e-4 and 1e-4 alike, about 10 % of TRAINING
-# rollouts still overflow to a non-finite loss and are skipped, so the far crops
-# contribute no gradient at any learning rate and divergence recurs
-# intermittently for the whole run. Read `n` and `diverged` before any other
+# WHAT WAS WRONG AND IS NOW FIXED -- 24 Nov. At the PUBLISHED lr of 1e-3 half
+# the held-out set used to go non-finite by update 750 on a laptop run, and
+# about 10 % of TRAINING rollouts overflowed to a non-finite loss and were
+# skipped at lr 1e-3, 3e-4 and 1e-4 alike -- so the far crops contributed no
+# gradient at any learning rate. Read `n` and `diverged` before any other
 # column; a row with a `start` below 8.77 is a mean over survivors.
 #
-# AND THE KNOBS ARE NOT WHERE THE FIX IS -- 24 Nov. `lr`, `clip` and
-# `weight_decay` below are ALREADY the published values for this task
+# AND THE KNOBS WERE NEVER WHERE THE FIX WAS. `lr`, `clip` and `weight_decay`
+# below are ALREADY the published values for this task
 # (`trainers/geometric_graph.py` in `gengala/egnca`: -lr 1e-3, -wd 1e-5,
-# -gcv 1.0). There was never a knob to find. A 1,000-update sweep over all
-# three left one to four crops gone at every setting tried, and an `lr = 3e-4`
-# override was briefly added here and then dropped as a departure invented to
-# compensate for something missing. What is missing is a **tanh on `phi_x`'s
-# output**, which the authors' code for this task switches on by default
-# (`has_coord_act=True`), together with a zero-initialised output layer, a
-# residual `h` update, a tanh hidden activation and PairNorm on the node
-# features. See
+# -gcv 1.0). A 1,000-update sweep over all three left one to four crops gone at
+# every setting tried, and an `lr = 3e-4` override was briefly added here and
+# then dropped as a departure invented to compensate for something missing.
+# What was missing was FIVE settings the paper never prints and the authors'
+# code for this task carries on by default -- a tanh on `phi_x`'s output
+# (`has_coord_act=True`), that layer zero-initialised and unbiased, a residual
+# `h` update, a tanh hidden activation, and PairNorm on the node features. All
+# five are now `[base.inputs]` keys at the authors' defaults, at the top of this
+# section. See
 # docs/claims/the-divergence-is-a-missing-published-tanh-not-a-property-of-the-rule.md
-# -- until those five land, this config diverges as described above and the
-# 250-update row is the only one to quote.
 #
-# THE MECHANISM, SO A FUTURE KNOB IS NOT TRIED BLIND. Nothing about the weights
+# The trainer now counts skipped updates BY REASON and prints the rate per
+# evaluation interval, because that rate -- not the loss -- is what says whether
+# the bound works: an overflowing crop is excused rather than charged.
+#
+# MEASURED, 1,000 laptop updates at this section with the five on: `n` 15 and
+# `diverged` 0 at every evaluation, `start` flat at 8.774, and ZERO non-finite
+# training rollouts -- against 145 of 1,000 and five held-out crops lost with
+# the four switchable ones off. The `total` column does NOT fall over that
+# window (7.35 -> 11.68); the divergence is fixed and whether the rule learns
+# the task is still open. The full table is in scripts/train_egnca.py's
+# docstring.
+#
+# THE MECHANISM THE TANH REMOVES, kept so a future knob is not tried blind and
+# so the symptom is recognisable if it returns. All of it is measured WITHOUT
+# `has_coord_act`, i.e. on the port as it stood before 24 Nov; with the bound,
+# `phi_x` is in (-1, 1), |1 + phi_x| is in (0, 2) and the runaway branch below
+# does not exist. Nothing about the weights
 # or the gradients goes non-finite: the coordinates do, inside the rollout, in
 # five to nine of the twenty-five steps. `||x_i - x_j||^2` enters `phi_m`
 # unnormalised, so `phi_x`'s scalar is close to linear in the squared distance
@@ -63,6 +75,29 @@
 # longest starting edge, and they are the same ones each time.
 
 [base.inputs]
+# THE FIVE SETTINGS THE PAPER OMITS, at the authors' OWN defaults for this task
+# (`trainers/geometric_graph.py` / `FixedTargetGAE` / `EncoderEGNCA` / `EGC` in
+# `gengala/egnca`). None of these is this project's idea; each turns OFF a
+# departure the port made by transcribing the four printed equations. The fifth
+# -- `phi_x`'s output layer zero-initialised and unbiased -- is not a key,
+# because the authors do not make it one.
+#
+# `has_coord_act`: a tanh on `phi_x`'s output. Their
+# `parser.set_defaults(has_coord_act=True)`, `-nca` to disable. It bounds the
+# scalar COEFFICIENT, not the displacement -- the vector it scales is
+# (x_i - x_j), so the step is still unbounded in the neighbourhood's own scale
+# and this is NOT the 0.3 A actuator cap returning.
+has_coord_act = true
+# `is_residual`: h' = h + phi_h(h, m). Defaults true in that trainer, which
+# settles a question the port had recorded as unanswerable from the paper.
+is_residual = true
+# `-act`, which sets the hidden activation in all three MLPs. Ours was silu.
+activation = "tanh"
+# `-nt`: PairNorm(scale=1.0) on the NODE FEATURES only, after each step, never
+# on the coordinates. Implemented in `aanca.egnca.pair_norm` rather than taken
+# from torch-geometric, which is not a dependency of this package.
+norm_type = "pn"
+
 # the authors name gradient clipping as what stabilised their training
 clip = 1.0
 crop_size = 128
@@ -75,7 +110,7 @@ device_neighbours = false
 eval_every = 250
 eval_structures = 16
 # Gala's widths. The published ~5K count is quoted against this pair; ours is
-# 5,329 (tests/test_egnca.py)
+# 5,328 (tests/test_egnca.py)
 hidden_dim = 16
 initial = "helix"
 k = 24

@@ -52,10 +52,50 @@ were averaged*, because the hard ones diverged out of the mean. So the
 ``rmsd_dmg`` column is partly survivorship, and a row with a high ``diverged``
 is not a result no matter how good its other columns look.
 
-That is the unbounded rule's own failure mode, reported by its authors, and it
-is the first thing to fix before an arm of this is read: a lower ``lr``, a
-tighter ``clip``, or a per-crop guard. It is recorded here rather than left to
-be rediscovered from a log, and it is why ``diverged`` is printed at all.
+That is the unbounded rule's own failure mode, reported by its authors. It was
+**not** a knob: ``lr``, ``clip`` and ``weight_decay`` were already the authors'
+published values, and a sweep over all three left crops gone at every setting.
+What was missing was five settings the paper never prints and the authors' code
+for this task carries on by default -- see ``aanca.egnca.EGNCARule`` and
+``configs/egnca.toml``. It is recorded here rather than left to be rediscovered
+from a log, and it is why ``diverged`` is printed at all.
+
+**WHAT THE SAME 1,000 UPDATES SAY WITH THOSE FIVE SETTINGS ON, 24 Nov.** Same
+pool, same seed, same crops, CPU, 0.20 s/update; ``skip`` is this trainer's new
+per-interval count by reason::
+
+    update  total  rmsd_dmg  (fit intact, start)   n  diverged  skip/250
+       250  7.353     2.921   (3.108,    8.774)   15         0   4 (0 inf)
+       500  7.861     2.952   (3.151,    8.774)   15         0   3 (0 inf)
+       750  8.762     3.264   (3.520,    8.774)   15         0   1 (0 inf)
+      1000 11.680     3.377   (3.450,    8.774)   15         0   2 (0 inf)
+
+**``n`` holds at 15, ``diverged`` is 0 throughout, ``start`` does not move off
+8.774, and not one training rollout in 1,000 went non-finite.** The ~10 % skip
+is gone: all ten skips in the run are ``no_crop`` or ``no_window``, which are
+properties of the crop and not of the rule.
+
+**The same 1,000 updates with the four switchable settings turned back off** --
+the paper's four printed equations, same seed and same crops -- for comparison::
+
+    update  total  rmsd_dmg  start   n  diverged  skip/250   of which inf
+       250  7.925     2.913  8.774  15         0        13             12
+       500  5.074     2.301  8.529  14         1        39             35
+       750  4.787     2.291  7.203  11         4        38             37
+      1000  3.418     2.006  6.748  10         5        62             61
+
+145 of 1,000 rollouts overflowed and were excused, five of fifteen held-out
+crops are gone by update 1,000, and ``start`` walks down from 8.774 to 6.748 --
+**which is the survivorship, not an easier task**, since the start state cannot
+depend on the weights. Its ``total`` and ``rmsd_dmg`` columns look *better* than
+the corrected run's and are a mean over the ten crops that survived.
+
+So the five settings fix what they were added to fix and nothing more. The
+loss does **not** fall over this window with them on, and that is the honest
+reading: ``total`` rises from 7.35 to 11.68 and ``rmsd_dmg`` from 2.92 to 3.38
+while every crop stays finite. Whether the rule learns the task is a separate,
+still-open question, and 1,000 updates against a 20,000-update config is far
+too short to answer it.
 """
 
 from __future__ import annotations
@@ -72,6 +112,8 @@ from aanca import checkpoint as ckpt
 from aanca import config as run_config
 from aanca.data import RepackingDataset, read_manifest
 from aanca.egnca import (
+    ACTIVATIONS,
+    NORM_TYPES,
     EGNCAPoolEntry,
     EGNCARule,
     egnca_objective,
@@ -113,6 +155,18 @@ def build_schema() -> argparse.ArgumentParser:
     # published parameter count is quoted against them.
     p.add_argument("--hidden-dim", type=int, default=16)
     p.add_argument("--message-dim", type=int, default=32)
+
+    # The four settings the paper omits and the authors' code for this task
+    # carries on by default. Each default below is theirs
+    # (``trainers/geometric_graph.py``): ``has_coord_act`` from
+    # ``parser.set_defaults(has_coord_act=True)``, ``is_residual`` True,
+    # ``-act tanh``, ``-nt pn``. They are settings rather than constants so the
+    # port's own earlier behaviour stays reachable and each one is ablatable
+    # from a working rule rather than argued about.
+    p.add_argument("--has-coord-act", action="store_true", default=True)
+    p.add_argument("--is-residual", action="store_true", default=True)
+    p.add_argument("--activation", default="tanh", choices=tuple(ACTIVATIONS))
+    p.add_argument("--norm-type", default="pn", choices=NORM_TYPES)
 
     # The rollout. ``steps-min`` with ``steps`` is the published "15 to 25
     # steps, sampled uniformly"; equal values fix the length.
@@ -174,7 +228,14 @@ def recorded_args(args: argparse.Namespace) -> dict:
 
 def build_rule(args) -> EGNCARule:
     """The rule, built from the section. One call, so the keys cannot miss it."""
-    return EGNCARule(hidden_dim=args.hidden_dim, message_dim=args.message_dim)
+    return EGNCARule(
+        hidden_dim=args.hidden_dim,
+        message_dim=args.message_dim,
+        has_coord_act=args.has_coord_act,
+        is_residual=args.is_residual,
+        activation=args.activation,
+        norm_type=args.norm_type,
+    )
 
 
 def resolve_device(name: str) -> torch.device:
@@ -299,8 +360,36 @@ def report(scores: dict[str, float]) -> str:
     )
 
 
+#: Every reason a training update can contribute no gradient, counted
+#: separately and permanently.
+#:
+#: **The skip rate is a readout, not a diagnostic.** A crop that overflows gives
+#: an ``inf`` loss, is skipped, and so is never charged for exploding -- about
+#: 10 % of training rollouts at lr 1e-3, 3e-4 and 1e-4 alike
+#: (``docs/claims/the-divergence-is-a-missing-published-tanh-not-a-property-of-the-rule.md``),
+#: which is why no learning rate helped: the far crops were invisible to
+#: training rather than badly weighted. A single total cannot say that, because
+#: ``no_window`` is a property of the crop and ``nonfinite_loss`` is a property
+#: of the rule, so the reasons are counted apart.
+SKIP_REASONS = ("no_crop", "no_window", "nonfinite_loss", "nonfinite_gradient")
+
+
 class _SkipUpdate(Exception):
-    """This rollout produced nothing the objective can price."""
+    """This rollout produced nothing the objective can price, and why."""
+
+    def __init__(self, reason: str) -> None:
+        if reason not in SKIP_REASONS:
+            raise ValueError(f"unknown skip reason {reason!r}")
+        super().__init__(reason)
+        self.reason = reason
+
+
+def skip_report(counts: dict[str, int], window: int) -> str:
+    """``skip`` as a share of the updates since the last evaluation."""
+    total = sum(counts.values())
+    detail = " ".join(f"{name} {counts[name]}" for name in SKIP_REASONS)
+    share = 100.0 * total / window if window else float("nan")
+    return f"skip {total}/{window} ({share:.1f}%: {detail})"
 
 
 def main() -> int:
@@ -348,8 +437,8 @@ def main() -> int:
 
     print(f"config     : {runtime.config} [{runtime.section}]")
     print(
-        "E(n)-GNCA PORT: Gala's rule verbatim -- frameless, one hop per step, "
-        "scalar phi_x, no step cap, FULL BPTT over "
+        "E(n)-GNCA PORT: Gala's rule as their own code runs it -- frameless, "
+        "one hop per step, scalar phi_x, no cap on the step, FULL BPTT over "
         + (
             f"{args.steps_min}-{args.steps} steps"
             if args.steps_min != args.steps
@@ -425,6 +514,7 @@ def main() -> int:
 
     start_update = 0
     best = float("inf")
+    resumed_skips: dict = {}
     if args.resume and last_path.exists():
         state = ckpt.load(last_path, map_location=device)
         drifted = run_config.resume_drift(state.get("args") or {}, args)
@@ -443,6 +533,7 @@ def main() -> int:
         optimiser.load_state_dict(state["optimiser"])
         start_update = int(state["update"])
         best = float(state.get("best", float("inf")))
+        resumed_skips = state.get("skips") or {}
         ckpt.set_rng_state(state["rng"])
         ckpt.restore_python_rng(rng, state["python_rng"])
         if state.get("eval_indices"):
@@ -466,6 +557,24 @@ def main() -> int:
         f"{args.damage}-residue window, {args.initial} start"
     )
     print(
+        "  the authors' own defaults for this task: coord_act "
+        + ("tanh" if args.has_coord_act else "NONE (ours, and it diverged)")
+        + f", h update {'residual' if args.is_residual else 'REPLACING (ours)'}"
+        + f", hidden act {args.activation}, node norm {args.norm_type}"
+        + ", phi_x output zero-initialised and unbiased."
+        + (
+            ""
+            if (
+                args.has_coord_act
+                and args.is_residual
+                and args.activation == "tanh"
+                and args.norm_type == "pn"
+            )
+            else "\n  AT LEAST ONE IS OFF, so this is an ablation of the "
+            "published rule and not the port."
+        )
+    )
+    print(
         f"weights: pairwise {args.pairwise_weight:g} (window-to-context), "
         f"pairwise-window {args.pairwise_window_weight:g} (window-to-window) "
         "-- unclamped, A^2"
@@ -477,7 +586,14 @@ def main() -> int:
     )
 
     started = time.perf_counter()
-    skipped_updates = 0
+    #: Cumulative over the run, and the same counts again since the last
+    #: evaluation -- the per-interval share is the quantity the rule is being
+    #: judged on, and a cumulative rate hides a rate that falls.
+    skips = {
+        reason: int(resumed_skips.get(reason, 0)) for reason in SKIP_REASONS
+    }
+    interval_skips = {reason: 0 for reason in SKIP_REASONS}
+    interval_updates = 0
     history_path = out_dir / "history.json"
     history: list[dict] = []
     if args.resume and history_path.exists():
@@ -523,10 +639,10 @@ def main() -> int:
                 try:
                     topo, native, _crop, crop_seed = dataset.load_crop(index, rng=rng)
                 except Exception:
-                    raise _SkipUpdate
+                    raise _SkipUpdate("no_crop")
                 key = (index, crop_seed)
             if topo.n_residues < 12:
-                raise _SkipUpdate
+                raise _SkipUpdate("no_window")
 
             generator = torch.Generator().manual_seed(
                 args.seed * 1_000_003 + update
@@ -556,9 +672,12 @@ def main() -> int:
             # of the same statement, and it is a skip rather than a zero
             # because a crop with nothing to fill is not a filled crop.
             if terms.damaged_mask is None or not bool(terms.damaged_mask.any()):
-                raise _SkipUpdate
+                raise _SkipUpdate("no_window")
+            # **This is the skip that matters**, and it is counted under its
+            # own name: an overflowing crop prices at ``inf``, contributes no
+            # gradient, and so the rule is never charged for having exploded.
             if not torch.isfinite(terms.total):
-                raise _SkipUpdate
+                raise _SkipUpdate("nonfinite_loss")
             optimiser.zero_grad()
             terms.total.backward()
             # **A finite loss does not imply a finite gradient**, and
@@ -566,24 +685,24 @@ def main() -> int:
             # total norm is inf, the scale factor is clip/inf = 0, and
             # 0 * inf = NaN. That is what killed two of this project's growth
             # arms, and this rule is the one most likely to produce it -- the
-            # authors report exploding gradients and ``phi_x`` is unbounded.
-            # Skipping is right rather than clamping: a clamped infinite
-            # gradient is a fabricated direction.
+            # authors report exploding gradients and the displacement is
+            # unbounded even under their tanh. Skipping is right rather than
+            # clamping: a clamped infinite gradient is a fabricated direction.
             if not all(
                 torch.isfinite(p.grad).all()
                 for p in rule.parameters()
                 if p.grad is not None
             ):
-                skipped_updates += 1
                 optimiser.zero_grad(set_to_none=True)
-                if skipped_updates in (1, 10, 100) or skipped_updates % 500 == 0:
+                seen = skips["nonfinite_gradient"] + 1
+                if seen in (1, 10, 100) or seen % 500 == 0:
                     print(
                         f"  update {update}: non-finite gradient with a finite "
                         f"loss ({float(terms.total.detach()):.3f}); skipped. "
-                        f"{skipped_updates} so far.",
+                        f"{seen} so far.",
                         flush=True,
                     )
-                raise _SkipUpdate
+                raise _SkipUpdate("nonfinite_gradient")
             torch.nn.utils.clip_grad_norm_(rule.parameters(), args.clip)
             optimiser.step()
 
@@ -611,18 +730,28 @@ def main() -> int:
                         damaged=terms.damaged_mask.clone(),
                         baseline_rmsd=bar,
                     )
-        except _SkipUpdate:
-            pass
+        except _SkipUpdate as skipped:
+            skips[skipped.reason] += 1
+            interval_skips[skipped.reason] += 1
+        interval_updates += 1
 
         if update % args.eval_every == 0 or update == args.updates:
             scores = score(rule, dataset, eval_indices, args, seed=args.seed)
             elapsed = time.perf_counter() - started
             print(
                 f"update {update:7d}  {report(scores)}  "
+                f"{skip_report(interval_skips, interval_updates)}  "
                 f"{elapsed / max(update - start_update, 1):.2f}s/update",
                 flush=True,
             )
-            history.append({"update": update, **scores})
+            history.append({
+                "update": update,
+                **scores,
+                "skips": dict(interval_skips),
+                "skip_window": interval_updates,
+            })
+            interval_skips = {reason: 0 for reason in SKIP_REASONS}
+            interval_updates = 0
             history_path.write_text(json.dumps(history, indent=1), encoding="utf-8")
             payload = {
                 "rule": rule.state_dict(),
@@ -640,7 +769,8 @@ def main() -> int:
                 "scores": scores,
                 "rng": ckpt.rng_state(),
                 "python_rng": rng.getstate(),
-                "skipped_updates": skipped_updates,
+                "skipped_updates": sum(skips.values()),
+                "skips": dict(skips),
             }
             ckpt.save(last_path, payload)
             # Selection is on the held-out `total`, which is the only scalar
@@ -660,10 +790,14 @@ def main() -> int:
             print(f"stopping at update {update}: out of time")
             break
 
-    if skipped_updates:
+    if sum(skips.values()):
         print(
-            f"{skipped_updates} update(s) skipped for a non-finite gradient -- "
-            "this run trained on fewer updates than its curve's x-axis says."
+            f"{sum(skips.values())} update(s) contributed no gradient -- this "
+            "run trained on fewer updates than its curve's x-axis says. By "
+            "reason: "
+            + ", ".join(f"{name} {skips[name]}" for name in SKIP_REASONS)
+            + ". `nonfinite_loss` is the rule exploding and being excused for "
+            "it; `no_window` is a property of the crop."
         )
     return 0
 
