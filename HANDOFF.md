@@ -60,6 +60,43 @@ measures persistence past the horizon at all.
 Full sourcing, the per-step divergence trace and the sweep table:
 `docs/claims/the-divergence-is-a-missing-published-tanh-not-a-property-of-the-rule.md`.
 
+### The five are in, they fix the divergence completely, and the rule still does not learn
+
+Measured the same day, 1,000 updates, laptop pool, one scratch config, same
+seed and crops for both arms. Commit `867f02c`, suite 1039 passed.
+
+    five on (the port)                        four off (the paper's equations)
+    u     rmsd_dmg  start   n  div  inf       u     rmsd_dmg  start   n  div  inf
+     250     2.921  8.774  15    0    0        250     2.913  8.774  15    0   12
+     500     2.952  8.774  15    0    0        500     2.301  8.529  14    1   35
+     750     3.264  8.774  15    0    0        750     2.291  7.203  11    4   37
+    1000     3.377  8.774  15    0    0       1000     2.006  6.748  10    5   61
+
+**The prediction held exactly: `n` holds at 15, `diverged` is 0 throughout,
+`start` stays flat at 8.774, and 0 of 1,000 training rollouts went non-finite
+against 145 of 1,000 with the four off.** The ten skips in the whole run are
+all `no_crop`/`no_window` — properties of the crop, not the rule. Skip
+counting by reason is now permanent and prints on every evaluation line.
+
+**The right-hand table is the trap.** It looks better at every row — 2.006
+against 3.377 — and it is a mean over the ten crops that survived, which
+`start` walking 8.774 → 6.748 proves, since the start state cannot depend on
+the weights. **An unstable arm wins by discarding its hard cases.**
+
+**What is now open, and it is the next question.** With the five on the
+objective does not fall: held-out `rmsd_dmg` 2.92 → 3.38 over 1,000 updates.
+A rising *training* total is expected (the replay pool fills with rolled-out
+states, so each sample is a harder question), but held-out `rmsd_dmg` is scored
+on a fixed fifteen crops from the same start and cannot be explained that way.
+1,000 updates is 5 % of the configured 20,000 and four evaluations are not a
+trend, so a full-length run is the measurement — **running now locally, and
+Bunya is reachable again (bun149:43652) for the run where the comparators
+live.**
+
+**The port's honest headline is now 8.774 → 2.92 Å at update 250**, on fifteen
+crops with nothing diverged and nothing skipped. It replaces 8.77 → 2.63 Å,
+which was measured before the bound and had four crops overflowing by 500.
+
 ---
 
 ## 0a. Current state — 2026-11-23
@@ -906,7 +943,8 @@ Full account, with every caveat:
 `docs/claims/the-published-rule-ported-verbatim-moves-the-window-six-angstrom-in-250-updates.md`.
 `src/aanca/egnca.py`, `scripts/train_egnca.py`, `configs/egnca.toml`,
 `tests/test_egnca.py` (26 tests, each with its crippling demonstrated).
-**5,329 parameters** -- Gala's own widths, 6.6 % above the paper's rounded 5K,
+**5,328 parameters** (5,329 before 24 Nov, when `phi_x`'s output bias went to
+match the authors' `bias=False`) -- Gala's own widths, 6.6 % above the rounded 5K,
 against `AANCARule`'s 229,588. Suite **1028 passed, 0 failed**.
 
     update  total  anchor  window  rmsd_dmg  (fit_intact, start)   n  diverged

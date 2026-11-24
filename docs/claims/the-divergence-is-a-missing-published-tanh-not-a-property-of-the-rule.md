@@ -122,6 +122,64 @@ to the rule.
   * **Single reading of a single repo at `main`**, not at a release tag. The
     repo's own bibtex gives TMLR 2024, but `main` may have moved since.
 
+## MEASURED, same day: the five fix the divergence completely, and do not make it learn
+
+Both arms from one scratch config, same seed, same pool, same crops, laptop
+CPU, 1,000 updates. `skip/250` is the new permanent per-reason skip counter.
+
+**Five on -- the port:**
+
+    update  total  rmsd_dmg  (fit intact, start)   n  diverged  skip/250  of which inf
+       250  7.353     2.921   (3.108,    8.774)   15         0         4              0
+       500  7.861     2.952   (3.151,    8.774)   15         0         3              0
+       750  8.762     3.264   (3.520,    8.774)   15         0         1              0
+      1000 11.680     3.377   (3.450,    8.774)   15         0         2              0
+
+**The four switchable ones off -- the paper's four equations:**
+
+    update  total  rmsd_dmg  start   n  diverged  skip/250  of which inf
+       250  7.925     2.913  8.774  15         0        13             12
+       500  5.074     2.301  8.529  14         1        39             35
+       750  4.787     2.291  7.203  11         4        38             37
+      1000  3.418     2.006  6.748  10         5        62             61
+
+**The prediction held exactly.** `n` holds at 15, `diverged` is 0 at every
+evaluation, `start` stays flat at 8.774 so there is no survivorship, and
+**0 of 1,000 training rollouts went non-finite** against **145 of 1,000** with
+the four off. The run's ten skips are all `no_crop` or `no_window` --
+properties of the crop, not of the rule. The ~10 % skip rate did not fall, it
+went to zero.
+
+**And the second table is the trap this project keeps walking into.** With the
+settings off, `total` and `rmsd_dmg` look *better* at every row -- 2.006
+against 3.377 at update 1,000. They are a mean over the ten crops that lived,
+and `start` walking 8.774 -> 6.748 proves it, because the start state cannot
+depend on the weights. The unstable arm appears to win by discarding its hard
+cases.
+
+**What the first table does not say.** With the five on the objective **does
+not fall**: `total` 7.35 -> 11.68 and `rmsd_dmg` 2.92 -> 3.38 over 1,000
+updates. So the divergence is fixed and *whether the rule learns the task is
+not answered*. Two reasons not to read failure into it yet, and one reason not
+to dismiss it:
+
+  * **1,000 updates is 5 % of the configured 20,000**, and four evaluations are
+    not a trend. A full-length run is the measurement.
+  * **A rising *training* `total` is expected here.** The replay pool fills with
+    rolled-out states, so the sampled states get progressively further from the
+    crystal pose as training proceeds -- the objective is being asked a harder
+    question each time. This is the Growing-NCA dynamic the pool exists for and
+    not by itself evidence of anything.
+  * **But held-out `rmsd_dmg` also rose, 2.92 -> 3.38**, and that one is scored
+    on a fixed set of fifteen crops from the same start every time. It cannot
+    be explained by the pool. **This is the open question, and it is the next
+    one.**
+
+**The 250-update row is also the honest version of the port's headline.**
+8.774 -> 2.92 A on fifteen crops with nothing diverged and nothing skipped
+replaces the old 8.77 -> 2.63 A, which was measured before the bound and
+carried four overflowing crops by update 500.
+
 ## Next
 
   1. **Revert `lr = 0.0003`.** It compensates for the missing tanh.
