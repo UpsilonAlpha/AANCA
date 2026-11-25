@@ -228,9 +228,63 @@ project's negative results "were about its departures from the published
 method, not about neural cellular automata on proteins" -- and that sentence is
 a comparison, which this run cannot make. The laptop pool is 954 structures
 against Bunya's 23,760, the start distance is 8.77 A against 12 to 16 A, and
-the contact graph is given. **Bunya job 33419979 is the run that decides which
-bucket this really is**, and until it reports, the bucket is "passed on an
-easier pool".
+the contact graph is given. ~~Bunya job 33419979 is the run that decides which
+bucket this really is, and until it reports, the bucket is "passed on an
+easier pool".~~ **It reported. See below.**
+
+## THE BUCKET, DECIDED 25 Nov ON BUNYA: 2.53 A, the first one
+
+**Job 33419979 ran the port to completion on the pool every comparator in this
+project was trained on**: `COMPLETED`, exit `0:0`, 39:52 elapsed against a 24 h
+budget, 80 evaluations, last `update` 20,000.
+
+    fit_intact at 20,000      2.528 A      best single evaluation 2.477 A
+    n                         15 at all 80 evaluations
+    diverged                  0 at all 80
+    start_rmsd_dmg            10.679728087770185 at all 80 -- identical to the
+                              last digit, so NO row is a survivor mean
+    nonfinite_loss skips      0 of 20,000
+
+**Against this note's own buckets: doing nothing 16.28, the geometric floor
+10.05, the best arm `g25_equivariant` 8.10, the bar 4.0 -- the port reads
+2.528.** The `<= 4.0 A -- the mapping works` bucket, by a factor of 3.2 on the
+best arm and 4.0 on plain geometry, with 5,328 parameters against 229,588.
+
+**And the pool objection that voided every previous cross-arm comparison does
+not apply to this run.** [[no-growth-arm-has-been-run-twice-so-no-difference-has-an-error-bar]]
+voids a laptop-to-Bunya comparison because `available[:416]` is a different 416
+proteins. This is Bunya's 23,760-structure pool, the same slice, the same crop
+index meaning the same protein. That was the entire purpose of the job.
+
+**So the first bucket's conclusion is now licensed, in the words registered for
+it before the run**: the project's negative results "were about its departures
+from the published method, not about neural cellular automata on proteins."
+
+**Three things that still differ from `g25`, stated so the claim is not
+overstated.** (1) The start is 10.68 A where `g25`'s was 13.13 A, a closer
+start by 2.45 A -- but as improvement-against-own-start, the licensed form, the
+port moves 8.15 A against `g25`'s 5.03 A, and 2.45 A of easier start does not
+explain finishing 5.6 A better and 7.5 A inside the geometric floor. (2) The
+contact graph is given, where `g25` had the live k-NN graph; under
+[[the-task-is-to-realise-coordinates-for-a-given-contact-graph]] that is the
+task statement, but it is a different task and the port is not a better rule at
+`g25`'s. (3) 474 of 20,000 updates contributed no gradient -- `no_crop` 452,
+`no_window` 22, `nonfinite_loss` **0** -- so it trained on 19,526 effective
+updates and not one skip was the rule exploding.
+
+**Leg 1 does not run, and this is the branch that decides it.** This note
+registered the point-cloud replication as the response to a leg-2 *failure*.
+Leg 2 passed on the comparator pool, so the torus is not owed and building it
+would be the arm thirty this note exists to prevent.
+
+**What is NOT measured, and is now the project's largest gap.** Persistence
+past the training horizon -- the published rule's headline claim, which their
+code evaluates to 10,000-100,000 steps against a 15-25 step training horizon.
+This note listed it as the second of three instruments the port had to carry
+and it was never built. With a working baseline it is finally a measurement on
+something rather than on nothing.
+
+**No arm, this one included, has been run at a second seed.**
 
 `align` is read alongside, because it is the instrument the capacity question
 turned on and **no native-edge arm has ever had it read**. Twist is a guard, not

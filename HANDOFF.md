@@ -6,7 +6,103 @@ journal is `docs/JOURNAL.md`; the claims and their evidence are one note each in
 
 ---
 
-## 0. Current state — 2026-11-25: the port PASSES the pre-registered bar, and the comparable run is on Bunya
+## 0. Current state — 2026-11-25: the port passes the bar ON BUNYA, 2.53 against the best arm's 8.10
+
+**The newest thing in this file, and the first comparable number the port has.**
+Bunya job 33419979 ran the published rule to completion on the pool every arm
+in the record was trained on. `COMPLETED`, exit `0:0`, 39:52 elapsed against a
+24 h budget, 80 evaluations, last `update` 20,000 -- so a real finish and not
+the silent `--max-seconds` exit described in §0a.
+
+### The run
+
+    update  total  pair_anchor  pair_window  rmsd_dmg  fit_intact   n  diverged
+       250 11.750        5.946        5.804     3.427       3.674  15         0
+     20000  5.854        2.543        3.311     2.392       2.528  15         0
+
+**`n` is 15 and `diverged` is 0 at all 80 evaluations**, and `start_rmsd_dmg`
+is **10.679728087770185 at every single one** -- identical to the last digit,
+which is the survivorship check passing exactly rather than approximately. No
+row is a mean over survivors.
+
+### Block means, because this series is read no other way
+
+    updates        rmsd_dmg mean    sd     min     evals
+        0- 2000         3.524      0.418  3.020      7
+     2000- 5000         2.805      0.140  2.620     12
+     5000- 8000         2.757      0.184  2.556     12
+     8000-11000         2.671      0.271  2.506     12
+    11000-14000         2.548      0.110  2.349     12
+    14000-17000         2.516      0.111  2.388     12
+    17000-20000         2.420      0.059  2.340     13
+
+Monotone in every block, spread narrowing 0.418 -> 0.059 -- the same shape as
+the laptop run, on harder crops. Best single `fit_intact` **2.477 A**.
+
+### The bucket, and this time the comparison is licensed
+
+The pre-registered buckets in
+`docs/claims/the-port-must-reproduce-the-published-result-on-point-clouds-before-it-is-run-on-proteins.md`,
+all `fit_intact`: doing nothing **16.28 A**, the geometric floor **10.05 A**,
+the best arm `g25_equivariant` **8.10 A**, the absolute bar **4.0 A**.
+
+**The port reads 2.528 A.** That is the `<= 4.0 A -- the mapping works` bucket,
+**3.2x better than the best of twenty-eight arms and 4.0x better than plain
+geometry**, with 5,328 parameters against `AANCARule`'s 229,588.
+
+**The standing objection that killed every previous cross-arm claim is gone.**
+`[[no-growth-arm-has-been-run-twice-so-no-difference-has-an-error-bar]]`'s rule
+is that the laptop's 954 structures make `available[:416]` a different 416
+proteins. This run used Bunya's 23,760, so it is the same pool, the same
+`available[:416]`, the same crop index meaning the same protein. **That is what
+job 33419979 was for.**
+
+### What still differs, named so the claim is not overstated
+
+  * **The start is 10.68 A, where `g25`'s was 13.13 A.** A closer start by
+    2.45 A, because the crop and damage geometry differ. As
+    improvement-against-own-start, which is the licensed form: the port moves
+    **8.15 A** and `g25` moved **5.03 A**, so the port wins on that reading
+    too. And a 2.45 A easier start does not explain a 5.6 A better finish, nor
+    finishing 7.5 A inside the geometric floor.
+  * **The contact graph is given** (`native_edges = true`) where `g25` had the
+    live k-NN graph. Under
+    [[the-task-is-to-realise-coordinates-for-a-given-contact-graph]] that is
+    the task statement rather than a leak, but it is a different task from
+    `g25`'s and the port is not a better rule at `g25`'s task.
+  * **474 of 20,000 updates contributed no gradient** -- `no_crop` 452,
+    `no_window` 22, and **`nonfinite_loss` 0**. So it trained on 19,526
+    effective updates, and not one of the skips was the rule exploding. The
+    2.4 % rate is a property of the crop sampler, as on the laptop.
+
+### `pair_window` falls here too
+
+5.804 -> 3.311 A^2, best 2.472 -- a 43 % fall, matching the laptop's 3.28 ->
+1.95. This is the quantity the record had as never improving (22.2 -> 23.38
+over 10,000 updates in `g25`), because it was the deliberately unweighted half
+of the restraint. **Two pools now agree that weighting the full pair set is
+what moved it.** The A^2 values are not comparable across the two runs --
+different proteins, different denominator -- but the direction is.
+
+### What this does and does not settle
+
+**It answers the project's central question in the affirmative**: the negative
+results of twenty-eight arms were about this project's departures from the
+published method, not about neural cellular automata on proteins. The
+departures are enumerated in §0a and in
+[[the-divergence-is-a-missing-published-tanh-not-a-property-of-the-rule]].
+
+**It does not measure persistence past the training horizon**, which is the
+published rule's *headline* claim and which their code evaluates to
+10,000-100,000 steps against a 15-25 step training horizon. Nothing here tests
+it. **That is now the most important gap in the project**, and with a working
+baseline it is finally a measurement on something rather than on nothing.
+
+**No arm, including this one, has been run at a second seed.**
+
+---
+
+## 0a. Current state — 2026-11-25: the port PASSES the pre-registered bar, and the comparable run is on Bunya
 
 **The newest thing in this file.** The laptop run finished all 20,000 updates.
 It clears the bar that twenty-eight arms never approached, and the Bunya re-run
@@ -84,7 +180,7 @@ harmless at a longer budget or a bigger pool. Check the last `update` in
 
 ---
 
-## 0a. Current state — 2026-11-24: the port diverges because we left out a published tanh
+## 0b. Current state — 2026-11-24: the port diverges because we left out a published tanh
 
 **The newest thing in this file, and it supersedes the stabilisation plan in
 "§ 24 Nov: THE PORT RUNS".** The port was faithful to Gala's four printed
@@ -245,7 +341,7 @@ which was measured before the bound and had four crops overflowing by 500.
 
 ---
 
-## 0b. Current state — 2026-11-23
+## 0c. Current state — 2026-11-23
 
 ### READ THIS FIRST: §0's framing below is superseded in one important way
 
@@ -292,7 +388,7 @@ Unexplained, and the leading candidate is the absence of any geometric term.
 
 ---
 
-## 0c. The framing as it stood — 2026-11-22
+## 0d. The framing as it stood — 2026-11-22
 
 ### The question, rescoped 14 Nov
 
