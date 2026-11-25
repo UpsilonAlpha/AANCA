@@ -209,6 +209,29 @@ absolute bar **4.0 A**.
   * **> 10.05 A -- worse than bond closure and sterics alone**, which is where
     `g26_fullbptt` landed.
 
+## ANSWERED 25 Nov, on the laptop pool: the first bucket, and leg 1 does not run
+
+**`rmsd_dmg` fit on the intact context reads 2.17 A** at update 20,000 of the
+port, 15 crops, nothing diverged, from a start of 8.774 A
+([[the-divergence-is-a-missing-published-tanh-not-a-property-of-the-rule]]).
+That is the **`<= 4.0 A` -- the mapping works** bucket, passed for the first
+time in this project.
+
+**So leg 1 does not run.** This note pre-registered the point-cloud
+replication as the response to a leg-2 *failure*; leg 2 did not fail, so the
+torus is not owed and building it would be the arm-thirty this note exists to
+prevent. That is the pre-registration doing its job in the branch nobody
+expected.
+
+**What the pass does NOT yet license.** The bucket's own text says the
+project's negative results "were about its departures from the published
+method, not about neural cellular automata on proteins" -- and that sentence is
+a comparison, which this run cannot make. The laptop pool is 954 structures
+against Bunya's 23,760, the start distance is 8.77 A against 12 to 16 A, and
+the contact graph is given. **Bunya job 33419979 is the run that decides which
+bucket this really is**, and until it reports, the bucket is "passed on an
+easier pool".
+
 `align` is read alongside, because it is the instrument the capacity question
 turned on and **no native-edge arm has ever had it read**. Twist is a guard, not
 a result.

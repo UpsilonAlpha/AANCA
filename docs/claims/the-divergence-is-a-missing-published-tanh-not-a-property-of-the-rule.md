@@ -192,6 +192,18 @@ weakens the five-on/four-off contrast above to the extent that it rests on
 small differences, though not the parts that rest on `diverged`, `n` and the
 non-finite count, where the gap is 0 against 145 and categorical.
 
+### SUPERSEDED 25 Nov: "the rule plateaus" was the same error a third time
+
+The run finished all 20,000 updates and the block mean falls in **every**
+block -- 2.702, 2.461, 2.422, 2.119, 2.079, 2.075, 2.009 A over 2-3,000-update
+blocks -- with the spread narrowing 0.244 -> 0.118. So the "2.46-3.05 band with
+no trend" below was a window of a falling series, read the same wrong way as
+the withdrawn rise above it. **Three readings of this series were wrong before
+one was right, all three by taking a handful of evaluations for a direction.
+No row of it may be read outside a block mean.** The open question is
+therefore not "why does it stop improving" but **why the remaining 0.7 A takes
+18,000 updates when the first 6 A takes 2,000.**
+
 ### What 27 evaluations to update 6,750 do show
 
     update   250    500   1000   2000   3000   4000   5000   6000   6750
@@ -217,6 +229,26 @@ graph is given.
 8.774 -> 2.92 A on fifteen crops with nothing diverged and nothing skipped
 replaces the old 8.77 -> 2.63 A, which was measured before the bound and
 carried four overflowing crops by update 500.
+
+## MEASURED to completion, 25 Nov: 2.17 A fit_intact, and the bar is passed
+
+    update  total  pair_anchor  pair_window  rmsd_dmg  fit_intact   n  diverged
+     20000  3.512        1.731        1.781     2.040       2.167  15         0
+
+**80 evaluations, `n` 15 and `diverged` 0 at every one, `start` pinned at
+8.774, and zero non-finite training rollouts in the whole run.** The bound
+holds at full length. Against the pre-registered buckets in
+[[the-port-must-reproduce-the-published-result-on-point-clouds-before-it-is-run-on-proteins]]
+this is the `<= 4.0 A` bucket, passed for the first time in the project -- and
+still not comparable to any arm, because the pool is the laptop's, the crops
+are easier and the contact graph is given. Bunya job 33419979 is the
+comparable re-run.
+
+**And `pair_window` fell 3.28 -> 1.95 A^2**, the one quantity the record had as
+having no progress (22.2 -> 23.38 over 10,000 updates in `g25`), because it was
+the deliberately unweighted half of the restraint. Weighting the full pair set
+put a gradient on it. The A^2 values are not comparable with `g25`'s --
+different pool, different denominator.
 
 ## Next
 

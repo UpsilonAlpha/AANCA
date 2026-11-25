@@ -6,7 +6,85 @@ journal is `docs/JOURNAL.md`; the claims and their evidence are one note each in
 
 ---
 
-## 0. Current state — 2026-11-24: the port diverges because we left out a published tanh
+## 0. Current state — 2026-11-25: the port PASSES the pre-registered bar, and the comparable run is on Bunya
+
+**The newest thing in this file.** The laptop run finished all 20,000 updates.
+It clears the bar that twenty-eight arms never approached, and the Bunya re-run
+that makes the number comparable is in the queue.
+
+### The completed run, and it is a pass
+
+    update  total  pair_anchor  pair_window  rmsd_dmg  fit_intact   n  diverged
+     19750  4.215        2.287        1.928     2.281       2.447  15         0
+     20000  3.512        1.731        1.781     2.040       2.167  15         0
+
+**`n` 15 and `diverged` 0 at every one of 80 evaluations**, `start` pinned at
+8.774 so no row is a survivor mean, and **zero non-finite training rollouts in
+the whole run** -- against 145 in 1,000 with the four switchable settings off.
+The tanh fix holds at full length, not just for the first thousand updates.
+
+**Against the pre-registered buckets** in
+`docs/claims/the-port-must-reproduce-the-published-result-on-point-clouds-before-it-is-run-on-proteins.md`:
+`rmsd_dmg` fit on the intact context reads **2.17 A**, inside the
+**`<= 4.0 A` -- the mapping works** bucket. The comparators in that note are
+doing nothing 16.28 A, the geometric floor 10.05 A and the best arm
+`g25_equivariant` 8.10 A.
+
+**And the bucket's own words are the claim to be careful with**: "the project's
+negative results were about its departures from the published method, not about
+neural cellular automata on proteins." That reading is licensed by the bar
+being passed and is NOT yet licensed as a comparison, because the pool differs
+(see below).
+
+### Read it in block means or not at all
+
+    updates        rmsd_dmg mean    sd     min
+        0- 2000         2.702      0.244  2.313
+     2000- 5000         2.461      0.175  2.186
+     5000- 8000         2.422      0.416  1.964
+     8000-11000         2.119      0.167  1.962
+    11000-14000         2.079      0.130  1.878
+    14000-17000         2.075      0.109  1.935
+    17000-20000         2.009      0.118  1.882
+
+Monotone in every block: 8.774 -> 2.70 A inside the first 2,000 updates, then a
+further 0.7 A over the remaining 18,000, with the spread narrowing 0.244 ->
+0.118. **Two readings of this series were wrong before this one** -- first a
+degradation, then a plateau -- both by reading a handful of evaluations of a
+noisy quantity as a direction. **This series is block-mean only.**
+
+### What the number may NOT be set beside
+
+Unchanged and still binding: the laptop's 954-structure pool rather than
+Bunya's 23,760, so `available[:416]` is a different 416 proteins and the same
+crop index is a different protein; the start distance shows it directly at
+**8.77 A here against 12 to 16 A on Bunya**; and the contact graph is given
+(`native_edges = true`) where `g25` had the live k-NN graph. **A pass against
+the absolute bar and against its own start, not a win over any arm.**
+
+### Bunya job 33419979, submitted 25 Nov 10:05 AEST
+
+The re-run on the pool every comparator lives on. `AANCA_ENTRY` selects the
+trainer, so it is one line:
+
+    AANCA_ENTRY=scripts/train_egnca.py \
+      bash scripts/bunya_submit.sh gpu configs/egnca.toml --section port
+
+One `gpu:mi355x:1` on `gpu_rocm`, 24 h wall, which is ample -- the laptop did
+20,000 updates in about 70 minutes of CPU. Logs at
+`logs/aanca-gpu-33419979.out` / `.err`. The checkout was fast-forwarded
+`0106251..be304e8` first; working tree clean.
+
+**One wrinkle recorded before it bites.** `train_egnca.py` returns **0**, not
+64, when it stops on `--max-seconds`, so the chain in `bunya_train.slurm` will
+**not** resubmit a truncated segment and a timed-out run would look like a
+clean finish. Harmless at 24 h for a 20,000-update run; it would not be
+harmless at a longer budget or a bigger pool. Check the last `update` in
+`runs/port/history.json` against `updates` before reading any Bunya row.
+
+---
+
+## 0a. Current state — 2026-11-24: the port diverges because we left out a published tanh
 
 **The newest thing in this file, and it supersedes the stabilisation plan in
 "§ 24 Nov: THE PORT RUNS".** The port was faithful to Gala's four printed
@@ -167,7 +245,7 @@ which was measured before the bound and had four crops overflowing by 500.
 
 ---
 
-## 0a. Current state — 2026-11-23
+## 0b. Current state — 2026-11-23
 
 ### READ THIS FIRST: §0's framing below is superseded in one important way
 
@@ -214,7 +292,7 @@ Unexplained, and the leading candidate is the absence of any geometric term.
 
 ---
 
-## 0b. The framing as it stood — 2026-11-22
+## 0c. The framing as it stood — 2026-11-22
 
 ### The question, rescoped 14 Nov
 
