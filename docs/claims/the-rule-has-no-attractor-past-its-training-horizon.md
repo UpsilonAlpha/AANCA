@@ -17,6 +17,25 @@ else first.
          15       0.601         5.139   8.56    600     0/48        16.35        7.53
          45       1.701         6.253   3.68    600     0/48        16.41        7.88
 
+## SCOPE, 26 Nov: this is OUR rule, and the published rule does have an attractor
+
+**Still `supported`, and now known to be a statement about `AANCARule` rather
+than about neural cellular automata.** `scripts/persistence_readout.py` on the
+E(n)-GNCA port holds **all 15 held-out crops to 10,000 steps with `diverged` 0
+and `n` 15**, reaching a fixed point the 1,000 and 10,000 step rows agree on to
+6-7 significant figures, and returning to the *same endpoint within 0.0105 A*
+after a mid-rollout re-damage
+([[a-local-rule-with-an-attractor-is-a-diffusion-model-without-a-schedule]]).
+
+**The two measurements are on different rules and both are correct.** This node
+is `g20_orient`: frames, the 0.3 A step cap, a 120-step rollout, 0 of 48
+converging, and 16.4-16.9 A at 600 steps against a 12.23 A untrained baseline.
+The port is frameless, uncapped, 15-25 steps with full BPTT and the five
+published settings. **So the right reading of this node is that the absence of
+an attractor was a property of this project's departures**, and the three
+candidates for which departure are the step cap, the frame head and the long
+truncated rollout -- none of which has been varied alone.
+
 ## Three readings, and the first one is the result
 
 **1. The rule does not hold what it built.** `g20_orient`'s reported `settled`

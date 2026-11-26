@@ -133,19 +133,52 @@ Registered now so it cannot be claimed after the fact.
 natural proteins through the same code path**, because without an in-house
 reference none of the numbers mean anything.
 
-**1. Is there a fixed point at all?** Max per-step displacement < 0.1 A within
-500 steps.
+**1. Is there a fixed point at all? -- ANSWERED YES, 26 Nov, before any
+generative training.** Measured on the port's existing checkpoint by
+`scripts/persistence_readout.py`:
 
-  * **YES** -- the object exists and the rest of the questions are worth asking.
-  * **NO** -- the MVP is refuted on its first measurement. Note that
-    [[the-rule-has-no-attractor-past-its-training-horizon]] is `supported` and
-    [[the-pool-and-length-jitter-stop-the-divergence-past-the-training-horizon]]
-    stopped the *divergence* without demonstrating an attractor, so **NO is the
-    outcome the existing record predicts.**
+    steps    n  diverged   rmsd_dmg   fit_intact  max_step
+       25   15         0      1.878        1.967    0.1533
+     1000   15         0      2.154        2.295    0.0703
+    10000   15         0      2.154        2.295    0.0703
 
-**2. Is the fixed point protein-shaped?** CA-CA virtual bond 3.80 +/- 0.10 A,
-clash rate (|i-j| >= 3 closer than 4.0 A) < 1 %, Rg within 2x of 2.2 N^0.38.
-All three or it is a blob.
+`n` 15 and `diverged` 0 at every step count in both protocols, at **400x the
+training horizon**; the 1,000 and 10,000 step rows agree to 6-7 significant
+figures on every individual crop, so it is a fixed point and not a slow drift;
+9 of 15 reach an exact numerical fixed point. **And in the strong form**: re-
+damaged mid-rollout at step 24 and continued, the rule returns to the *same*
+endpoint as the undamaged rollout, mean difference **0.0105 A**, 12 of 15 crops
+within 0.01 A -- the same basin from two different states. Price of persistence
+0.28 A, still inside the `<= 4.0 A` bucket at 10,000 steps.
+
+**This was the bucket the existing record predicted we would FAIL**, since
+[[the-rule-has-no-attractor-past-its-training-horizon]] is `supported` and
+[[the-pool-and-length-jitter-stop-the-divergence-past-the-training-horizon]]
+stopped the *divergence* without demonstrating an attractor. It does not
+overturn that node: that one is `g20_orient`, an `AANCARule` with frames and
+the 0.3 A cap over a 120-step rollout, which read 16.4-16.9 A at 600 steps with
+0 of 48 converging. **Both stand, about different rules, and the contrast is
+the result.**
+
+**Two things this answer does not cover.** `native_edges = true` holds the
+contact graph fixed for all 10,000 steps, so it is persistence under the task
+statement rather than under a live k-NN graph -- which is precisely what the
+MVP varies. And the checkpoint is update 11,500, not 20,000.
+
+**2. Is the fixed point protein-shaped?** Anchored, 26 Nov, to the measured
+in-house reference rather than to round numbers -- 60 natural entries, 50-400
+residues, scored by `scripts/generation_metrics.py` through the same code path
+a generated set will use:
+
+    quantity                     natural reference     generated must reach
+    CA-CA mean                   3.8027 A              3.80 +/- 0.10
+    CA-CA outlier fraction       0.0087                < 0.05
+    clash rate (|i-j|>=3, <4 A)  0.0001                < 0.01
+    Rg / 2.2 N^0.38              1.101 (sd 0.131)      within 2x
+
+**So the bar for being geometrically indistinguishable from crystal structures
+is 0.9 % bond outliers and one clash in 10,000.** All three axes or it is a
+blob.
 
 **3. Is it diverse, or one attractor?** Mean pairwise TM-score over >= 100
 samples, against the same statistic on natural proteins.
@@ -155,13 +188,42 @@ samples, against the same statistic on natural proteins.
     0.50-0.90  collapsed toward one fold
     > 0.90     ONE attractor. Not a generator.
 
+**The natural reference is mean pairwise TM 0.2068, max 0.5142, with 59 of 60
+clusters at TM 0.5 and 60 of 60 at TM 0.6.** So `< 0.30` was the right line
+drawn in advance, and 59/60 clusters is a CEILING -- a sample set that beat it
+would be more diverse than real proteins, which is a warning sign and not a
+win. Novelty against 50 disjoint training entries reads mean max TM 0.3293,
+with 3.3 % above 0.5.
+
 **This is the make-or-break metric.** With no conditioning, a shared local rule
 has only the initial noise to distinguish one sample from another, and the
 honest prior is that it collapses -- plausibly onto the helix, given
 [[the-helix-prior-is-responsible-for-some-of-the-7-78-angstrom]].
 
-**4. Helix-biased?** P-SEA fractions against natural. `> 0.90` helix is
-collapse onto the prior, not generation, and should be read with bucket 3.
+**4. Helix-biased?** The natural reference, pooled over the 60 entries, is
+**helix 0.2804, strand 0.1978, coil 0.5218** (classes: 35 alpha/beta, 14
+mainly-beta, 10 mainly-alpha, 1 irregular). `> 0.90` helix is collapse onto the
+prior, not generation, and is read with bucket 3.
+
+**The P-SEA implementation is validated, not assumed.** Checked against
+biotite's `annotate_sse` -- an independent implementation of the same 1997
+paper, working on the AtomArray rather than our extracted CA trace -- on four
+crystal structures: **1.000 per-residue agreement on all four.** 1UBQ comes out
+as the five-strand beta-grasp sheet plus the single helix at residues 23-33
+against DSSP's 23-34, one residue short at the C-terminal end, which is the
+known cost of assigning with no hydrogen bonds to see.
+
+**One caution on the reference itself.** 4HHB chain B reads 34.5 % bond
+outliers against 0.008-0.035 for the modern entries -- a 1974 structure at
+1.74 A with genuinely loose CA geometry. The bond-outlier axis partly reads the
+reference set's resolution, so the 60-entry pool is the reference and no single
+entry is.
+
+**And TM-score here is a documented lower bound**: correct d0, TM-score's own
+iterative seed-fragment superposition, but the correspondence search restricted
+to gap-free threadings where TM-align runs dynamic programming with gaps. That
+is the safe direction for diversity and novelty, which it can only overstate,
+and the wrong direction for claiming two structures match.
 
 **Refuted if**: no fixed point within 500 steps, OR mean pairwise TM > 0.90, OR
 the geometry fails all three of bucket 2. Any one of those ends option 2 in its

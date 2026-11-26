@@ -6,7 +6,149 @@ journal is `docs/JOURNAL.md`; the claims and their evidence are one note each in
 
 ---
 
-## 0-new. 2026-11-26: generated-backbone metrics exist, and the in-house natural reference is measured
+## 0. Current state — 2026-11-26: the port HAS an attractor, which is bucket 1 of option 2 and the record predicted NO
+
+**The newest thing in this file.** Option 2 is pre-registered in
+`docs/claims/a-local-rule-with-an-attractor-is-a-diffusion-model-without-a-schedule.md`
+and its first bucket -- *is there a fixed point at all?* -- is now **YES**,
+measured on the existing port checkpoint, before any generative training.
+`scripts/persistence_readout.py`, `runs/port/persistence.json`.
+
+### 10,000 steps against a 15-25 step training horizon
+
+    steps    n  diverged   rmsd_dmg     sd   fit_intact  max_step
+       15   15         0      2.000  0.543        2.103    0.3140
+       25   15         0      1.878  0.423        1.967    0.1533
+       50   15         0      1.927  0.429        2.039    0.0737
+      100   15         0      2.007  0.457        2.135    0.0562
+      250   15         0      2.105  0.594        2.237    0.0545
+     1000   15         0      2.154  0.642        2.295    0.0703
+    10000   15         0      2.154  0.642        2.295    0.0703
+
+**`n` 15 and `diverged` 0 at every step count, in both protocols.** Not one
+crop goes non-finite at **400x the training horizon**, and mean `start` is
+8.774 so no row is a survivor mean.
+
+**It is a fixed point and not a slow drift.** The 1,000 and 10,000 step rows
+agree to 6-7 significant figures on *every individual crop* (2IJL 1.4566222 ->
+1.4566211). Nine of fifteen reach an exact numerical fixed point
+(`max_step` 0.0000 at step 10,000); the other six sit in bounded residual
+motion of 0.07-0.25 A per step whose RMSD does not move.
+
+### The strong form: the same basin from two different states
+
+Re-damaged **mid-rollout at step 24** and continued, the rule returns to the
+*same endpoint* as the undamaged rollout -- mean difference **0.0105 A**, max
+0.103 A, **12 of 15 crops within 0.01 A**. That is the published Growing-NCA
+persistence property, measured here for the first time.
+
+**Price of persistence: 0.28 A.** The step count the run was selected on (25)
+reads 1.878/1.967; the attractor reads 2.154/2.295. Inside the pre-registered
+`<= 4.0 A` bucket at every step count out to 10,000.
+
+### This does NOT overturn [[the-rule-has-no-attractor-past-its-training-horizon]]
+
+That node is `g20_orient` -- an `AANCARule` **with frames, with the 0.3 A step
+cap, over a 120-step rollout** -- and it read 16.4-16.9 A at 600 steps against
+a 12.23 A untrained baseline, with 0 of 48 converging. **Both findings stand,
+about different rules**, and the contrast is the result: the property our rule
+lacked is one the published rule has. It is evidence about this project's
+departures, not about neural cellular automata.
+
+### Caveats that bind
+
+  * **`native_edges = true`, so the contact graph is held fixed for all 10,000
+    steps.** This is persistence under the task statement, not under a live
+    k-NN graph. A live graph is the next thing to vary and it is exactly what
+    `train_denoise.py` does.
+  * **`best.pt` is update 11,500**, the last held-out best, not 20,000. The
+    probe reproduces that checkpoint's own recorded scores to five decimals
+    (1.87789 / 1.96690 / 8.77367), which is how the load was verified rather
+    than asserted.
+  * The re-damage re-applies the same baseline displacement and keeps the
+    hidden state; fresh Gaussian noise would be a second, different
+    measurement.
+  * Single seed, single checkpoint, laptop pool. ~15 min on CPU for both
+    protocols, so the long tail does not need Bunya.
+
+### What it means for option 2
+
+**Bucket 1 was the bucket the existing record predicted we would fail**, and it
+is the cheapest refutation the MVP had. It did not fail, so buckets 2 to 4 --
+protein-shaped geometry, diversity, and helix bias -- are now worth the
+training run. Those are measured by `scripts/generation_metrics.py` against the
+natural reference in the section below.
+
+---
+
+## 0-mvp. 2026-11-26: the denoiser exists, trains, and is the MVP of option 2
+
+`scripts/train_denoise.py`, `configs/denoise.toml`, `tests/test_denoise.py`.
+A SECOND trainer, not a flag on the port: `src/aanca/egnca.py`,
+`scripts/train_egnca.py` and `configs/egnca.toml` are untouched and a test
+asserts it, because the port is a published result that must keep running
+bit-for-bit.
+
+**It removes the two things that made the port read 2.53 A**: the frozen native
+context, and the native contact graph. Corruption is isotropic Gaussian on ALL
+coordinates with sigma log-uniform in [0.5, 30] A, there is **no timestep
+input** -- the same rule at every noise level, which is the scientific content
+-- and the k-NN is rebuilt from where residues CURRENTLY are at every one of
+the 15-25 steps. `context_fraction` is the one axis; `mvp` sets it to 0.0.
+
+### Smoke run, `--section mvp`, CPU, 683 updates
+
+    update   total    anchor   window   sigma   rmsd   start    rg     n  conv
+       250  103.830    0.000  103.830   8.636   9.863  14.815  14.87  15   0/7
+       500   68.689    0.000   68.689   8.636   8.373  14.815  11.40  15   0/7
+
+`anchor` is exactly 0.000 because at `context_fraction = 0` no context exists,
+so `window` is the whole loss -- literally Gala's all-pairs objective.
+**`rmsd` 9.863 -> 8.373 A against `start` pinned at 14.815 and `sigma` pinned
+at 8.636 at both evaluations**, so the fall is the weights and not the draw;
+the eval corruption is per-index seeded and those two identical columns are
+that check passing. `diverged` 0, `nonfinite_loss` 0 and `nonfinite_gradient`
+0 over the whole run; all 8 skips of 683 were `no_crop`.
+
+**683 updates is 3 % of the budget and says nothing about whether it learns the
+task.** Sampling hits the 200-step cap with 0 of 7 converged, which is what a
+683-update rule does; `rg` falling 14.87 -> 11.40 from the prior's own
+2.2 N^0.38 says it contracts the cloud rather than sitting still.
+
+**Cost: 1.43-1.49 s/update against the port's 0.20.** The ~7x is the live k-NN
+being rebuilt every step where the port computes it once. 20,000 updates is
+therefore ~8 h of CPU, which is a GPU job.
+
+### A repo-wide bug found on the way, and it is not only the port's
+
+`train_denoise.py` returns **64** on `--max-seconds`, which is what
+`scripts/bunya_train.slurm`'s chain needs to resubmit. **`train_egnca.py` and
+`scripts/train_growth.py` both return 0**, so a walltime-truncated segment of
+either ends the chain silently and reads as a clean finish. It did not bite the
+port because 20,000 updates fit in 40 minutes of one 24 h allocation. It would
+bite a longer run, and `train_growth.py` is the one with chained segments in
+its history. Not fixed here: the port is no-touch while its result is being
+quoted, and the growth trainer's fix is a separate change.
+
+### Three design decisions worth overruling if you disagree
+
+  * **`CONTEXT_RUN_WIDTH = 12` is a module constant, not a config key**, so
+    that every point of the `context_fraction` sweep stays one-dimensional. 12
+    is the port's own damage width, so the corrupted stretches between held
+    runs are the scale of the hole the port fills.
+  * **Convergence is the MAX per-residue per-step displacement**, not the mean,
+    because a mean over 128 residues hides one residue still flying.
+  * **`ctx100` is deliberately degenerate** -- everything held, nothing
+    corrupted, every update skipped as `no_window` -- and exists as the end of
+    the sweep and as the check that the end is recognisable.
+
+Samples go to one `runs/<tag>/samples.npz` as a flat `(total, 3)` array with an
+`offsets` index, rewritten in place: one inode per run directory however many
+samples, which is the Bunya inode constraint respected by construction.
+
+---
+
+## 0a. 2026-11-26: generated-backbone metrics exist, and the in-house natural reference is measured
 
 `scripts/generation_metrics.py` scores CA-only backbones with no learned model
 and no internet, because the diffusion comparison measures designability with
@@ -85,7 +227,7 @@ invariance, mirror image rejected), biotite's P-SEA, and 1UBQ's clash rate of
 
 ---
 
-## 0. Current state — 2026-11-25: the port passes the bar ON BUNYA, 2.53 against the best arm's 8.10
+## 0b. Current state — 2026-11-25: the port passes the bar ON BUNYA, 2.53 against the best arm's 8.10
 
 **The newest thing in this file, and the first comparable number the port has.**
 Bunya job 33419979 ran the published rule to completion on the pool every arm
@@ -181,7 +323,7 @@ baseline it is finally a measurement on something rather than on nothing.
 
 ---
 
-## 0a. Current state — 2026-11-25: the port PASSES the pre-registered bar, and the comparable run is on Bunya
+## 0c. Current state — 2026-11-25: the port PASSES the pre-registered bar, and the comparable run is on Bunya
 
 **The newest thing in this file.** The laptop run finished all 20,000 updates.
 It clears the bar that twenty-eight arms never approached, and the Bunya re-run
@@ -259,7 +401,7 @@ harmless at a longer budget or a bigger pool. Check the last `update` in
 
 ---
 
-## 0b. Current state — 2026-11-24: the port diverges because we left out a published tanh
+## 0d. Current state — 2026-11-24: the port diverges because we left out a published tanh
 
 **The newest thing in this file, and it supersedes the stabilisation plan in
 "§ 24 Nov: THE PORT RUNS".** The port was faithful to Gala's four printed
@@ -420,7 +562,7 @@ which was measured before the bound and had four crops overflowing by 500.
 
 ---
 
-## 0c. Current state — 2026-11-23
+## 0e. Current state — 2026-11-23
 
 ### READ THIS FIRST: §0's framing below is superseded in one important way
 
@@ -467,7 +609,7 @@ Unexplained, and the leading candidate is the absence of any geometric term.
 
 ---
 
-## 0d. The framing as it stood — 2026-11-22
+## 0f. The framing as it stood — 2026-11-22
 
 ### The question, rescoped 14 Nov
 
