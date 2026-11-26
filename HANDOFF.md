@@ -6,6 +6,85 @@ journal is `docs/JOURNAL.md`; the claims and their evidence are one note each in
 
 ---
 
+## 0-new. 2026-11-26: generated-backbone metrics exist, and the in-house natural reference is measured
+
+`scripts/generation_metrics.py` scores CA-only backbones with no learned model
+and no internet, because the diffusion comparison measures designability with
+ProteinMPNN + ESMFold and we cannot assume either. Four blocks: geometry
+(CA-CA bond, clash rate, Rg and its ratio to `2.2 N^0.38`), P-SEA secondary
+structure, TM-score diversity, and novelty against a local reference set.
+
+**The point is the reference column, not the metrics.** `--generated foo.npy`
+and `--natural` reach the same `score_traces`, so an in-house natural number
+exists for every axis, computed by the same functions.
+`test_generated_and_natural_modes_share_one_code_path` asserts that the same
+trace scored both ways gives byte-identical rows.
+
+### Natural reference, 60 entries from the train split, 50-400 residues
+
+    n_residues               mean 192     min 50     max 393
+    CA-CA mean               3.8027 A     sd across entries 0.0101
+    CA-CA within-entry sd    0.0442 A     min 0.0079   max 0.1207
+    CA-CA outlier fraction   0.0087       (window 3.80 +/- 0.10 A)
+    clash rate (|i-j|>=3, CA-CA < 4.0 A)
+                             0.0001       max 0.0005
+    Rg                       17.20 A      Rg / 2.2 N^0.38 = 1.101, sd 0.131
+    P-SEA pooled per-residue helix 0.2804   strand 0.1978   coil 0.5218
+    class counts             alpha/beta 35, mainly-beta 14, mainly-alpha 10,
+                             irregular 1
+    diversity (TM)           mean pairwise 0.2068, max 0.5142
+                             59/60 clusters at 0.5, 60/60 at 0.6
+    novelty vs 50 disjoint   mean max TM 0.3293, median 0.3217,
+    train entries            3.3% above 0.5, 0% above 0.6
+
+So a generated set has to beat **0.9% bond outliers and a clash rate of 1 in
+10,000** to be geometrically indistinguishable from a crystal structure, and its
+helix/strand split has to sit near 0.28/0.20 to look like this pool rather than
+like the all-alpha designs diffusion models are known to over-produce. The
+natural pool itself clusters at 59/60 and scores mean max TM 0.33 against a
+disjoint 50, which is the ceiling any diversity or novelty claim is read against
+— a generated set that beat it would be more diverse than real proteins.
+
+### P-SEA is validated, not asserted
+
+Implemented from Labesse et al. 1997 (Bioinformatics 13:291-295); the exact
+thresholds are module constants and are reprinted in the JSON output. Checked
+against biotite's independent implementation of the same paper on four crystal
+structures in `data/raw/`: **1.000 per-residue agreement on all four**
+(1UBQ 76, 4HHB chain B 146, 193L 129, 3NIR 46). And the assignment is right
+about the biology: 1UBQ reads
+`cbbbbbccccbbbbbbbcccccaaaaaaaaaaaccccccc bbbbccc...bbbbbbbbbbccc` — the
+five-strand beta-grasp sheet plus the one helix, which P-SEA puts at residues
+23-33 against DSSP's 23-34, one residue short at the C-terminal end. That is the
+known cost of assigning from the CA trace alone. 4HHB chain B reads 0.692 helix,
+0.0 strand; crambin 0.391 helix, 0.0 strand.
+
+One number in that table is a caution, not a defect: 4HHB chain B has a CA-CA
+sd of 0.133 A and **34.5% of bonds outside 3.80 +/- 0.10**, against 0.008-0.035
+for the modern bcif entries. It is a 1974 1.74 A structure with genuinely loose
+CA geometry. The bond-outlier axis therefore reads the reference set's
+resolution as much as the model's geometry, and the 60-entry pool above is the
+comparison to use, not a single old entry.
+
+### TM-score here is a lower bound, and that is stated in the docstring
+
+`d0 = 1.24 (L-15)^(1/3) - 1.8`, with TM-score's own iterative seed-fragment
+superposition. The correspondence search is restricted to gap-free threadings,
+where TM-align runs dynamic programming with gaps, so every value is a lower
+bound on TM-align's. That is the safe direction for both uses: it can only make
+a sample set look more diverse and more novel, never less.
+
+### Tests
+
+`tests/test_generation_metrics.py`, 35 tests; suite 1102 passed (1067 before).
+Anchored on ideal helix and strand geometry built from textbook parameters, the
+algebraic identities TM-score must satisfy (self = 1.0, rotation and translation
+invariance, mirror image rejected), biotite's P-SEA, and 1UBQ's clash rate of
+0.00037. The numpy Kabsch is checked against the project's own
+`aanca.fape.ca_rmsd_on` so there are not two superpositions that disagree.
+
+---
+
 ## 0. Current state — 2026-11-25: the port passes the bar ON BUNYA, 2.53 against the best arm's 8.10
 
 **The newest thing in this file, and the first comparable number the port has.**
