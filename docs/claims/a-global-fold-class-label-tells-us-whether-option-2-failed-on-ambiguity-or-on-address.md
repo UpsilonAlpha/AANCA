@@ -1,6 +1,6 @@
 ---
 type: question
-status: open
+status: unsupported
 ---
 
 # Pre-registered: a global fold-class label separates "too many targets" from "no address" as the reason option 2 failed
@@ -216,6 +216,76 @@ the class it was conditioned on, as a confusion table. This is readout 0's
 quantitative form and the only one that could be a positive result on its own:
 **a rule that reliably produces more helix when asked for helix has learned
 something about secondary structure even if its bonds are wrong.**
+
+## ANSWERED: H-ADDRESS, 26 Nov, job 33834699
+
+**The label arrives, moves the coordinates, and buys nothing.** 20,000 updates,
+`COMPLETED` exit `0:0`, `01:57:08` on bun159, `sigma` 8.8985 and `start_rmsd`
+15.2051 single-valued and identical to the refuted MVP's, so the comparison is
+paired crop-for-crop. Zero bare `NaN` in the history.
+
+  * **0a, the instrument check: LIVE.** Paired per-residue displacement between
+    samples differing only in the label, **1.7988 A** mean over 12 pairs,
+    **2.8516 A** on the alpha-against-beta pairs. The CPU smoke run read 1.83 A.
+    So nothing below is excused as a bug.
+  * **0b, the helix gap: FLAT, with no dynamic range.** alpha 0.0000, beta
+    0.0000, gap `+0.000`, pooled helix + strand exactly 0 over all 8 samples.
+    This is the third state the original readout 0 did not enumerate and the
+    reason for the amendment above: under the original wording this run would
+    have been thrown away as an instrument failure.
+  * **5, the confusion table: a CONSTANT.** Every class produced `irregular`, at
+    **all 80 evaluations** from update 250 to 20000.
+  * **The objective is inside the MVP's band on every block.** `total` by 2,000
+    updates 86.1 / 81.4 / 80.8 / 92.3 / 81.2 / 80.5 / 89.3 / 86.4 / 83.2 / 84.2
+    against the MVP's measured 79.9-98.5. **This is the registered refutation
+    condition and it fired.**
+  * **Bucket 2 fails on all three axes and one got worse.** CA-CA 10.799
+    (MVP 11.565, natural 3.8027), outlier fraction 0.9951 (MVP 1.0000, natural
+    0.0087), clash **0.0183 against the MVP's 0.0111**. Converged 0 of 8.
+
+**The one number that moved.** Mean `rmsd` 9.045 against the MVP's 9.157, with
+the last two blocks (8.938, 8.820) under the MVP's minimum of 8.961. A 0.11 A,
+~1.2 % shift on a 15.2 A start, in the direction the label would predict. It is
+recorded because it is real and it is not a result: `window`, the quantity
+actually optimised, is inside the band; 148 parameters is 2.8 % more capacity; no
+arm in this project has a second seed, so a 1 % block-mean gap has no error bar;
+and nothing downstream changed at all.
+
+**So option 2 failed on ADDRESS.** Narrowing the target from "any protein" to
+"any mainly-alpha protein" was received and was useless. That is what it should
+be if the binding constraint is that a residue knows only its sequence index --
+a 1-D address for a 3-D target
+([[placing-a-node-from-local-distances-needs-a-globally-rigid-neighbourhood]]).
+
+## Two registered conditions are PENDING, and the reason is this project's own refusal in reverse
+
+`scripts/prior_fixed_point.py` and `scripts/denoise_floor.py` both refused
+`runs/cond/best.pt`: *"this checkpoint records settings
+scripts/train_egnca.py's schema does not define: label_dim, label_dropout."*
+That is
+[[a-probe-pointed-at-best-pt-silently-used-its-own-defaults]]'s refusal firing
+correctly in the direction this arm's design did not anticipate. The arm was
+built as a separate trainer so that a new schema key could not make the MVP's
+checkpoint unreadable, and the key made the **new** checkpoint unreadable
+instead, because both probes hardcode `train_denoise`'s schema.
+
+**So the fixed-point count and the `oracle_scale` margin are pending, not null,
+and this answer does not rest on either.** It rests on the `window` condition,
+which fired on all ten blocks, on a constant readout 5, and on bucket 2.
+
+## Why the status is `unsupported` and not `supported`, recorded so it can be flipped
+
+This node's *title* is an instrument claim -- that a global fold-class label
+**tells us** which failure mode option 2 had -- and by that reading it is
+`supported`: a live 0a against a flat 0b and a constant readout 5 is a clean
+discrimination, and the arm answered the question it was built to answer.
+
+It is filed `unsupported` on Ulban's instruction, given before the numbers were
+seen, on the other reading: that the thing under test is whether the fold class
+is load-bearing for this rule, and it is not. **Both readings agree on every
+number**; they disagree only about which sentence the status describes. If a
+later reader needs this node as evidence that the *discriminator* works rather
+than that the *label* works, that is what this paragraph is for.
 
 ## The conditions that refute this arm
 

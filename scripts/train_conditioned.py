@@ -71,12 +71,27 @@ learned unconditional row, so classifier-free guidance is available later
 without retraining; **CFG is not implemented here** and a guidance scale is a
 second axis.
 
-**READOUT 0 IS AN INSTRUMENT CHECK AND IT IS PRINTED EVERY EVALUATION.** The
+**READOUT 0 IS TWO THINGS, AMENDED 26 NOV, AND THIS TRAINER PRINTS ONLY THE
+SECOND.** As first registered it was the single ``helix a/b`` contrast -- the
 P-SEA helix fraction of samples drawn under ``mainly-alpha`` against those drawn
-under ``mainly-beta``, **from the same noise seeds and the same crops**, as
-``helix a/b``. If that contrast is flat the conditioning is inert -- a bug, or
-washed out -- and **no other number in the table may be read** until it is
-fixed. It is this arm's ``start_rmsd``-single-valued check.
+under ``mainly-beta``, from the same noise seeds and the same crops -- with a
+flat result declared a bug that blocked every other number. **That form could
+not function**: there is a third state, the output carrying no secondary
+structure at all, in which the gap is ``0.000 - 0.000`` whether the label is
+live or dead, and that state is the EXPECTED one for this rule.
+
+  * **0a, the instrument check, is the PAIRED PER-RESIDUE DISPLACEMENT** between
+    samples differing in nothing but the label. It is not printed here -- it is
+    computed from ``runs/<tag>/samples.npz`` by ``scripts/cond_readouts.py``,
+    which is where the verdict is taken. A zero there is a bug and nothing else
+    may be read until it is fixed.
+  * **0b, ``helix a/b`` below, is a RESULT**, readable only once the samples
+    carry any secondary structure. A flat 0b with a live 0a is not an instrument
+    failure: it is H-address's prediction, that the conditioning arrives, moves
+    the coordinates, and buys nothing.
+
+Measured on the 20,000-update run: 0a was 1.80 A mean (2.85 A alpha-vs-beta) and
+0b was ``+0.000`` with every sample produced ``irregular``.
 
 ``n`` and ``diverged`` come before every other column, this project's standing
 rule, and ``sigma`` and ``start_rmsd`` are reported so they can be checked
@@ -172,6 +187,13 @@ skip_report = denoise.skip_report
 Sample = denoise.Sample
 DenoiseTerms = denoise.DenoiseTerms
 denoise_objective = denoise.denoise_objective
+#: Bound at module level, unlike ``context_mask`` and ``draw_sigma``, because
+#: ``scripts/denoise_floor.py`` reaches for ``trainer.corrupt`` by name: the
+#: floor is weight-free, so its only contact with a trainer is the corruption
+#: and the held-out split. Rebinding it here is what lets that script measure
+#: this arm's checkpoints with nothing but ``--trainer`` -- and it is the SAME
+#: function object, so the conditioned arm's floor cannot drift from the MVP's.
+corrupt = denoise.corrupt
 prior_coordinates = denoise.prior_coordinates
 run_to_fixed_point = denoise.run_to_fixed_point
 on_disk = denoise.on_disk
@@ -453,12 +475,14 @@ def sample_batch(
 
 
 def helix_contrast(samples: list[ConditionedSample]) -> dict[str, float]:
-    """READOUT 0: mean P-SEA helix fraction under ``mainly-alpha`` vs ``mainly-beta``.
+    """READOUT 0b: mean P-SEA helix fraction under ``mainly-alpha`` vs ``mainly-beta``.
 
-    The instrument check, and the only readout that may be looked at before the
-    others. **If this is flat the conditioning is inert** -- a silently
-    disconnected embedding, or a signal washed out by 15-25 steps of PairNorm --
-    and nothing else in the table is a measurement of anything.
+    **This is a result and not the instrument check** -- amended 26 Nov. A flat
+    gap has two causes and this number cannot tell them apart: a conditioning
+    that never arrives, and an output with no secondary structure for a label to
+    shift. The second is this rule's ordinary state, so a flat gap here is read
+    only against readout 0a, the paired per-residue displacement, which is
+    computed by ``scripts/cond_readouts.py`` from the sample file.
 
     ``n_alpha`` and ``n_beta`` travel with the two means because a contrast over
     two samples each is not an error bar, and a mean over zero samples would
@@ -895,12 +919,15 @@ def main() -> int:
         )
     )
     print(
-        "  READOUT 0 IS AN INSTRUMENT CHECK AND IS THE FIRST THING TO READ: "
-        "`helix a/b` is the P-SEA\n  helix fraction of samples drawn under "
-        "mainly-alpha against mainly-beta, from the SAME\n  noise seeds and "
-        "crops. If that gap is flat the conditioning is inert -- a bug, or "
-        "washed\n  out -- and NO other number in the table may be read until "
-        "it is fixed."
+        "  READOUT 0b, `helix a/b`: the P-SEA helix fraction of samples drawn "
+        "under mainly-alpha\n  against mainly-beta, from the SAME noise seeds "
+        "and crops. It is a RESULT, not the\n  instrument check, and it is "
+        "readable only once the samples carry any secondary\n  structure at "
+        "all -- a flat gap over an all-coil output says nothing about the "
+        "label.\n  READOUT 0a, the instrument check, is the paired "
+        "per-residue displacement between\n  samples differing only in the "
+        "label; it is NOT printed here. Run\n  `scripts/cond_readouts.py "
+        "--run runs/<tag>` for it, and read it before 0b."
     )
     print(
         "  Everything else is configs/denoise.toml's mvp, identical: "

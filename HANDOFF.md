@@ -6,6 +6,133 @@ journal is `docs/JOURNAL.md`; the claims and their evidence are one note each in
 
 ---
 
+## 0-condfin. 2026-11-26: the fold-class label reaches the coordinates and buys NOTHING, so option 2 failed on ADDRESS and not on ambiguity
+
+**Job 33834699 finished clean**: `COMPLETED`, exit `0:0`, `01:57:08` on bun159,
+last update **20000 of 20000**, `train exit : 0`. Not a `--max-seconds`
+truncation. 490 of 20,000 updates (2.45 %) contributed no gradient, all
+`no_crop`. **Zero bare `NaN` in `runs/cond/history.json`** -- this trainer emits
+`null` as designed, so the MVP's parse defect did not recur.
+
+`sigma` **8.8985** and `start_rmsd` **15.2051**, each single-valued over all 80
+rows and identical to the refuted MVP's. **The two arms are paired crop-for-crop
+and the comparison below is exact rather than approximate.**
+
+### The readouts, in the order the node binds
+
+**READOUT 0a, the instrument check -- THE LABEL IS LIVE.** Paired per-residue
+displacement between samples differing in nothing but the label, same crop and
+same noise seed: **mean 1.7988 A** over 12 pairs (min 0.5841, max 3.6609), and
+**2.8516 A** on the `mainly-alpha`-against-`mainly-beta` pairs specifically.
+The CPU smoke run read 1.83 A, so the GPU run reproduces it. **This is not a
+bug and every readout below is a measurement.**
+
+**READOUT 0b, the helix gap -- FLAT, and flat is a RESULT here.** alpha 0.0000
+(n 2), beta 0.0000 (n 2), gap `+0.000`. Pooled helix + strand is exactly 0 over
+all 8 samples, so 0b has **no dynamic range**: there is no secondary structure
+for a label to shift. This is the third state the original readout 0 did not
+enumerate, and it is why the amendment was necessary -- under the original
+wording this run would have been declared an instrument failure and discarded.
+**A live 0a with a flat 0b is H-address's prediction stated precisely.**
+
+**READOUT 5, the confusion table -- NO DISCRIMINATION, AT ANY POINT IN THE RUN.**
+
+    alpha/beta -> irregular 2   irregular -> irregular 2
+    mainly-alpha -> irregular 2   mainly-beta -> irregular 2
+
+Identical at **every one of the 80 evaluations**, from update 250 to 20000. The
+rule produces `irregular` whatever it is asked for.
+
+### The loss, against the MVP's own measured bands
+
+    rmsd  by 2000   9.221 9.107 8.956 9.323 9.006 8.898 9.018 9.167 8.938 8.820
+    MVP             9.159 9.212 9.227 9.135 9.231 9.162 9.101 9.163 8.961 9.221
+
+    total by 2000  86.08 81.36 80.83 92.30 81.23 80.54 89.26 86.38 83.17 84.24
+    MVP            the measured spread 79.9 -> 98.5
+
+**The objective is inside the MVP's spread on every block**, which is the
+registered refutation condition and it FIRES.
+
+**The one number that moved, reported rather than buried.** Mean `rmsd` over the
+run is **9.045** against the MVP's **9.157**, and the final two blocks (8.938,
+8.820) sit below the MVP's own minimum of 8.961. That is a **0.11 A, ~1.2 %**
+shift on a 15.2 A start, in the same direction the label would predict if it
+helped at all. It is reported because it is real, and it is not a result for
+four reasons: `window`, the quantity actually optimised, is squarely inside the
+MVP's band; 148 parameters on top of 5,328 is 2.8 % more capacity, which alone
+buys a fraction of a percent; no arm in this project has been run at a second
+seed, so a 1 % block-mean difference has no error bar; and **nothing downstream
+of it changed at all** -- not one sample acquired a single residue of secondary
+structure, and the confusion table is a constant.
+
+### Bucket 2, the geometry, against the natural reference
+
+    axis                  natural    MVP      fold-class
+    CA-CA mean (A)         3.8027   11.565      10.799
+    outlier fraction       0.0087    1.0000      0.9951
+    clash rate             0.0001    0.0111      0.0183
+
+**All three axes still FAIL.** CA-CA came in by 0.77 A, the outlier fraction is
+unchanged at essentially 1.0, and **the clash rate got 65 % worse**. All 8
+samples: helix 0.0000, strand 0.0000, coil 1.0000, class `irregular`. Mean
+pairwise TM 0.4413, so the samples are not collapsed -- they are 8 different
+non-proteins. Sampler: **converged 0 of 8** at the trainer's stricter 0.01 A /
+200 steps, `last_move` median 0.0608.
+
+### Two registered conditions are NOT YET MEASURED, and the reason is a refusal working in reverse
+
+`scripts/prior_fixed_point.py` and `scripts/denoise_floor.py` both **REFUSED**
+`runs/cond/best.pt`:
+
+    REFUSED: this checkpoint records settings scripts/train_egnca.py's schema
+    does not define: label_dim, label_dropout.
+
+**This is the refusal from
+`docs/claims/a-probe-pointed-at-best-pt-silently-used-its-own-defaults.md`
+firing correctly, in the direction I did not plan for.** The arm was built as a
+separate trainer precisely so a new schema key could not make the MVP's
+checkpoint unreadable -- and that is exactly what it did to the *new*
+checkpoint instead. The probes hardcode `train_denoise`'s schema. So the
+fixed-point count and the `oracle_scale` margin are **pending**, not null, and
+the verdict below does not rest on them.
+
+### THE VERDICT: H-address, and it is the pre-registered expectation
+
+**The label arrives, moves the coordinates by 1.8 A, and changes nothing that
+matters.** The registered condition "the `window` pair loss inside the MVP's own
+block-mean spread" fired on all ten blocks. Readout 5 is a constant. Bucket 2
+fails on all three axes and one of them got worse.
+
+**So option 2 did not fail because the target was ambiguous. It failed because a
+residue has no address.** Narrowing the target from "any protein" to "any
+mainly-alpha protein" was received and was useless, which is what it should be
+if the binding constraint is that a residue knows only its sequence index --
+a 1-D address for a 3-D target. The arm was registered as a diagnostic and not a
+rescue, and it diagnosed.
+
+### What this does NOT say
+
+It does not say conditioning is useless for this rule class -- Proteina's CATH
+conditioning works on a model with >400M parameters and a flow-matching
+objective. It says that **at 5,476 parameters, with no timestep and no schedule,
+a global scalar is not the missing information.** And it does not say the fold
+class is the wrong conditioning signal; it says the deficit it was tested
+against is not the one the rule has.
+
+### The recorded successor, PROPOSED and not started
+
+`docs/claims/the-emitted-chemical-diffuses-over-the-perception-graph.md`: an
+emergent spatial morphogen, already built in `src/aanca/morphogen.py`, with
+`morphogen = false` in **every arm ever run**. The rule chooses what to secrete,
+it spreads over the edges the rule already computes, and neighbours read it --
+so unlike a fold class it is a function of the structure as it currently is and
+**can carry address information where a global scalar provably cannot**. It is
+ahead of the frame head because it is already written and because it attacks
+the deficit this arm just isolated.
+
+---
+
 ## 0-cond. 2026-11-26: the fold-class arm is running as job 33834699, and its first evaluation vindicates the amendment
 
 **Ulban chose the fold-class label over the `context_fraction` sweep and over a
