@@ -291,6 +291,13 @@ registered condition was "fixed points below 3 of 15" and it is nowhere near
 firing. It is recorded first and not buried: it is the largest movement in the
 arm.
 
+**Per class it settles slightly more reliably, and the class identity does not
+matter**: `unconditional` 14/15 at median 0.0969, `mainly-alpha` **15/15** at
+0.0930, `mainly-beta` **15/15** at 0.0958, with the gap between the two classes
+smaller than the per-crop spread. So the damping is a property of *having* a
+non-zero edge feature, not of which row it is -- the same conclusion the
+unconditional rollout forces, reached from the other side.
+
 **It is not the fold class, by construction.** That rollout used the
 unconditional row, which carries no class information, so the class embedding
 was not in play. What remains is a *constant* learned edge feature entering

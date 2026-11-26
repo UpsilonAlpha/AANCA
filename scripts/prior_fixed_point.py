@@ -296,8 +296,12 @@ def main() -> int:
         else f"NO -- {len(samples) - len(reached)} of {len(samples)} never settle"
     )
     print(
-        f"\nBUCKET 1, unconditional"
-        + (f" (label row: {row_name})" if conditioned else "")
+        # "unconditional" here names the START -- nothing is pinned and the
+        # coordinates come from the prior -- and NOT the label row, which is
+        # printed beside it. Saying `unconditional (label row: mainly-alpha)`
+        # read as a contradiction in the one line that carries the verdict.
+        f"\nBUCKET 1, from the prior with nothing pinned"
+        + (f", label row {row_name}" if conditioned else "")
         + f": {verdict}"
     )
 

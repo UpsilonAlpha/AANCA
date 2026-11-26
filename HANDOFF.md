@@ -122,6 +122,20 @@ hits the cap at 0.1531. The registered condition was "fixed points below 3 of
 15" and it is not close to firing. **Reported first and not buried: this is the
 one thing in the arm that moved a lot.**
 
+**Per class, it settles slightly MORE reliably, and the class identity does not
+matter.** The same probe under a declared label, same checkpoint, same crops:
+
+    label row        converged   last_move median
+    unconditional       14/15          0.0969
+    mainly-alpha        15/15          0.0930
+    mainly-beta         15/15          0.0958
+
+**Both classes 15 of 15, and the gap between them is smaller than the per-crop
+spread.** So the damping comes from *having* a non-zero edge feature at all, not
+from which row it is -- which is the same conclusion the unconditional rollout
+forces, reached from the other side. It is a convergence effect of the
+mechanism, not an effect of the fold class.
+
 **And it is NOT the fold class, by construction.** That rollout used the
 unconditional row -- row 4, the one label dropout trains, carrying no class
 information at all. So whatever damped the map, the class embedding was not in
