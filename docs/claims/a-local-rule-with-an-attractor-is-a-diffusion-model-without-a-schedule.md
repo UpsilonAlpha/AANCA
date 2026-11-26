@@ -160,6 +160,14 @@ the 0.3 A cap over a 120-step rollout, which read 16.4-16.9 A at 600 steps with
 0 of 48 converging. **Both stand, about different rules, and the contrast is
 the result.**
 
+**Steps to the fixed point: 12 of 15 converge, median 25, min 18, max 104**,
+the three that never doing so being the three with residual motion. So the rule
+arrives at its fixed point at essentially the horizon it was trained on, and
+the paper's 15-25 step sampling range straddles that median. **But drift from
+the convergence step to step 10,000 is mean +0.355 A and up to 1.533 A**, so
+the displacement threshold fires early on some crops and the fixed-point claim
+rests on the 1,000-vs-10,000 agreement, not on `converged_at`.
+
 **Two things this answer does not cover.** `native_edges = true` holds the
 contact graph fixed for all 10,000 steps, so it is persistence under the task
 statement rather than under a live k-NN graph -- which is precisely what the

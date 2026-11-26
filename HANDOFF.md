@@ -35,6 +35,26 @@ agree to 6-7 significant figures on *every individual crop* (2IJL 1.4566222 ->
 (`max_step` 0.0000 at step 10,000); the other six sit in bounded residual
 motion of 0.07-0.25 A per step whose RMSD does not move.
 
+### Steps to the fixed point: median 25, which IS the training horizon
+
+    converge (max step < 0.1 A)   12 of 15
+    median                        25 steps
+    min / max                     18 / 104
+    never                         3 (2WFP, 3LD7, 7O0L)
+
+**The rule is not trained to a horizon and then left drifting: it arrives at
+its fixed point at essentially the horizon it was trained on**, and the 15-25
+step sampling range the paper specifies straddles the median exactly. The three
+that never converge are the same three carrying the bounded residual motion.
+
+**And `converged_at` must be read with the drift column beside it, never
+alone.** Drift from the convergence step to step 10,000 is mean **+0.355 A**,
+sd 0.549, largest **1.533 A** -- so the 0.1 A-per-step threshold fires early on
+some crops. A crop can be "converged" by the displacement test and still move
+a further angstrom of RMSD. That is why the 1,000-vs-10,000 agreement to 6-7
+significant figures, not the convergence step, is what carries the fixed-point
+claim.
+
 ### The strong form: the same basin from two different states
 
 Re-damaged **mid-rollout at step 24** and continued, the rule returns to the
