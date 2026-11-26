@@ -130,6 +130,43 @@ Remove the pin and the native graph and there is no fixed point and no protein.
 measurement.** What the port demonstrates is the realisability result it was
 always framed as -- coordinates for a given contact graph -- not generation.
 
+### WHY it failed, from the loss arithmetic -- and it is NOT the bonds
+
+**The tempting diagnosis is wrong and worth recording as wrong.** At
+`context_fraction = 0` the objective is `to_window` alone: the mean of
+`(d_now - d_want)^2` over the strict upper triangle of all CA-CA pairs. For a
+128-residue crop that is 8,128 pairs, of which 127 -- **1.56 %** -- are bonded.
+So the obvious reading is that an unweighted all-pairs loss drowns the peptide
+bond, and the fix is a CA-CA virtual-bond term. **The arithmetic refutes it:**
+
+    block mean `window`  87 A^2   ->  RMS distance error  9.33 A per pair
+    observed bond error  11.565 - 3.8027  =  7.76 A
+
+**The bonds are BETTER than the average pair.** The rule is not neglecting the
+chain in favour of the fold; it is missing essentially every pairwise distance by
+about 9 A, at every separation. Natural CA-CA distances in a crop this size span
+3.8 to ~45 A, so a 9.3 A RMS error is *no usable pair information beyond the
+overall scale* -- which is exactly what `denoise_floor.py` says independently,
+with the oracle radial rescaling at 10.202 A against the rule's 9.1.
+
+**So the failure is capacity-and-address, not loss weighting.** 5,328 parameters
+are asked to satisfy 8,128 simultaneous distance constraints per structure, and
+the only positional information a residue has is its sequence index --
+[[growing-nca-grid-is-the-missing-information]] under a new name and now with a
+number on it. Gala's own justification for the all-pairs loss is that nodes "are
+not aware of their global location" and each has `|V| - 1` constraints; on a
+point cloud that works because the target IS the constraint set. A protein adds
+a 3-D target behind a 1-D address.
+
+**A bond term is therefore a trap, and should be recognised as one before
+someone runs it.** It would pull the CA-CA mean to 3.80 and clear bucket 2's
+bond and outlier axes, turning the headline table from three FAILs to one, while
+changing nothing about whether a fixed point exists or whether the thing is a
+fold. It would make the refutation look milder without touching it. If it is run,
+it is run as a cosmetic control and labelled as one.
+
+---
+
 ### Three defects found on the way, one of which would have faked a result
 
   * **`scripts/generation_metrics.py` read the ragged sample file as ONE
