@@ -14,6 +14,7 @@ import json
 import sys
 from pathlib import Path
 
+import pytest
 import torch
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -69,3 +70,77 @@ def test_a_multi_valued_sigma_refuses(tmp_path, monkeypatch, capsys):
 def test_a_missing_checkpoint_exits_one(tmp_path, monkeypatch):
     monkeypatch.setattr(sys, "argv", ["p", "--checkpoint", str(tmp_path / "no.pt")])
     assert floor.main() == 1
+
+
+def _recorded(schema) -> dict:
+    """What a trainer's `recorded_args` would write, at the schema's defaults."""
+    from aanca import config as run_config
+
+    args = schema.parse_args([])
+    return {
+        key: value
+        for key, value in vars(args).items()
+        if key not in run_config.RUNTIME_ONLY
+    }
+
+
+def test_the_trainer_is_declared_and_defaults_to_the_denoiser():
+    options = floor.build_parser().parse_args([])
+    assert options.trainer == "train_denoise"
+    choices = {
+        action.choices
+        for action in floor.build_parser()._actions
+        if action.dest == "trainer"
+    }
+    assert choices == {("train_denoise", "train_conditioned")}
+
+
+def test_a_conditioned_checkpoint_declared_as_the_denoiser_still_refuses():
+    """The same refusal as the other probe's, for the same reason.
+
+    `label_dim` and `label_dropout` are not in `scripts/train_denoise.py`'s
+    schema, and a wrong declaration must not be tolerated or the check is
+    vacuous.
+    """
+    readout = _module("persistence_readout")
+    denoiser = _module("train_denoise")
+    conditioned = _module("train_conditioned")
+    with pytest.raises(readout.ProbeRefusal) as refusal:
+        readout.settings_from_checkpoint(
+            {"args": _recorded(conditioned.build_schema())},
+            denoiser.build_schema(),
+        )
+    assert "label_dim" in str(refusal.value)
+    assert "label_dropout" in str(refusal.value)
+
+
+def test_the_conditioned_declaration_is_honoured():
+    readout = _module("persistence_readout")
+    conditioned = _module("train_conditioned")
+    args = readout.settings_from_checkpoint(
+        {"args": _recorded(conditioned.build_schema())},
+        conditioned.build_schema(),
+    )
+    assert args.label_dropout == 0.1
+
+
+def test_the_floor_needs_nothing_from_the_trainer_but_corrupt_and_the_split():
+    """THE SAME `corrupt`, so the two arms share one floor.
+
+    This script's only contact with a trainer is the corruption and the
+    held-out split: the weights are never loaded, so a label cannot reach the
+    floor. `scripts/train_conditioned.py` rebinds `train_denoise.corrupt`
+    rather than defining one, and the identity below is what makes the
+    conditioned arm's `rmsd` comparable with the MVP's against one shared
+    number.
+    """
+    conditioned = _module("train_conditioned")
+    # Against the trainer's OWN handle on the denoiser, not a second load of
+    # it: `tests/test_conditioned.py` rebinds `sys.modules["train_denoise"]`,
+    # so two loads are two objects and an identity across them would be a test
+    # of the loader. This identity is the one that matters.
+    assert conditioned.corrupt is conditioned.denoise.corrupt
+    assert conditioned.on_disk is conditioned.denoise.on_disk
+    source = (ROOT / "scripts" / "denoise_floor.py").read_text(encoding="utf-8")
+    assert "trainer.corrupt" in source
+    assert "_module(options.trainer)" in source

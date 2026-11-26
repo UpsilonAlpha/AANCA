@@ -40,6 +40,29 @@ that stayed finite would be the best-looking number in the table.
 it is the one that decides whether the cap or the tolerance is what refuted the
 claim. A rule stalling at 8 A per step has no fixed point; a rule at 0.11 A per
 step has one just outside the window.
+
+**`--trainer` IS DECLARED AND NEVER DETECTED.** A checkpoint from
+`scripts/train_conditioned.py` records two keys -- `label_dim` and
+`label_dropout` -- that `scripts/train_denoise.py`'s schema does not define, so
+pointing this probe at one without saying so is a refusal, and that refusal is
+the whole mechanism of
+`docs/claims/a-probe-pointed-at-best-pt-silently-used-its-own-defaults.md`.
+Naming the trainer on the command line keeps it: **sniffing the trainer out of
+the recorded keys would make every checkpoint readable by construction**, which
+is the same thing as having no check. Naming the *wrong* trainer still refuses,
+in both directions.
+
+    python scripts/prior_fixed_point.py --trainer train_conditioned \
+        --checkpoint runs/cond/best.pt
+
+**For a conditioned rule the registered comparison is the UNCONDITIONAL
+rollout**, so that is the default: `--label` is unset, the rule reads its
+learned unconditional row, and the number is paired with the refuted MVP's at
+the same tolerance and cap. `--label mainly-alpha` rolls out under a declared
+class instead, which is a *different* question and is named as such in the
+header line and in the JSON. Under `--trainer train_denoise` the option does
+not exist to be used: passing it is an error rather than a silent no-op, and
+nothing about that path changes.
 """
 
 from __future__ import annotations
@@ -50,12 +73,25 @@ import json
 import random
 import statistics
 import sys
+from contextlib import nullcontext
 from pathlib import Path
 
 import torch
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
+
+from aanca.conditioned import FOLD_CLASSES, UNCONDITIONAL  # noqa: E402
+from aanca.conditioned import class_index, class_name  # noqa: E402
+
+#: The two trainers whose checkpoints this probe can honour. A closed set, for
+#: the reason in this module's docstring: the schema a checkpoint is checked
+#: against is a declaration and not a guess.
+TRAINERS = ("train_denoise", "train_conditioned")
+
+#: What `--label` accepts. The four classes plus the row that means "no class
+#: was given", which is the default and the registered comparison.
+LABEL_CHOICES = FOLD_CLASSES + ("unconditional",)
 
 
 def _module(name: str):
@@ -86,13 +122,43 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--json", default=None)
     p.add_argument("--device", default="cpu")
+    p.add_argument(
+        "--trainer",
+        default="train_denoise",
+        choices=TRAINERS,
+        help=(
+            "which trainer's schema the checkpoint is checked against, and "
+            "whose build_rule builds the rule. DECLARED, never detected: see "
+            "this module's docstring"
+        ),
+    )
+    p.add_argument(
+        "--label",
+        default=None,
+        choices=LABEL_CHOICES,
+        help=(
+            "--trainer train_conditioned only: the fold class to roll out "
+            "under. The default is the learned unconditional row, which is the "
+            "registered comparison against the refuted MVP"
+        ),
+    )
     return p
 
 
 def main() -> int:
     options = build_parser().parse_args()
     probe = _module("persistence_readout")
-    trainer = _module("train_denoise")
+    conditioned = options.trainer == "train_conditioned"
+    if options.label is not None and not conditioned:
+        print(
+            f"--label {options.label} needs --trainer train_conditioned: "
+            "scripts/train_denoise.py's rule has no label to set, and running "
+            "anyway would print a class in the header of an unconditioned "
+            "rollout.",
+            file=sys.stderr,
+        )
+        return 2
+    trainer = _module(options.trainer)
     device = torch.device(options.device)
 
     path = Path(options.checkpoint)
@@ -111,10 +177,38 @@ def main() -> int:
         print(f"REFUSED: {refusal}", file=sys.stderr)
         return 1
 
+    # **Which row the rollout reads, named before any number is printed.** The
+    # unconditional row is the default because it is the registered comparison
+    # against the refuted MVP; a declared class is a different question, and a
+    # table that did not say which of the two it answered would be unreadable.
+    row = None
+    row_name = None
+    if conditioned:
+        row = (
+            UNCONDITIONAL
+            if options.label in (None, "unconditional")
+            else class_index(options.label)
+        )
+        row_name = class_name(row)
+
     params = sum(p.numel() for p in rule.parameters())
     print(
         f"checkpoint  {path}  update {state.get('update')}  params {params}\n"
-        f"recorded    context_fraction {args.context_fraction}  "
+        f"trainer     scripts/{options.trainer}.py  (declared, not detected: "
+        "its schema is what the checkpoint was checked against)\n"
+        + (
+            f"label       {row_name} (row {row}), "
+            + (
+                "the REGISTERED comparison against the refuted MVP -- nothing "
+                "narrows the target"
+                if row == UNCONDITIONAL
+                else "a DECLARED class, so this is not the MVP comparison"
+            )
+            + "\n"
+            if conditioned
+            else ""
+        )
+        + f"recorded    context_fraction {args.context_fraction}  "
         f"native_edges {args.native_edges}  k {args.k}  cutoff {args.cutoff}\n"
         f"registered  tolerance {options.tolerance:g} A/step, "
         f"cap {options.max_steps} steps  ({options.samples} samples)\n"
@@ -138,18 +232,26 @@ def main() -> int:
             dtype=rule.dtype,
             device=native.device,
         )
-        sample = trainer.run_to_fixed_point(
-            rule,
-            topo,
-            native,
-            start,
-            tolerance=options.tolerance,
-            max_steps=options.max_steps,
-            k=args.k,
-            cutoff=args.cutoff,
-            device_neighbours=args.device_neighbours,
-            native_edges=args.native_edges,
+        # `conditioned_on` restores the previous row on exit, so the label
+        # cannot leak between samples. Under `--trainer train_denoise` the
+        # context is `nullcontext` and the call below is byte-identical to what
+        # it was before the option existed.
+        condition = (
+            rule.conditioned_on(row) if conditioned else nullcontext()
         )
+        with condition:
+            sample = trainer.run_to_fixed_point(
+                rule,
+                topo,
+                native,
+                start,
+                tolerance=options.tolerance,
+                max_steps=options.max_steps,
+                k=args.k,
+                cutoff=args.cutoff,
+                device_neighbours=args.device_neighbours,
+                native_edges=args.native_edges,
+            )
         samples.append(
             {
                 "pdb_id": catalogue[index].pdb_id,
@@ -191,7 +293,11 @@ def main() -> int:
         if reached and len(reached) == len(samples)
         else f"NO -- {len(samples) - len(reached)} of {len(samples)} never settle"
     )
-    print(f"\nBUCKET 1, unconditional: {verdict}")
+    print(
+        f"\nBUCKET 1, unconditional"
+        + (f" (label row: {row_name})" if conditioned else "")
+        + f": {verdict}"
+    )
 
     if options.json:
         Path(options.json).write_text(
@@ -199,6 +305,9 @@ def main() -> int:
                 {
                     "checkpoint": str(path),
                     "update": state.get("update"),
+                    "trainer": options.trainer,
+                    "label": row_name,
+                    "label_row": row,
                     "tolerance": options.tolerance,
                     "max_steps": options.max_steps,
                     "n": len(samples),

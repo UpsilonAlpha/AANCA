@@ -33,6 +33,24 @@ the crops are the run's own held-out crops and the pool check refuses a mismatch
 (`docs/claims/a-probe-pointed-at-best-pt-silently-used-its-own-defaults.md`).
 The rule's weights are never loaded: nothing here is a measurement of the rule,
 which is the point.
+
+**`--trainer` IS DECLARED AND NEVER DETECTED.**
+`scripts/train_conditioned.py`'s checkpoints record two keys --- `label_dim`
+and `label_dropout` --- that `scripts/train_denoise.py`'s schema does not
+define, so pointing this script at one without saying so is a refusal, and
+that refusal is the mechanism of the claim cited above. Detecting the trainer
+from the recorded keys would make every checkpoint readable and the check
+vacuous, so the trainer is named:
+
+    python scripts/denoise_floor.py --trainer train_conditioned \
+        --checkpoint runs/cond/best.pt
+
+Nothing else about this script changes for the conditioned arm, and that is a
+result rather than a convenience: **the floor is weight-free, so the label
+cannot reach it.** The corruption, the crops and the two rescalings are the
+same functions on the same held-out split at the same sigma, which is exactly
+what makes the conditioned arm's `rmsd` comparable with the MVP's against one
+shared floor.
 """
 
 from __future__ import annotations
@@ -63,6 +81,11 @@ def _module(name: str):
     return module
 
 
+#: The two trainers whose checkpoints this script can honour. A closed set: the
+#: schema a checkpoint is checked against is a declaration, not a guess.
+TRAINERS = ("train_denoise", "train_conditioned")
+
+
 def radius_of_gyration(x: torch.Tensor) -> torch.Tensor:
     centred = x - x.mean(dim=0, keepdim=True)
     return centred.pow(2).sum(-1).mean().clamp_min(1e-12).sqrt()
@@ -86,13 +109,22 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--json", default=None)
     p.add_argument("--device", default="cpu")
+    p.add_argument(
+        "--trainer",
+        default="train_denoise",
+        choices=TRAINERS,
+        help=(
+            "which trainer's schema the checkpoint is checked against, and "
+            "whose `corrupt` and `on_disk` are used. DECLARED, never detected"
+        ),
+    )
     return p
 
 
 def main() -> int:
     options = build_parser().parse_args()
     probe = _module("persistence_readout")
-    trainer = _module("train_denoise")
+    trainer = _module(options.trainer)
     device = torch.device(options.device)
 
     path = Path(options.checkpoint)
@@ -135,6 +167,7 @@ def main() -> int:
 
     print(
         f"checkpoint  {path}  update {state.get('update')}  (weights NOT loaded)\n"
+        f"trainer     scripts/{options.trainer}.py  (declared, not detected)\n"
         f"sigma       {sigma:.4f} A per coordinate, from "
         f"{'--sigma' if options.sigma else 'history.json'}\n"
         f"crops       {options.crops} of the run's own held-out split\n"
@@ -216,6 +249,7 @@ def main() -> int:
             json.dumps(
                 {
                     "checkpoint": str(path),
+                    "trainer": options.trainer,
                     "sigma": sigma,
                     "n": len(rows),
                     "start": mean("start"),
