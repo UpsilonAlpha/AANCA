@@ -1,0 +1,208 @@
+# The CONDITIONED arm: `configs/denoise.toml`'s `mvp`, plus a GLOBAL FOLD-CLASS
+# LABEL in phi_m's invariant input. A DIAGNOSTIC arm.
+#
+#   .venv/Scripts/python.exe scripts/train_conditioned.py configs/conditioned.toml --section cond
+#   .venv/Scripts/python.exe scripts/train_conditioned.py configs/conditioned.toml --section nolabel
+#   .venv/Scripts/python.exe scripts/train_conditioned.py configs/conditioned.toml --list-sections
+#
+# PRE-REGISTERED, AND THE PRE-REGISTRATION IS BINDING:
+#   docs/claims/a-global-fold-class-label-tells-us-whether-option-2-failed-on-ambiguity-or-on-address.md
+# It registers the expectation that this arm does NOT help. Its value is that it
+# says so cheaply and sends the next arm to the frame head for a measured reason
+# instead of a hopeful one.
+#
+# WHAT IT CANNOT DO. It cannot make option 2 true. 5,328 parameters and 400
+# structures do not become a protein generator because a label is added, and
+# Proteina's >400M parameters on a synthetic set ~35x its curated one is the
+# scale at which this problem is currently solved. NO NUMBER FROM THIS ARM MAY
+# BE SET BESIDE A PROTEINA NUMBER: the mechanism is borrowed, the comparison is
+# not available, because every published metric there is gated on
+# ProteinMPNN + ESMFold.
+#
+# WHAT IT CAN DO. Separate two diagnoses of why
+# docs/claims/a-local-rule-with-an-attractor-is-a-diffusion-model-without-a-schedule.md
+# was refuted:
+#
+#   * H-AMBIGUITY -- one rule, no timestep, no conditioning, asked to map one
+#     Gaussian prior onto the whole distribution of folds. Narrow the target and
+#     the constraints become mutually satisfiable.
+#   * H-ADDRESS -- the deficit is positional. A residue's only positional
+#     information is its sequence index, a 1-D address for a 3-D target, and no
+#     amount of conditioning supplies an address.
+#
+# A fold class is the SAME NUMBER FOR EVERY RESIDUE in the structure, so it adds
+# exactly ZERO positional information. That is what makes it a discriminator
+# rather than another lever -- and it is also why it is permitted where
+# `morphogen.py`'s chain-transported `decay ** index` is not: that is a global
+# COORDINATE and the project's standing position is that no cell may read one.
+# This is a global SCALAR and cannot tell a residue where it is.
+#
+# A SEPARATE FILE AND A SEPARATE TRAINER, and here the reason is mechanical as
+# well as scientific. `scripts/train_denoise.py`, `scripts/train_egnca.py`,
+# `src/aanca/egnca.py` and `configs/egnca.toml` stay BIT-FOR-BIT: both are
+# quoted results, and `runs/mvp/best.pt` must stay readable by
+# `scripts/prior_fixed_point.py` and `scripts/denoise_floor.py`, which refuse a
+# checkpoint missing any key their trainer's `build_schema()` defines. A key
+# added to the denoiser's schema would break both probes against the refuted
+# MVP's own checkpoint.
+#
+# THE LABEL, AND IT NEEDS NO EXTERNAL DATA. `generation_metrics.structure_class`
+# over P-SEA helix and strand fractions: `mainly-alpha`, `mainly-beta`,
+# `alpha/beta`, `irregular`. No network, no CATH download, no new dependency, so
+# the arm cannot be blocked by a data problem. P-SEA is validated rather than
+# assumed -- 1.000 per-residue agreement with biotite's `annotate_sse` on all
+# four crystal structures in `data/raw/`.
+#
+# IT IS A P-SEA-DERIVED C-LEVEL ANALOGUE AND IT IS OURS. Deliberately aligned
+# with CATH's four classes (Orengo et al. 1997) and computed by our own code. NO
+# CLAIM FROM THIS ARM MAY SAY "CATH CLASS".
+#
+# TWO HONEST COSTS, registered before the arm ran:
+#
+#   * The label is computed ON THE CROP, not the chain. A 128-residue crop of a
+#     larger protein can carry a different class from its parent, and the crop
+#     is what is supervised. A number from this arm is about crops.
+#   * `irregular` IS RARE. The 60-entry natural reference reads 35 alpha/beta,
+#     14 mainly-beta, 10 mainly-alpha, 1 irregular. The trainer prints the class
+#     counts over the training structures at startup, because a class with too
+#     few examples to train is a reported fact and not a silent imbalance.
+#
+# WHERE IT ENTERS, AND WHY NOT THE SEED. A `label_dim`-wide learned embedding of
+# the class, broadcast to every residue and concatenated into phi_m's INVARIANT
+# input beside ||x_i - x_j||^2 and the two hidden states, at EVERY step. Three
+# reasons, each ruling out an alternative:
+#
+#   * Not the initial hidden state -- that relies on the rule learning to
+#     PRESERVE the signal over 15-25 steps, a second question confounded with
+#     the first. A morphogen is a field present throughout, not an initial
+#     condition.
+#   * Not added to the hidden state -- `norm_type = pn` is PairNorm, which
+#     centres the rows over the whole structure and would normalise a constant
+#     offset away exactly. Concatenating at phi_m bypasses it.
+#   * Equivariance is preserved by construction, because the embedding is an
+#     E(n)-invariant scalar vector entering the invariant branch -- the same
+#     place the squared distance enters. It is tested anyway, to 1e-4 with a
+#     LIVE k-NN graph, in `tests/test_conditioned.py`.
+#
+# HOW TO READ THE TABLE, AND READOUT 0 COMES FIRST. `helix a/b` is the P-SEA
+# helix fraction of samples drawn under `mainly-alpha` against those drawn under
+# `mainly-beta`, FROM THE SAME NOISE SEEDS AND THE SAME CROPS. If that gap is
+# flat the conditioning is INERT -- a bug, or washed out -- and NO OTHER NUMBER
+# IN THE TABLE MAY BE READ until it is fixed. It is this arm's
+# `start_rmsd`-single-valued check: the thing that says the instrument works
+# before any result is quoted.
+#
+# Then, and only then: `window` against the MVP's measured block means
+# (8.96-9.25 A for rmsd, 79.9-98.5 A^2 for total); the margin over
+# `scripts/denoise_floor.py`'s `oracle_scale` of 10.202 A, which the MVP beat by
+# 1.1 A; `scripts/prior_fixed_point.py` at the registered 0.1 A within 500
+# steps, where the MVP reached 2 of 15; and the confusion table. THE LAPTOP AND
+# BUNYA POOLS NAME DIFFERENT PROTEINS AT THE SAME INDEX, so every comparison
+# with those figures is Bunya-to-Bunya only.
+#
+# `rmsd` is CA RMSD over the corrupted residues against `start`, the same
+# quantity before a single step. `sigma` is the mean drawn noise level and is a
+# property of the sampler: compare `rmsd` against `start` at the same `sigma`,
+# never two rows at different ones. `fit_ctx` is nan at `context_fraction = 0.0`
+# because a superposition needs three held residues and there are none -- absent,
+# not zero. `dropped` is how many of the interval's updates read the
+# unconditional row, which is the one setting that could make a flat readout 0
+# look like an inert embedding.
+#
+# Nothing that changes a result is a command-line option: see `aanca.config`.
+# [base.inputs] states every setting explicitly so a later change to a parser
+# default cannot reinterpret a run recorded here.
+
+[base.inputs]
+# The five settings the paper omits, at the authors' own defaults for this task,
+# exactly as `configs/egnca.toml` and `configs/denoise.toml` carry them. Not
+# re-argued here.
+has_coord_act = true
+is_residual = true
+activation = "tanh"
+norm_type = "pn"
+
+clip = 1.0
+# PURE GENERATION, as in the MVP: no residue is held, so the rule is handed a
+# cloud of corrupted coordinates with no anchor anywhere. This arm does NOT
+# sweep the context axis -- that was the alternative Ulban chose this over, and
+# two axes at once would make neither readable.
+context_fraction = 0.0
+crop_size = 128
+cutoff = 10.0
+# a clock setting, not a scientific one
+device_neighbours = false
+eval_every = 250
+eval_structures = 16
+hidden_dim = 16
+k = 24
+# THE EMBEDDING WIDTH. 4 channels over the four classes plus one unconditional
+# row is 20 weights, and widening phi_m's input by 4 costs 4 * message_dim more:
+# 148 against the port's 5,328. THE SMALLNESS IS LOAD-BEARING FOR THE FRAMING.
+# If this arm needs to grow the rule to work, the "one small local rule" claim
+# is what is being traded away, and that trade gets argued before it is made.
+label_dim = 4
+# THE PROBABILITY OF READING THE LEARNED UNCONDITIONAL ROW INSTEAD OF THE CLASS.
+# Small, so an unconditional pass exists and classifier-free guidance --
+# Proteina's mechanism -- is available later without retraining. CFG IS NOT PART
+# OF THIS ARM: it needs two forward passes and a guidance scale, and a guidance
+# scale is a second axis. The base states the arm's own value, so a section that
+# forgets the key is the arm rather than something unnamed.
+label_dropout = 0.1
+lr = 0.001
+message_dim = 32
+# LIVE EDGES, as in the MVP: the k-NN is rebuilt from where each residue
+# CURRENTLY is, every step.
+native_edges = false
+# window-to-context, unclamped, A^2. At context_fraction = 0.0 there are no
+# context residues, so this half is exactly 0.0 and `pair_window` carries the
+# whole loss over the full pair set.
+pairwise_weight = 1.0
+# corrupted-to-corrupted. Both live => the full pair set, which is the published
+# loss, and `growth.pairwise_distance_restraint` is reused unchanged.
+pairwise_window_weight = 1.0
+pool_probability = 0.5          # the replay pool, as published
+# EQUAL NUMBERS PER CLASS, so readouts 0 and 5 work: 8 draws is 2 per class over
+# the four, from the SAME noise seeds and the same crops, which is what makes the
+# mainly-alpha versus mainly-beta contrast PAIRED. Unpaired, with two draws each,
+# the contrast would be mostly which cloud each class happened to get. Written to
+# ONE compact .npz per run directory -- Bunya's user scratch has ~313k inodes
+# free -- carrying the class each sample was CONDITIONED on, so readout 5's
+# confusion table is computable from the file alone.
+sample_count = 8
+sample_max_steps = 200
+# Angstrom. Convergence is the MAX per-residue per-step displacement falling
+# below this, not a mean -- a mean hides one residue still flying.
+sample_tolerance = 0.01
+seed = 0
+# Log-uniform in [sigma_min, sigma_max], Angstrom, exactly as the MVP.
+sigma_max = 30.0
+sigma_min = 0.5
+split = "train"
+steps = 25                      # "15 to 25 steps, sampled uniformly"
+steps_min = 15
+structures = 400
+updates = 20000
+weight_decay = 0.00001
+
+# THE ARM. Empty because the base IS this arm: there is no earlier section of
+# this trainer for it to differ from.
+[cond]
+[cond.inputs]
+
+# THE CONTROL, and it is one key. Label dropout 1.0 means the class NEVER
+# reaches the rule -- in training or in evaluation -- so this is the MVP's
+# behaviour carrying the extra embedding and the extra phi_m input, both of which
+# see only the single unconditional row.
+#
+# WHAT IT IS FOR. Two things the arm alone cannot say:
+#
+#   * whether a difference from `runs/mvp` is the LABEL or is this trainer, this
+#     seed and these 148 extra parameters. `cond` against `nolabel` is one key;
+#     `cond` against `runs/mvp` is a different trainer as well.
+#   * what readout 0 reads when the conditioning is KNOWN to be inert. A flat
+#     `helix a/b` here is the correct answer and not a bug, so it calibrates the
+#     instrument check against its own null.
+[nolabel]
+[nolabel.inputs]
+label_dropout = 1.0
