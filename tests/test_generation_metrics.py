@@ -526,3 +526,40 @@ def test_rejects_a_badly_shaped_array(tmp_path):
     np.save(path, np.zeros((4, 10, 4)))
     with pytest.raises(ValueError, match="n_residues, 3"):
         gm.load_generated(path)
+
+
+# -- the ragged flat-plus-offsets layout `train_denoise.py` actually writes ----
+
+
+def test_load_generated_splits_the_flat_array_by_offsets(tmp_path):
+    """Reading it as a rectangle would make 3 samples into 1 long protein.
+
+    Not a hypothetical: the flat array is `ndim == 2`, so it passes the shape
+    check and becomes a single protein whose CA-CA distribution carries a
+    junction "bond" at every sample boundary.
+    """
+    path = tmp_path / "samples.npz"
+    lengths = [5, 3, 4]
+    flat = np.arange(3 * sum(lengths), dtype=np.float32).reshape(-1, 3)
+    offsets = np.cumsum([0] + lengths, dtype=np.int64)
+    np.savez_compressed(path, ca=flat, offsets=offsets, update=np.int64(7))
+
+    samples = gm.load_generated(path)
+    assert [len(s) for s in samples] == lengths
+    assert np.allclose(samples[0], flat[:5])
+    assert np.allclose(samples[1], flat[5:8])
+
+
+def test_load_generated_refuses_offsets_that_do_not_span_the_array(tmp_path):
+    path = tmp_path / "bad.npz"
+    flat = np.zeros((10, 3), dtype=np.float32)
+    np.savez_compressed(path, ca=flat, offsets=np.array([0, 4], dtype=np.int64))
+    with pytest.raises(ValueError, match="does not span"):
+        gm.load_generated(path)
+
+
+def test_load_generated_still_reads_a_rectangular_array(tmp_path):
+    path = tmp_path / "rect.npz"
+    array = np.zeros((3, 6, 3), dtype=np.float32)
+    np.savez_compressed(path, ca=array)
+    assert [len(s) for s in gm.load_generated(path)] == [6, 6, 6]

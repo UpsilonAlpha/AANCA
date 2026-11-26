@@ -839,12 +839,45 @@ def score_traces(
 
 
 def load_generated(path: str | Path) -> list[np.ndarray]:
-    """Read ``(n_samples, n_residues, 3)`` CA coordinates from .npy or .npz."""
+    """Read CA coordinates from .npy or .npz, in either of two layouts.
+
+    ``(n_samples, n_residues, 3)`` is the rectangular case. **But
+    `scripts/train_denoise.py` writes a RAGGED one** -- a flat ``(total, 3)``
+    array of every sample's CA concatenated, plus an ``offsets`` index -- because
+    samples are drawn on held-out crops' own lengths and the Bunya inode quota
+    rules out one file per sample (``write_samples``' note).
+
+    Reading that flat array as a rectangle is not a shape error that raises: it
+    is ``ndim == 2``, so it would silently become **one** protein of `total`
+    residues. Every junction between two samples would then enter the CA-CA
+    distribution as a ~10 A "bond", P-SEA would read two unrelated chain ends as
+    consecutive, and pairwise diversity would be computed over a set of one. So
+    ``offsets``, when present, is authoritative over the array's shape.
+    """
     path = Path(path)
     if path.suffix == ".npz":
         with np.load(path) as handle:
             key = "ca" if "ca" in handle else list(handle.keys())[0]
             array = handle[key]
+            if "offsets" in handle and np.asarray(array).ndim == 2:
+                offsets = np.asarray(handle["offsets"], dtype=np.int64)
+                flat = np.asarray(array, dtype=np.float64)
+                if offsets.ndim != 1 or len(offsets) < 2:
+                    raise ValueError(
+                        f"`offsets` must index at least one sample, got "
+                        f"{offsets.shape}"
+                    )
+                if int(offsets[0]) != 0 or int(offsets[-1]) != len(flat):
+                    raise ValueError(
+                        f"`offsets` {offsets[0]}..{offsets[-1]} does not span "
+                        f"the {len(flat)} rows of `{key}`: this file is not the "
+                        "flat-plus-offsets layout it claims to be."
+                    )
+                return [
+                    flat[int(a) : int(b)]
+                    for a, b in zip(offsets, offsets[1:])
+                    if int(b) > int(a)
+                ]
     else:
         array = np.load(path)
     array = np.asarray(array, dtype=np.float64)
