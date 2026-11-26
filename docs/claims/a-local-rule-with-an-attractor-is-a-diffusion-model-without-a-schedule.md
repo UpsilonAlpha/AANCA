@@ -1,9 +1,67 @@
 ---
 type: question
-status: open
+status: unsupported
 ---
 
 # Option 2, pre-registered: a local rule whose fixed point is a protein is a diffusion model with no schedule and no timestep
+
+## ANSWERED NO, 26 Nov, by the run this note was written to interpret
+
+**Bunya job 33794584, all 20,000 updates, `COMPLETED` exit `0:0` in 01:55:11.
+The first registered refutation condition is met: no fixed point within 500
+steps, 13 of 15 samples.** Measured by `scripts/prior_fixed_point.py` at the
+numbers registered below -- 0.1 A per step, 500-step cap -- and not at the
+trainer's own `conv` column, which samples at 0.01 A and 200 steps and is
+stricter on both axes. Median `last_move` 0.5379 A/step, 5x outside the
+tolerance; the two that converge are 6SHR at 212 steps and 3V69 at 287.
+
+**And the held-out series is flat over the whole run.** Ten block means of eight
+evaluations each: 9.159, 9.212, 9.227, 9.135, 9.231, 9.162, 9.101, 9.163, 8.961,
+9.221 A, against a `start_rmsd` of 15.205 that is single-valued to 15 decimal
+places at every one of the 80 evaluations. The fall happens inside the first 250
+updates and nothing happens in the remaining 19,750.
+
+**The fall is also mostly not learning**, which only became visible once a
+baseline existed. `scripts/denoise_floor.py` loads no weights and scores the
+same crops at the same sigma: rescaling the corrupted coordinates to match the
+native radius of gyration -- one parameter, one number about the target, no
+model -- reaches **11.194 A**, and the best radial rescaling that exists reaches
+**10.202 A**. The rule reads 9.1. **So 5.1 of the 6.1 A fall is a one-parameter
+geometric correction and 1.1 A is the angular content of the whole run.** This
+note registered `start` as the comparison and that was the wrong comparison;
+`oracle_scale` is the right one and it did not exist until the result did.
+
+**The generated structures are not chains.** Every virtual bond in every sample
+is outside the 3.80 +/- 0.10 A window (outlier fraction 1.0000 against the
+natural 0.0087), mean CA-CA 11.565 A, clash rate 0.0111 against 0.0001, and
+P-SEA reads helix 0.0000 / strand 0.0000 / coil 1.0000 with all 7 samples
+classed `irregular`. Bucket 4's registered failure mode was a helix-biased
+generator; the actual outcome has no secondary structure at all, which is worse
+and is a different thing.
+
+**One registered condition was badly drawn and should not be reused.** "The
+geometry fails all three of bucket 2" cannot be met, because `prior_coordinates`
+constructs the start state at exactly `2.2 N^0.38` and the Rg axis therefore
+passes for a rule that does nothing. Two of three axes fail decisively; the
+third is uninformative by construction. The refutation stands on condition one
+regardless.
+
+**What survives, and the separation is the result.** The port's attractor is
+real and is unaffected: a damaged 12-residue window with ~116 residues pinned at
+their crystal pose returns to the same endpoint within 0.0105 A at 10,000 steps
+([[the-task-is-to-realise-coordinates-for-a-given-contact-graph]]). That is a
+fixed point of a *conditional* map with the answer pinned at its boundary.
+**This note conflated it with a fixed point of the unconditional map, and the
+two are now separated by measurement**: remove the pin and the native graph and
+there is no fixed point and no protein. The port demonstrates realisability, not
+generation.
+
+**The comparison with diffusion was never reached and now will not be.** The
+samples fail the geometry gate by three orders of magnitude on bond outliers, so
+designability via ProteinMPNN + ESMFold -- the phase 2 priced below -- would be
+measuring nothing. Space was never the blocker and is still not; the rule is.
+
+---
 
 **Written before the MVP runs, and before the generation metrics exist.** Ulban,
 26 Nov, chose option 2 over option 1 and asked for a minimum viable product
@@ -236,6 +294,13 @@ and the wrong direction for claiming two structures match.
 **Refuted if**: no fixed point within 500 steps, OR mean pairwise TM > 0.90, OR
 the geometry fails all three of bucket 2. Any one of those ends option 2 in its
 present form, cheaply, which is the best property this experiment has.
+
+**FIRED, 26 Nov, on the first condition.** 13 of 15 samples never settle inside
+500 steps at 0.1 A per step. The second did not fire and fired the other way --
+mean pairwise TM 0.1379, below the natural reference's 0.2068. The third is
+unmeasurable as written: the Rg axis passes for a rule that does nothing,
+because the prior is constructed at the target Rg. **It cost one 1h55m GPU job
+and three read-only probes, which is the property this note was written for.**
 
 ## Bunya's space, measured 26 Nov, because it decides where phase 2 can live
 

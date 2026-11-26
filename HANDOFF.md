@@ -6,6 +6,164 @@ journal is `docs/JOURNAL.md`; the claims and their evidence are one note each in
 
 ---
 
+## 0-fin. 2026-11-26: the MVP finished all 20,000 updates and option 2 IS REFUTED
+
+**Job 33794584, `COMPLETED`, exit `0:0`, elapsed 01:55:11, `train exit 0`, last
+`update` 20000.** So it is a finish and not a walltime truncation, which matters
+because `train_denoise.py` returns 64 on `--max-seconds` and would have been
+distinguishable either way. The last 60 % of the budget confirmed the first 40 %.
+
+### The instrument checks, first, because nothing else counts without them
+
+`sigma` is **8.89854161041603** and `start_rmsd` is **15.205079412644467** --
+ONE distinct value each across all 80 evaluations, so the per-index seeded eval
+corruption is exactly reproducible and every row is comparable with every other.
+`anchor` is 0.000 on every line (`context_fraction = 0` holds nothing, so
+`window` is the entire loss). `n` 15, `diverged` 0, `nonfinite_loss` 0,
+`nonfinite_gradient` 0 over the whole run; 428 of 20,000 updates contributed no
+gradient, all `no_crop`.
+
+### Block means over the WHOLE run, ten blocks of eight evaluations
+
+    updates          rmsd      sd     min    total
+        0- 2000     9.159   0.077   9.029     79.9
+     2000- 4000     9.212   0.399   8.877     87.0
+     4000- 6000     9.227   0.269   8.999     90.3
+     6000- 8000     9.135   0.274   8.782     86.1
+     8000-10000     9.231   0.484   8.792     92.2
+    10000-12000     9.162   0.142   8.876     87.9
+    12000-14000     9.101   0.160   8.860     85.2
+    14000-16000     9.163   0.195   8.871     87.3
+    16000-18000     8.961   0.220   8.661     87.0
+    18000-20000     9.221   0.393   8.791     98.5
+
+**Flat.** Against `start_rmsd` 15.205 the rule falls to ~9.1 A inside the first
+250 updates and then moves nowhere for 19,750 more; the spread between the best
+and worst block mean is 0.27 A against a within-block sd of up to 0.48. `total`
+drifts UP, 79.9 to 98.5. Best single evaluation 8.661 A, best checkpoint update
+16500. Ten blocks of eight is far past the point where this could be the
+block-mean error this project has made three times.
+
+### THE NUMBER THAT WAS MISSING: what 15.2 -> 9.1 is worth
+
+`scripts/denoise_floor.py`, new, **loads no weights at all** and scores the run's
+own held-out crops at the run's own sigma through the trainer's own `corrupt`,
+`ca_positions`, `with_ca_positions` and `backbone_rmsd_on`:
+
+    start          15.300 A    reproduces the trainer's own column to 0.095 A
+    centroid       11.194 A    rescale to match the native Rg -- ONE number, no model
+    oracle_scale   10.202 A    the best radial rescaling that exists
+    ---
+    the rule        9.1  A     block means 8.96-9.25, best single 8.661
+
+**So the 40 % fall from `start` is mostly not learning.** Isotropic noise
+inflates the radius of gyration, and simply shrinking it back -- a one-parameter
+correction using a single number about the target -- recovers 4.1 of the 6.1 A.
+The best radial rescaling that exists recovers 5.1 of 6.1. **The rule beats it by
+1.1 A, and that 1.1 A is the entire angular content of 20,000 updates.** The
+trainer printed `rmsd` against `start` and no baseline, which made a one-
+parameter geometric effect read as a model result.
+
+### Buckets 1-4, answered
+
+**1. A fixed point from the prior? NO, at the registered numbers.** This needed
+a new probe, `scripts/prior_fixed_point.py`, because **the trainer's `conv 0/7`
+was not the registered measurement**: the claim registers *max per-step
+displacement < 0.1 A within 500 steps* and the trainer samples at
+`--sample-tolerance 0.01` and `--sample-max-steps 200`, **stricter on both
+axes**. On the laptop's 683-update smoke checkpoint three of seven samples were
+already under 0.1 A/step at step 200, so the difference was not academic. Run at
+the registered numbers on `best.pt`:
+
+    n 15   diverged 0   converged 2 (6SHR at 212 steps, 3V69 at 287)
+    last_move   median 0.5379   min 0.0964   max 0.9217 A/step
+    13 of 15 hit the 500-step cap, the median 5x outside the tolerance
+
+**So the refutation is not an artefact of a too-strict threshold.** The two that
+converge are the 64-residue crop and one 128.
+
+**2. Protein-shaped? NO -- it fails 2 of 3, and the third cannot fail.**
+`scripts/generation_metrics.py` on the 7 samples at update 20000, against the
+60-entry natural reference through the same code path:
+
+    quantity                   generated    natural    bar        verdict
+    CA-CA mean                   11.565 A    3.8027    3.80+-0.10  FAIL
+    CA-CA outlier fraction        1.0000     0.0087    < 0.05      FAIL
+    clash rate                    0.0111     0.0001    < 0.01      FAIL
+    Rg / 2.2 N^0.38               0.858      1.101     within 2x   pass
+
+**Every single virtual bond in every sample is outside the window**, at a mean
+three times the peptide spacing. These are not chains. **And the Rg "pass" is
+vacuous**: `prior_coordinates` constructs the start state at exactly
+`2.2 N^0.38`, so a rule that did nothing at all would pass this axis too. The
+registered condition "fails all three of bucket 2" was therefore badly drawn --
+one of its three axes is uninformative by construction, and that is a defect in
+the pre-registration rather than a reprieve for the rule.
+
+**3. Diverse, or one attractor? Diverse, and it means nothing.** Mean pairwise
+TM 0.1379 (max 0.1520), 7 of 7 clusters at both TM 0.5 and 0.6, against the
+natural reference's 0.2068. **Below the registered `< 0.30` and below natural**,
+which the pre-registration already warned is a warning sign rather than a win:
+this is diversity among structureless clouds, and `> 0.90` -- the registered
+collapse -- is the opposite failure to the one that happened.
+
+**4. Helix-biased? No, and the actual answer is worse.** P-SEA reads **helix
+0.0000, strand 0.0000, coil 1.0000** on all 7 samples, 7 of 7 classed
+`irregular`, against natural helix 0.2804 / strand 0.1978 / coil 0.5218. There
+is no secondary structure to be biased about. A helix-collapsed generator would
+at least have found one motif.
+
+### The verdict, plainly
+
+**Refuted, on the first registered condition, measured at its registered
+numbers: no fixed point within 500 steps, 13 of 15.** The geometry independently
+fails two of three validity axes with every bond wrong and zero secondary
+structure. A cheap refutation was the stated best property of this experiment
+and it was cheap: one 1h55m GPU job and three probes.
+
+**What is NOT refuted, and the distinction is the result.** The port's attractor
+is real -- damage a 12-residue window, hold ~116 residues at their crystal pose,
+and the rule returns to the same endpoint within 0.0105 A at 10,000 steps. That
+is a fixed point of a CONDITIONAL map with the answer pinned at its boundary.
+Remove the pin and the native graph and there is no fixed point and no protein.
+**Those were conflated in the pre-registration and they are now separated by
+measurement.** What the port demonstrates is the realisability result it was
+always framed as -- coordinates for a given contact graph -- not generation.
+
+### Three defects found on the way, one of which would have faked a result
+
+  * **`scripts/generation_metrics.py` read the ragged sample file as ONE
+    protein.** `train_denoise.write_samples` writes a flat `(total, 3)` array
+    plus an `offsets` index, which is `ndim == 2`, so `load_generated` passed it
+    straight through as a single 896-residue structure. Every junction between
+    two samples would have entered the CA-CA distribution as a bond, P-SEA would
+    have read two unrelated chain ends as consecutive, and diversity would have
+    been computed over a set of one. **Fixed, with tests, before any number
+    above was taken.** Had it not been caught the bond and clash figures would
+    have been wrong in the direction that flatters nothing and explains nothing.
+  * **`runs/*/history.json` is not valid JSON.** `rmsd_fit_context` is `nan` at
+    `context_fraction = 0` and the trainer writes a bare `NaN`, which Python's
+    `json` emits and accepts and the spec does not. Still unfixed in both
+    trainers; should be `null`.
+  * **`train_egnca.py` and `scripts/train_growth.py` return 0, not 64, on
+    `--max-seconds`**, so a walltime-truncated segment ends
+    `bunya_train.slurm`'s chain silently and reads as a clean finish.
+    `train_denoise.py` returns 64 correctly, which is why this run's exit code
+    could be trusted above. Still unfixed.
+
+### What this costs the project, and what the sweep would and would not buy
+
+The registered next move is the `context_fraction` sweep -- ctx25/ctx50/ctx75 --
+as the localiser for WHERE between the port (everything pinned, native graph)
+and pure generation (nothing pinned, live graph) the rule stops working. **It is
+five arms and it is not started**; [[replicate-before-ablating]] and the
+standing "fewer arms" rule both bear on it, and it should be weighed against the
+fact that the two endpoints are now both measured and the answer is already
+known at both ends. What it would buy is the shape of the curve between them,
+which is a question about this project's rule rather than about proteins.
+
+---
+
 ## 0-chk. 2026-11-26, 40 % through the MVP: it runs clean and the held-out series is FLAT
 
 **Job 33794584 on bun159, an early check for a crash rather than for a result.
