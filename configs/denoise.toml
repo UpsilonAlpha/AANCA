@@ -1,0 +1,153 @@
+# The DENOISER arm: the same E(n)-GNCA rule as `configs/egnca.toml`, trained to
+# a fixed point from corrupted coordinates instead of to fill a hole in a frozen
+# native context.
+#
+#   .venv/Scripts/python.exe scripts/train_denoise.py configs/denoise.toml --section mvp
+#   .venv/Scripts/python.exe scripts/train_denoise.py configs/denoise.toml --list-sections
+#
+# A SEPARATE FILE AND A SEPARATE TRAINER, on `scripts/train_growth.py`'s
+# precedent: growth is its own trainer because it supervises a different thing.
+# So is this. `configs/egnca.toml` records a published result -- Bunya job
+# 33419979, 2.53 A against the best previous arm's 8.10 -- and the port that
+# produced it must keep running bit-for-bit, so nothing here is a flag on it.
+#
+# WHAT THIS ARM REMOVES, AND IT IS THE TWO THINGS THAT MADE THE PORT WORK.
+#
+#   * **The frozen native context.** The port holds ~116 of 128 residues at
+#     their crystal pose and displaces a 12-residue window, so every placement
+#     is pinned by ~116 exact anchors and is close to analytically determined.
+#     Here `context_fraction` says what share of residues is held native, and
+#     the MVP holds NONE.
+#   * **The native contact graph.** The port message-passes over the edge set
+#     the NATIVE coordinates select (`native_edges = true`), which is the task
+#     statement under
+#     docs/claims/the-task-is-to-realise-coordinates-for-a-given-contact-graph.md.
+#     Here the k-NN is rebuilt from where each residue CURRENTLY is, every step.
+#     That is the recorded failure mode
+#     docs/claims/the-perception-graph-is-rebuilt-from-where-the-residue-wrongly-is.md
+#     and here it IS the research question, so it is the default. `native_edges`
+#     stays available for a control arm.
+#
+# WHAT REPLACES THE DAMAGE OPERATOR. Isotropic Gaussian noise on ALL
+# non-context residue coordinates, with sigma drawn LOG-UNIFORMLY from
+# [`sigma_min`, `sigma_max`]. There is NO timestep input to the rule: the same
+# rule, with the same weights and no conditioning, runs at sigma 0.5 and at
+# sigma 30. **That absence is the scientific point** -- this is a diffusion
+# model minus the schedule and minus the timestep conditioning, which is what
+# makes it an NCA rather than a denoiser with a clock.
+#
+# WHAT IS KEPT FROM THE PORT, UNCHANGED, so a difference in a result is the two
+# removals above and not a sixth thing: the rule and its five published
+# settings (`has_coord_act`, `is_residual`, `activation = tanh`,
+# `norm_type = pn`, and phi_x's output layer zero-initialised and unbiased --
+# the fifth is not a key because the authors do not make it one), 15-25 step
+# rollouts with FULL BPTT, the replay pool at probability 0.5, the full pair set
+# with both halves weighted, `lr` 1e-3, `clip` 1.0, `weight_decay` 1e-5, the
+# widths, the crop size, `k` and `cutoff`.
+#
+# Nothing that changes a result is a command-line option: see `aanca.config`.
+# [base.inputs] states every setting explicitly so a later change to a parser
+# default cannot reinterpret a run recorded here.
+#
+# HOW TO READ THE TABLE. `rmsd` is CA RMSD over the CORRUPTED residues,
+# superposed on the whole structure, against `start` which is the same quantity
+# before a single step -- so `rmsd` below `start` is the only thing that says
+# the rule denoises at all. `sigma` is the mean of the drawn noise level over
+# the evaluation set, and it is a property of the sampler rather than of the
+# rule: compare `rmsd` against `start` at the same `sigma`, never two rows at
+# different ones. `fit_ctx` is nan at `context_fraction = 0.0` because a
+# superposition needs three held residues and there are none -- it is absent,
+# not zero. `steps` is steps-to-convergence from the Gaussian prior and `conv`
+# how many of `sample_count` draws reached the tolerance before the step cap.
+
+[base.inputs]
+# The five settings the paper omits, at the authors' own defaults for this task,
+# exactly as `configs/egnca.toml` carries them. Not re-argued here.
+has_coord_act = true
+is_residual = true
+activation = "tanh"
+norm_type = "pn"
+
+clip = 1.0
+# THE ONE AXIS. The fraction of residues held at native coordinates, chosen as
+# contiguous runs, excluded from the noise AND from the loss. 0.0 is pure
+# generation and is the MVP; 1.0 is as close to the port as this trainer gets
+# (same rule, same loss, native context -- but corruption instead of the damage
+# operator, and the live graph). The base states the MVP's value so a section
+# that forgets the key is the MVP rather than something unnamed.
+context_fraction = 0.0
+crop_size = 128
+cutoff = 10.0
+# a clock setting, not a scientific one
+device_neighbours = false
+eval_every = 250
+eval_structures = 16
+hidden_dim = 16
+k = 24
+lr = 0.001
+message_dim = 32
+# THE RESEARCH QUESTION. False rebuilds the k-NN from the CURRENT coordinates
+# every step. True is the port's given contact graph and is the control arm.
+native_edges = false
+# window-to-context, unclamped, A^2. At context_fraction = 0.0 there are no
+# context residues, so this half is exactly 0.0 and `pair_window` below carries
+# the whole loss over the full pair set.
+pairwise_weight = 1.0
+# corrupted-to-corrupted. Both live => the full pair set, which is the published
+# loss, and `growth.pairwise_distance_restraint` is reused unchanged on plain
+# distances.
+pairwise_window_weight = 1.0
+pool_probability = 0.5          # the replay pool, as published
+# Sampling from the Gaussian prior, measured at every evaluation. Written to ONE
+# compact .npz of CA coordinates per run directory, never one file per sample:
+# the user scratch quota on Bunya has ~313k inodes free and thousands of small
+# files is a real problem rather than a tidiness preference.
+sample_count = 8
+sample_max_steps = 200
+# Angstrom. Convergence is the MAX per-residue per-step displacement falling
+# below this, not a mean -- a mean hides one residue still flying.
+sample_tolerance = 0.01
+seed = 0
+# Log-uniform in [sigma_min, sigma_max], Angstrom. 0.5 is below the CA-CA
+# spacing so the structure is intact and only jittered; 30.0 is larger than a
+# 128-residue crop's radius of gyration (2.2 * 128^0.38 ~ 14.4 A), so the
+# structure is destroyed and the draw is close to the generative prior.
+sigma_max = 30.0
+sigma_min = 0.5
+split = "train"
+steps = 25                      # "15 to 25 steps, sampled uniformly"
+steps_min = 15
+structures = 400
+updates = 20000
+weight_decay = 0.00001
+
+# PURE GENERATION, and the MVP. No residue is held, so the rule is handed a
+# cloud of corrupted coordinates with no anchor anywhere and the loss is the
+# full pair set over every pair. Empty because the base IS this arm: there is no
+# earlier section of this trainer for it to differ from.
+[mvp]
+[mvp.inputs]
+
+# The diagnostic sweep. One key each, so the series says what fraction of exact
+# anchors the rule needs -- which is the quantity the port's 2.53 A does not
+# separate from the rule's own ability, because the port only ever ran at ~0.91.
+[ctx25]
+[ctx25.inputs]
+context_fraction = 0.25
+
+[ctx50]
+[ctx50.inputs]
+context_fraction = 0.5
+
+[ctx75]
+[ctx75.inputs]
+context_fraction = 0.75
+
+# Every residue held native and none corrupted. **A degenerate arm on purpose**:
+# there is nothing to denoise and nothing to score, so the loss is exactly 0.0
+# and every update is skipped as `no_window`. It is here as the end of the sweep
+# and as the check that the end of the sweep is recognisable rather than
+# silently training on nothing.
+[ctx100]
+[ctx100.inputs]
+context_fraction = 1.0
