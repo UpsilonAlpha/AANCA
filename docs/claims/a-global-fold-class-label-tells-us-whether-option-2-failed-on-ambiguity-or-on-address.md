@@ -107,11 +107,18 @@ derived from the structure by our own validated code rather than fetched:
     a larger protein can carry a different class from its parent, and the crop
     is what is supervised, so the crop is what is labelled. A number from this
     arm is about crops.
-  * **`irregular` is rare.** The 60-entry natural reference reads 35
-    `alpha/beta`, 14 `mainly-beta`, 10 `mainly-alpha`, 1 `irregular`. The class
-    counts over the 400 training structures must be printed, and a class with
-    too few examples to train is a reported fact rather than a silent
-    imbalance.
+  * **`irregular` is rare at CHAIN level and is NOT rare on crops -- registered
+    expectation wrong, 26 Nov.** The 60-entry natural reference reads 35
+    `alpha/beta`, 14 `mainly-beta`, 10 `mainly-alpha`, **1** `irregular`, and
+    this node registered the worry that `irregular` would be too thin to train.
+    Measured over the arm's own 400 training structures at crop size 128:
+    `alpha/beta` 156, `mainly-alpha` 129, `irregular` **55**, `mainly-beta` 54,
+    over 394 croppable of 400. **So 14 % of 128-residue crops carry less than
+    0.20 helix + strand**, against under 2 % of whole chains. That is a property
+    of cropping -- a crop can sit in a loop-rich region of a well-folded protein
+    -- and it means no class is too thin to train. The counts are printed at
+    startup as this node required, and the registered expectation is recorded as
+    wrong rather than quietly dropped.
 
 ## Where the morphogen enters, and why not the seed
 
@@ -144,12 +151,47 @@ scale, and a guidance scale is a second axis.
 
 ## Readouts, in this order, and the first is an instrument check
 
-**0. Does the label reach the output at all?** P-SEA helix fraction of samples
-drawn under `mainly-alpha` against samples drawn under `mainly-beta`, **from the
-same noise seeds**. If those two distributions are indistinguishable the
-conditioning is inert -- a bug, or washed out -- and **nothing below may be
-read** until it is fixed. This is the `start_rmsd`-single-valued check of this
-arm: the thing that says the instrument works before any result is quoted.
+**0. Does the label reach the output at all? AMENDED 26 Nov -- it is TWO
+questions and the original form of this readout could not function.**
+
+*As first written* this readout was the P-SEA helix fraction under
+`mainly-alpha` against `mainly-beta` from the same noise seeds, with a flat
+result declared "a bug, or washed out" and nothing below readable until fixed.
+**A 250-update CPU smoke run showed that is unsound**, and it would have
+disabled the whole arm on Bunya by this node's own rule. There is a third state
+the original did not enumerate: *the output has no secondary structure at all*,
+so the helix gap is `0.000 - 0.000` whether the label is live or dead. And that
+state is the EXPECTED one -- the refuted MVP produced helix 0.0000, strand
+0.0000, coil 1.0000 on all 7 samples. Measured in the smoke run: the helix gap
+was `+0.000` while the paired samples differed by **1.83 A mean per residue**,
+so the label was plainly live and the readout said nothing.
+
+**0a. Does the label reach the COORDINATES? This is the instrument check.**
+Mean per-residue displacement between paired samples -- same crop, same noise
+seed, two different labels. Non-zero means the conditioning is connected. This
+cannot be vacuous, because it does not depend on the output being protein-like.
+**A zero here is a bug and nothing below may be read until it is fixed.**
+Guarded additionally by a unit test at every class plus the unconditional row.
+
+**0b. Does the label reach the SECONDARY STRUCTURE? This is a result, not an
+instrument check.** The helix-fraction gap as originally written, readable only
+when the samples carry any secondary structure at all (pooled helix + strand
+> 0). When they do not, it reports *no dynamic range*, which is a statement
+about the rule and not about the label.
+
+**And this is why the amendment strengthens the discriminator rather than
+weakening it.** A live 0a with a flat 0b is not a bug and not a null result: it
+is **H-address's prediction stated precisely** -- the conditioning is received,
+it moves the coordinates, and it buys nothing, because the ambiguity was never
+the binding constraint. The original form would have thrown that outcome away as
+an instrument failure.
+
+**No refutation threshold moved.** The three substantive conditions below -- the
+`window` loss against the MVP's block-mean spread, the margin over
+`oracle_scale`, and fixed points against bond outliers -- are exactly as first
+registered. What changed is only which observation counts as "the instrument is
+broken", and it changed before the arm ran on Bunya and after a CPU smoke run
+that measured no result.
 
 **1. Does it narrow the target?** The `window` pair loss against the MVP's
 measured block means, 8.96-9.25 A for `rmsd` and 79.9-98.5 A^2 for `total`. Same
@@ -177,9 +219,10 @@ something about secondary structure even if its bonds are wrong.**
 
 ## The conditions that refute this arm
 
-**Readout 0 shows an inert label after the implementation is checked** -- that is
-a bug and not a result, and the arm does not report until it is fixed. Then,
-with a live label:
+**Readout 0a shows the label does not reach the coordinates** -- that is a bug
+and not a result, and the arm does not report until it is fixed. A flat 0b with
+a live 0a is NOT this case; it is a result and it supports H-address. Then, with
+a live label:
 
   * the `window` pair loss sits inside the MVP's own block-mean spread, OR
   * the margin over `oracle_scale` does not improve on the MVP's 1.1 A, OR
