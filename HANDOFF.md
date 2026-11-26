@@ -6,6 +6,114 @@ journal is `docs/JOURNAL.md`; the claims and their evidence are one note each in
 
 ---
 
+## 0-cond. 2026-11-26: the fold-class arm is running as job 33834699, and its first evaluation vindicates the amendment
+
+**Ulban chose the fold-class label over the `context_fraction` sweep and over a
+frame head.** Pre-registered BEFORE the code existed at
+`docs/claims/a-global-fold-class-label-tells-us-whether-option-2-failed-on-ambiguity-or-on-address.md`,
+amended once before the run and never after it.
+
+### Why the sweep was dropped, recorded so it is not relitigated
+
+  * **It is confounded.** The port differs from the MVP on TWO axes -- the
+    frozen native context and the native contact graph -- and the sweep varies
+    only the first with `native_edges = false` throughout. `ctx75` is therefore
+    not three-quarters of the way to the port, cannot reach 2.53 A by
+    construction, and so cannot localise anything along the line it was
+    registered to localise.
+  * **It re-measures a result already held.** Rigidity explains why high context
+    works; at `ctx75` with runs of 12 every noised residue sits a few positions
+    from a pinned anchor.
+  * **It does not touch the diagnosed failure.** Section 0-fin: the rule misses
+    every pair distance by ~9 A at every separation.
+
+### What is running
+
+`scripts/train_conditioned.py`, `configs/conditioned.toml` [`cond`],
+`src/aanca/conditioned.py`, `tests/test_conditioned.py` -- four NEW files;
+`train_denoise.py`, `train_egnca.py`, `src/aanca/egnca.py` and
+`configs/egnca.toml` are bit-for-bit unchanged and a test pins a digest of each,
+so `runs/mvp/best.pt` stays readable by both existing probes. **A new trainer
+rather than a key on `train_denoise.py` precisely because a new schema key would
+make the refuted MVP's checkpoint unreadable** -- `settings_from_checkpoint`
+refuses a checkpoint missing a key the schema defines, which is the behaviour we
+want and the reason the arm is separate.
+
+**The label enters through the PAPER'S OWN `e_ij` slot.** `EGNCARule` already
+accepts an `edge_dim`-wide edge feature and concatenates it into `phi_m`'s input
+beside `||x_i - x_j||^2`, `h_i` and `h_j`; the subclass sets
+`edge_dim = label_dim` and fills it with a 4-wide embedding of the class,
+broadcast to every residue, at every step. So `egnca_step`, `egnca_rollout` and
+`denoise_objective` are called **unchanged**, and the mechanism is the published
+one rather than a new branch. **5,476 parameters = 5,328 + 148** (4x32 for the
+widened input, 5x4 for four classes plus a learned unconditional row).
+Equivariance is re-asserted per class with the LIVE k-NN in float64, with a
+"nothing moved" guard so it cannot pass trivially.
+
+### Job 33834699, bun159, started 16:56 AEST, first evaluation
+
+    class counts over 381 of 400: mainly-alpha 147  alpha/beta 139
+                                  irregular 55  mainly-beta 40   [19 uncroppable]
+
+    update 250  n 15  diverged 0  total 93.985  anchor 0.000  window 93.985
+                sigma 8.899  rmsd 9.340  (start 15.205)  conv 0/8  rg 11.16
+                helix a/b 0.000/0.000 (gap +0.000)  0.32 s/update
+
+**`sigma` 8.899 and `start` 15.205 are IDENTICAL to the MVP's**, so this arm and
+the refuted one are paired crop-for-crop and the `window`/`rmsd` comparison is
+exact rather than approximate. `rmsd` 9.340 and `total` 93.985 sit inside the
+MVP's own block-mean band (8.96-9.25 and 79.9-98.5) at update 250, which is what
+the MVP also read at 250. 0.32 s/update, so 20,000 is ~1 h 50 m.
+
+### The amendment, and this first evaluation is why it was needed
+
+**Readout 0 as first registered could not function, and it would have disabled
+the arm by this project's own rule.** It was the P-SEA helix gap between
+`mainly-alpha` and `mainly-beta` samples, with "flat means the label is inert, a
+bug, and nothing else may be read". But there is a third state: **the output has
+no secondary structure at all**, so the gap is `0.000 - 0.000` whether the label
+is live or dead -- and that is the EXPECTED state, since the MVP produced helix
+0.0000 / strand 0.0000 / coil 1.0000. It is also the observed state here:
+`gap +0.000` with every one of the 8 samples produced as `irregular`.
+
+**The label is demonstrably live.** On the CPU smoke run the paired
+`mainly-alpha` and `mainly-beta` samples -- same crop, same noise seed --
+differed by **1.83 A mean per residue**, and a unit test proves all four classes
+plus the unconditional row give different coordinates on identical input.
+
+So readout 0 is now two things: **0a**, the paired coordinate displacement, which
+is the instrument check and cannot be vacuous; and **0b**, the helix gap, which
+is a *result* readable only once the samples carry any secondary structure. **A
+live 0a with a flat 0b is H-address's prediction stated precisely** -- the
+conditioning is received, it moves the coordinates, and it buys nothing. The
+original form would have discarded that outcome as an instrument failure. **No
+refutation threshold moved**; only which observation counts as "instrument
+broken", and it moved before the Bunya run on the strength of a CPU smoke run
+that measured no result.
+
+### Two registered expectations already wrong, recorded rather than dropped
+
+  * **`irregular` is not rare on crops.** The node registered the worry that it
+    would be too thin to train, from 1 of 60 whole chains. On 128-residue crops
+    it is **55 of 381 (14.4 %)** here and 55 of 394 on the laptop. A crop can sit
+    in a loop-rich region of a well-folded protein, so this is a property of
+    cropping. No class is too thin.
+  * **The class counts differ between pools**, 147/139/55/40 on Bunya against
+    129/156/55/54 on the laptop, which is the standing pool rule showing up in a
+    new quantity: the same index names a different protein, so no count from one
+    pool may be read against the other.
+
+### One known discrepancy, left alone on purpose
+
+**The trainer's startup banner in this job's log states readout 0 in its
+PRE-amendment form** -- "if that gap is flat the conditioning is inert ... and
+NO other number may be read". The node is authoritative and the banner is stale.
+It is not being edited while the job runs: the chain resubmits the script from
+disk on exit 64, and a run whose code changed mid-chain is exactly what this
+project refuses, cosmetic or not. **Correct the banner after the run finishes.**
+
+---
+
 ## 0-fin. 2026-11-26: the MVP finished all 20,000 updates and option 2 IS REFUTED
 
 **Job 33794584, `COMPLETED`, exit `0:0`, elapsed 01:55:11, `train exit 0`, last
