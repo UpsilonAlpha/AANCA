@@ -6,7 +6,7 @@ journal is `docs/JOURNAL.md`; the claims and their evidence are one note each in
 
 ---
 
-## 0-condfin. 2026-11-26: the fold-class label reaches the coordinates and buys NOTHING, so option 2 failed on ADDRESS and not on ambiguity
+## 0-condfin. 2026-11-26: the fold-class label reaches the coordinates and buys no ADDRESS, so option 2 failed on address and not on ambiguity -- and the unconditional map acquired a fixed point without becoming a protein
 
 **Job 33834699 finished clean**: `COMPLETED`, exit `0:0`, `01:57:08` on bun159,
 last update **20000 of 20000**, `train exit : 0`. Not a `--max-seconds`
@@ -80,29 +80,123 @@ pairwise TM 0.4413, so the samples are not collapsed -- they are 8 different
 non-proteins. Sampler: **converged 0 of 8** at the trainer's stricter 0.01 A /
 200 steps, `last_move` median 0.0608.
 
-### Two registered conditions are NOT YET MEASURED, and the reason is a refusal working in reverse
+### The probes refused the checkpoint first, which is this project's own refusal working in reverse
 
 `scripts/prior_fixed_point.py` and `scripts/denoise_floor.py` both **REFUSED**
-`runs/cond/best.pt`:
+`runs/cond/best.pt` on the first attempt:
 
     REFUSED: this checkpoint records settings scripts/train_egnca.py's schema
     does not define: label_dim, label_dropout.
 
-**This is the refusal from
-`docs/claims/a-probe-pointed-at-best-pt-silently-used-its-own-defaults.md`
-firing correctly, in the direction I did not plan for.** The arm was built as a
-separate trainer precisely so a new schema key could not make the MVP's
-checkpoint unreadable -- and that is exactly what it did to the *new*
-checkpoint instead. The probes hardcode `train_denoise`'s schema. So the
-fixed-point count and the `oracle_scale` margin are **pending**, not null, and
-the verdict below does not rest on them.
+**That is
+`docs/claims/a-probe-pointed-at-best-pt-silently-used-its-own-defaults.md`'s
+refusal firing correctly, in the direction this arm's design did not
+anticipate.** The arm was built as a separate trainer precisely so a new schema
+key could not make the MVP's checkpoint unreadable -- and the key made the *new*
+checkpoint unreadable instead, because both probes hardcoded `train_denoise`'s
+schema.
+
+Fixed by making the trainer a **declared choice** rather than a guess:
+`--trainer train_denoise|train_conditioned`, defaulting to the denoiser, with
+the wrong declaration still refusing in both directions (an MVP checkpoint
+declared conditioned refuses on *missing* keys). Nothing is sniffed from the
+checkpoint, because sniffing is what the refusal exists to prevent.
+
+**The quoted message also named the wrong file** -- `train_denoise`'s schema was
+the one passed, not `train_egnca`'s -- so `settings_from_checkpoint` now takes
+its schema's name from the caller. A refusal whose only job is to say which two
+things disagree must not misname one of them.
+
+### THE RESULT I DID NOT REGISTER, AND IT IS THE LARGEST NUMBER ON THE PAGE: THE UNCONDITIONAL MAP NOW HAS A FIXED POINT
+
+At the registered numbers -- 0.1 A/step, 500-step cap -- on `runs/cond/best.pt`
+(update 12250, 5,476 params), rolled out on the **unconditional row**, which is
+the registered comparison against the MVP:
+
+    cond   n 15   diverged 0   converged 14      last_move median 0.0969
+    MVP    n 15   diverged 0   converged  2      last_move median 0.5379
+
+**14 of 15 against 2 of 15, and the median per-step displacement fell 5.5x.**
+Twelve of the fourteen settle between 214 and 489 steps; the one failure (2BM2)
+hits the cap at 0.1531. The registered condition was "fixed points below 3 of
+15" and it is not close to firing. **Reported first and not buried: this is the
+one thing in the arm that moved a lot.**
+
+**And it is NOT the fold class, by construction.** That rollout used the
+unconditional row -- row 4, the one label dropout trains, carrying no class
+information at all. So whatever damped the map, the class embedding was not in
+play while it happened. What remains: a *constant* learned edge feature now
+enters `phi_m` alongside `||x_i - x_j||^2` at every edge at every step, which
+can act as a uniform bias on the coordinate update and shrink the step; 148
+extra parameters, 2.8 % more capacity; and `best.pt` landing at update 12250
+rather than wherever the MVP's did. **No measurement here separates those
+three**, and the `nolabel` control section in `configs/conditioned.toml`
+(`label_dropout = 1.0`) is the arm that would.
+
+### WHY THAT STRENGTHENS THE REFUTATION OF OPTION 2 INSTEAD OF SOFTENING IT
+
+Option 2's claim was that *a local rule with an attractor is a diffusion model
+without a schedule*. The attractor was bucket 1 and the MVP failed it. **It is
+now exhibited -- and the fixed point is still an all-coil, 0.995-outlier,
+`irregular` non-protein whose clash rate is 65 % WORSE than the MVP's.**
+
+So the two halves of that claim are now separated by measurement rather than by
+argument: **a fixed point of the unconditional map exists, and arriving at it is
+not generation.** This is the third time this project has caught the same
+conflation -- first the port's *conditional* attractor read as the
+unconditional one, then the trainer's stricter 0.01/200 sampling read as the
+registered 0.1/500, and now convergence read as a result. Converging is a
+property of the map. Being a protein is a property of where it converges to.
+
+### The oracle margin: the OTHER registered condition that did not fire
+
+`denoise_floor.py` on the conditioned checkpoint reads, over the same 14 crops:
+
+    start 15.300 A    centroid 11.194 A    oracle_scale 10.202 A
+
+**Identical to the MVP's, to every digit** -- which is correct and is the point:
+the floor loads no weights at all, and `sigma` is the same 8.8985, so both arms
+are measured against one floor. The margin is therefore a direct comparison:
+
+    MVP   oracle 10.202 - rmsd ~9.1   = 1.1 A
+    cond  oracle 10.202 - rmsd 9.045  = 1.16 A   (1.38 A at its best block)
+
+The registered condition was "the margin over `oracle_scale` not improving on
+the MVP's 1.1 A". **It improved, by 0.06 A on the run mean.** That is the same
+~1 % drift as the `rmsd` blocks, seen a second way, and it does not fire.
+
+### SO ONLY ONE OF FOUR REGISTERED CONDITIONS FIRED, AND I AM NOT GOING TO PRETEND OTHERWISE
+
+    0a inert (a bug, not a result)                      did not apply -- 0a is LIVE
+    `window` inside the MVP's block-mean spread         FIRED, all ten blocks
+    margin over oracle_scale not improving on 1.1 A     DID NOT FIRE (1.16 A)
+    fixed points < 3/15 AND bond outliers > 0.5         DID NOT FIRE (14/15)
+
+I pre-registered four conditions and wrote them as alternatives, so one firing
+is formally enough. But three of four not firing is not what I expected to be
+writing, and the honest statement is narrower than "the label changed nothing":
+
+**The label changed nothing about ADDRESS, which is what it was built to test.**
+0b is flat with no dynamic range, readout 5 is a constant at all 80 evaluations,
+bucket 2 fails all three axes and the clash rate got worse. Narrowing the target
+from "any protein" to "any mainly-alpha protein" was received -- 1.8 A of
+coordinate displacement proves receipt -- and bought no secondary structure, no
+class discrimination and no geometry. **That is H-address.**
+
+**The arm also changed two things it was not built to test**, both traceable to
+the constant edge feature rather than to the class: the map acquired a fixed
+point, and the loss drifted ~1 % in two independent readings. Neither is
+evidence about ambiguity-versus-address, and the second has no error bar,
+because no arm in this project has been run at a second seed.
 
 ### THE VERDICT: H-address, and it is the pre-registered expectation
 
-**The label arrives, moves the coordinates by 1.8 A, and changes nothing that
-matters.** The registered condition "the `window` pair loss inside the MVP's own
+**The label arrives, moves the coordinates by 1.8 A, and buys nothing about
+address.** The registered condition "the `window` pair loss inside the MVP's own
 block-mean spread" fired on all ten blocks. Readout 5 is a constant. Bucket 2
-fails on all three axes and one of them got worse.
+fails on all three axes and one of them got worse. **It is not a clean sweep:
+two of the four registered conditions did not fire, and the section above says
+so and says why neither bears on address.**
 
 **So option 2 did not fail because the target was ambiguous. It failed because a
 residue has no address.** Narrowing the target from "any protein" to "any

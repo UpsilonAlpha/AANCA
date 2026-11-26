@@ -334,3 +334,30 @@ priced separately. Two consequences, binding on anything written for this:
 ## Supports
 - [[a-local-per-residue-rule-can-build-a-protein-backbone]]
 - [[the-task-is-to-realise-coordinates-for-a-given-contact-graph]]
+
+## 26 Nov, LATER: the attractor EXISTS and the claim is still refuted, which is the cleanest form of the refutation
+
+The fold-class arm
+([[a-global-fold-class-label-tells-us-whether-option-2-failed-on-ambiguity-or-on-address]])
+was not built to test this, and it did. Its checkpoint, rolled out on the
+**unconditional** row at this node's own registered numbers -- 0.1 A/step,
+500-step cap -- settles **14 of 15 crops**, median `last_move` 0.0969 A/step,
+against this node's measured **2 of 15** at median 0.5379.
+
+**So bucket 1 passes, and the conclusion does not change.** The thing it settles
+to is all coil, `irregular` on every sample, CA-CA 10.799 A against the natural
+3.8027, outlier fraction 0.9951, and a clash rate of 0.0183 -- **worse** than
+the 0.0111 recorded here.
+
+**That is why this refutation is now stronger than when it was written.** It no
+longer rests on the rule failing to converge, which is a property anyone could
+argue away with a longer cap or a looser tolerance. It rests on the rule
+converging and the fixed point not being a protein. The two halves of "a local
+rule with an attractor **is** a diffusion model without a schedule" are
+separated by measurement: the attractor is necessary and it is nowhere near
+sufficient.
+
+The caveat travels with it: the arm that exhibited the attractor also added a
+constant learned edge feature and 148 parameters, and no measurement separates
+those from each other, so *what* bought the fixed point is open.
+

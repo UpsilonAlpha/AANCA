@@ -257,21 +257,85 @@ be if the binding constraint is that a residue knows only its sequence index --
 a 1-D address for a 3-D target
 ([[placing-a-node-from-local-distances-needs-a-globally-rigid-neighbourhood]]).
 
-## Two registered conditions are PENDING, and the reason is this project's own refusal in reverse
+## Both remaining conditions are now MEASURED, and NEITHER FIRED
 
-`scripts/prior_fixed_point.py` and `scripts/denoise_floor.py` both refused
-`runs/cond/best.pt`: *"this checkpoint records settings
-scripts/train_egnca.py's schema does not define: label_dim, label_dropout."*
-That is
+The probes refused `runs/cond/best.pt` on the first attempt --
+*"this checkpoint records settings scripts/train_egnca.py's schema does not
+define: label_dim, label_dropout."* The message is quoted as printed and **it
+named the wrong file**; the schema passed was `train_denoise`'s. That is
 [[a-probe-pointed-at-best-pt-silently-used-its-own-defaults]]'s refusal firing
-correctly in the direction this arm's design did not anticipate. The arm was
-built as a separate trainer so that a new schema key could not make the MVP's
+correctly in the one direction this arm's design did not anticipate: the arm was
+split off as a separate trainer so a new schema key could not make the MVP's
 checkpoint unreadable, and the key made the **new** checkpoint unreadable
-instead, because both probes hardcode `train_denoise`'s schema.
+instead. Fixed by making the trainer a declared choice, `--trainer`, with the
+wrong declaration still refusing in both directions and nothing sniffed from the
+checkpoint; and `settings_from_checkpoint` now names the schema it was actually
+given.
 
-**So the fixed-point count and the `oracle_scale` margin are pending, not null,
-and this answer does not rest on either.** It rests on the `window` condition,
-which fired on all ten blocks, on a constant readout 5, and on bucket 2.
+**The oracle margin improved.** `denoise_floor.py` reads start 15.300 A,
+centroid 11.194 A, `oracle_scale` **10.202 A** -- identical to the MVP's to
+every digit, which is correct, because the floor loads no weights and `sigma` is
+the same, so one floor serves both arms. Margin 10.202 - 9.045 = **1.16 A**
+against the MVP's 1.1 A. The registered condition was "the margin over
+`oracle_scale` not improving", and it did improve, by the same ~1 % as the
+`rmsd` blocks seen a second way.
+
+**And the unconditional map acquired a fixed point.** At the registered 0.1
+A/step and 500-step cap, on the unconditional row:
+
+    cond   n 15   diverged 0   converged 14      last_move median 0.0969
+    MVP    n 15   diverged 0   converged  2      last_move median 0.5379
+
+**14 of 15 against 2 of 15, the median per-step displacement down 5.5x.** The
+registered condition was "fixed points below 3 of 15" and it is nowhere near
+firing. It is recorded first and not buried: it is the largest movement in the
+arm.
+
+**It is not the fold class, by construction.** That rollout used the
+unconditional row, which carries no class information, so the class embedding
+was not in play. What remains is a *constant* learned edge feature entering
+`phi_m` at every edge at every step, 148 extra parameters, and `best.pt` landing
+at update 12250. **Nothing here separates those three**, and the `nolabel`
+section of `configs/conditioned.toml` (`label_dropout = 1.0`) is the arm that
+would.
+
+## This STRENGTHENS the refutation of option 2 rather than softening it
+
+[[a-local-rule-with-an-attractor-is-a-diffusion-model-without-a-schedule]]
+claimed that a local rule with an attractor **is** a diffusion model without a
+schedule. The attractor was its bucket 1 and the MVP failed it. **The attractor
+is now exhibited, and the fixed point is still an all-coil, 0.995-outlier,
+`irregular` non-protein whose clash rate is 65 % worse than the MVP's.**
+
+So the two halves of that claim are separated by measurement and no longer by
+argument: **a fixed point of the unconditional map exists, and arriving at it is
+not generation.** Converging is a property of the map; being a protein is a
+property of where it converges to. This is the third time the project has caught
+that conflation -- the port's *conditional* attractor read as the unconditional
+one, the trainer's 0.01/200 sampling read as the registered 0.1/500, and now
+convergence read as a result.
+
+## Only one of four registered conditions fired, and that is recorded as it is
+
+    0a inert (a bug, not a result)                     did not apply -- 0a is LIVE
+    `window` inside the MVP's block-mean spread        FIRED, all ten blocks
+    margin over oracle_scale not improving on 1.1 A    DID NOT FIRE (1.16 A)
+    fixed points < 3/15 AND bond outliers > 0.5        DID NOT FIRE (14/15)
+
+They were registered as alternatives, so one firing is formally enough. Three of
+four not firing is not the expected shape, and the honest claim is narrower than
+"the label changed nothing":
+
+  * **The label changed nothing about ADDRESS**, which is the only thing it was
+    built to test. 0b flat with no dynamic range, readout 5 a constant at all 80
+    evaluations, bucket 2 failing all three axes with the clash rate worse.
+    Receipt is proven by 1.8 A of coordinate displacement, so this is not a
+    silent embedding. **That is H-address.**
+  * **The arm changed two things it was not built to test**, both traceable to
+    the constant edge feature and not to the class: the fixed point, and a ~1 %
+    loss drift visible in the `rmsd` blocks and again in the oracle margin.
+    Neither bears on ambiguity-versus-address, and the second has no error bar,
+    because no arm in this project has been run at a second seed.
 
 ## Why the status is `unsupported` and not `supported`, recorded so it can be flipped
 

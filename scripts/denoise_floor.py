@@ -134,7 +134,9 @@ def main() -> int:
     state = torch.load(path, map_location="cpu", weights_only=False)
 
     try:
-        args = probe.settings_from_checkpoint(state, trainer.build_schema())
+        args = probe.settings_from_checkpoint(
+            state, trainer.build_schema(), f"scripts/{options.trainer}.py"
+        )
         dataset, catalogue, eval_indices = probe.held_out(
             state, args, trainer, device
         )

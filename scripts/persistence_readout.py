@@ -143,8 +143,19 @@ def trainer_module():
     return module
 
 
-def settings_from_checkpoint(state: dict, schema: argparse.ArgumentParser):
+def settings_from_checkpoint(
+    state: dict,
+    schema: argparse.ArgumentParser,
+    schema_name: str = "scripts/train_egnca.py",
+):
     """The run's own settings, or a refusal. Never a default.
+
+    ``schema_name`` is what the refusals call the schema they were handed. It
+    exists because the message used to say ``scripts/train_egnca.py`` whatever
+    was passed, and once a probe could declare ``--trainer`` that was a refusal
+    naming the wrong file -- the most misleading thing a refusal can do, since
+    its whole job is to say which two things disagree. The default is the
+    historical caller, so nothing that does not pass it changes.
 
     Four ways this refuses, each one a shape the cited incident had:
 
@@ -178,7 +189,7 @@ def settings_from_checkpoint(state: dict, schema: argparse.ArgumentParser):
     unknown = sorted(set(recorded) - set(actions) - DERIVED_KEYS)
     if unknown:
         raise ProbeRefusal(
-            "this checkpoint records settings scripts/train_egnca.py's schema "
+            f"this checkpoint records settings {schema_name}'s schema "
             f"does not define: {', '.join(unknown)}. The probe cannot honour a "
             "setting it has no name for, and running anyway would measure a "
             "rule configured unlike the run."
