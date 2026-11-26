@@ -6,6 +6,73 @@ journal is `docs/JOURNAL.md`; the claims and their evidence are one note each in
 
 ---
 
+## 0-chk. 2026-11-26, 40 % through the MVP: it runs clean and the held-out series is FLAT
+
+**Job 33794584 on bun159, an early check for a crash rather than for a result.
+No crash, and the result is more informative than the check intended.**
+`torch 2.10.0+rocm7.0`, `gpu True`, device cuda. **0.34 s/update against the
+laptop's 1.45**, so the live k-NN does cost ~1.7x the port's 0.20 but the GPU
+does help: 20,000 updates is ~1 h 55 m, not the 8 h the CPU figure implied.
+
+### The instrument checks pass
+
+  * **`sigma` is 8.899 and `start_rmsd` is 15.205 at every one of 33
+    evaluations** -- one distinct value each, so the per-index seeded eval
+    corruption is reproducible and the rows are comparable.
+  * **`anchor` is exactly 0.000** on every printed line, so the
+    `context_fraction = 0` masking holds and `window` is the entire loss --
+    literally Gala's all-pairs objective with no context term.
+  * **`n` 15, `diverged` 0, `nonfinite_loss` 0, `nonfinite_gradient` 0** across
+    the run. All skips are `no_crop`, 0.8-2.8 % per interval.
+
+### Block means to update 8,250, and they do not move
+
+    updates        rmsd mean     sd     min    evals      total mean
+        0- 2000        9.142   0.066   9.029      7           80.211
+     2000- 4000        9.254   0.386   8.877      8           86.418
+     4000- 6000        9.216   0.278   8.943      8           91.017
+     6000- 8100        9.123   0.261   8.782      9           85.055
+
+**Against `start_rmsd` 15.205.** So the rule falls 15.2 -> ~9.1 A inside the
+first 250 updates and then **does not move for 8,000 more**. Best single
+evaluation 8.782 A.
+
+**This is a different shape from the port, and the comparison is the point.**
+The port's block means fell in *every* block on both pools (3.524 -> 2.420 on
+Bunya, 2.702 -> 2.009 on the laptop). These four are flat to within their own
+spread, and `total` if anything rises. Four blocks of 7-9 evaluations is enough
+for the block-mean test this project now requires, so this is **not** the
+"handful of noisy evaluations" error a third time -- but it IS only 41 % of the
+budget, and the honest statement is that the first 8,250 updates show no
+learning after update 250.
+
+### And from the prior, nothing converges: `sample_converged` 0 of 7, at all 33
+
+Sampling draws 8 from a Gaussian at `rg = 2.2 N^0.38`, runs to a max per-step
+move below 0.01 A or 200 steps, and **hits the 200-step cap every time**. `rg`
+wanders 11.2-15.2 with no trend.
+
+**The distinction this forces, and it matters for the pre-registration.**
+Bucket 1 is answered YES for the *conditional* setting -- damage a window, pin
+the context, and the rule has a fixed point it returns to within 0.0105 A
+([[a-local-rule-with-an-attractor-is-a-diffusion-model-without-a-schedule]]).
+**From the pure Gaussian prior with nothing pinned, it currently has none.**
+Those are two different claims about two different basins and the second is the
+one option 2 needs. Nothing is refuted at 41 % of budget, but the registered
+refutation condition "no fixed point within 500 steps" is being measured at 200
+steps and currently reads NO.
+
+### A defect found on the way: `runs/*/history.json` is not valid JSON
+
+`rmsd_fit_context` is `nan` by construction at `context_fraction = 0`, and the
+trainer writes it as a bare `NaN`. Python's `json` emits and accepts that;
+**the JSON spec does not**, so every other reader fails on it -- which is how
+it was found. The port's histories are unaffected only because nothing in them
+is nan. Worth fixing as `null` in both trainers, and worth knowing before
+anything outside Python is pointed at these files.
+
+---
+
 ## 0. Current state — 2026-11-26: the port HAS an attractor, which is bucket 1 of option 2 and the record predicted NO
 
 **The newest thing in this file.** Option 2 is pre-registered in
