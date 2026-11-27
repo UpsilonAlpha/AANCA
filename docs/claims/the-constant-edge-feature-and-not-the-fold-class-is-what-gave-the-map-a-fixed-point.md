@@ -82,6 +82,34 @@ The thresholds are set from the two measured ends -- 14/15 and 2/15 -- with a
 gap left in the middle on purpose, because the alternative is reading a
 3-crop difference as a mechanism.
 
+## AMENDED at the first evaluation, 27 Nov, job 33876874, before any result
+
+Prediction 1 stands exactly as written, and the first evaluation sharpened WHY.
+`sample_batch` computes `row = effective_label(label, args.label_dropout, None)`,
+so at `label_dropout = 1.0` **every draw collapses onto the unconditional row**
+and `samples.npz` records `conditioned_class = "unconditional"` for all eight
+samples. The log shows it: `helix a/b nan/nan (gap +nan, n 0/0)`.
+
+So readout 0b is now known to have **three** readings, and the control is what
+exposed the third:
+
+    LIVE     a real gap           the label changes the structure
+    FLAT     0.0000, n 2/2        received and inert        <- [cond]
+    ABSENT   nan, n 0/0           no class was ever asked   <- [nolabel]
+
+The readout-0 wording amended on 26 Nov enumerated two. **It would have called
+`nan` an instrument failure, which is the same mistake in the other
+direction**, and the amendment is recorded here rather than in the result
+because it was seen at update 250.
+
+For 0a this makes the prediction cleaner, not weaker: the four samples at a
+position are now provably the **same forward computation**, so
+`scripts/cond_readouts.py` must print mean **exactly 0.0000 over 12 pairs** with
+the alpha-vs-beta subset `nan` over **0** pairs. Checked before trusting the
+arm to be readable: the reader's `mean` returns `nan` on an empty list, so the
+empty subset is not a refusal. A non-zero 0a is still a leak and still voids
+the arm.
+
 ## What this arm CANNOT do, stated before it runs
 
 It cannot make option 2 true and it is not an attempt to. The thing `[cond]`

@@ -6,6 +6,89 @@ journal is `docs/JOURNAL.md`; the claims and their evidence are one note each in
 
 ---
 
+## 0-nolabel. 2026-11-27: the control that attributes the new fixed point is running as job 33876874, and it already shows readout 0b has a THIRD state
+
+**Ulban chose the `nolabel` control over going straight to the emitted-chemical
+morphogen**, so the unattributed 5.5x damping from section 0-condfin gets a
+cause before anything is built on it. Pre-registered BEFORE submission at
+`docs/claims/the-constant-edge-feature-and-not-the-fold-class-is-what-gave-the-map-a-fixed-point.md`.
+
+### What is running, and it is one key
+
+    AANCA_ENTRY=scripts/train_conditioned.py       bash scripts/bunya_submit.sh gpu configs/conditioned.toml --section nolabel
+
+**No code was written for this arm.** `configs/conditioned.toml` already
+carried `[nolabel]` with `label_dropout = 1.0` and the reason it exists, written
+before `[cond]` ran; `tag = section`, so it lands in `runs/nolabel`. Job
+**33876874**, `RUNNING` on **bun159** -- the SAME node as 33834699 -- submitted
+10:38 AEST at 0.36 s/update, so 20,000 updates is roughly 12:45 AEST. Resources
+are byte-identical to the measured arm's (`gpu_rocm`, `gpu` QOS,
+`gpu:mi355x:1`, 8 cpus, 48G, `--constraint=epyc5`). One of my two GPU QOS slots;
+Ulban's own `bar00/01/11/15` are on `normal` and are untouched.
+
+### What it can and cannot attribute, written before the number arrives
+
+    cond vs nolabel      ONE key. Isolates the CLASS.
+    nolabel vs runs/mvp  A different trainer, a different seed draw and 148
+                         parameters. Does NOT isolate the edge feature.
+
+The second line is the arm's honest ceiling. A `nolabel` fixed point attributes
+the damping **away from the fold class**, and it does **not** choose between the
+constant edge feature, 2.8 % more capacity, and where `best.pt` lands.
+Separating those needs a width sweep and **no such arm is registered**.
+
+Registered thresholds, with a deliberate gap: **>= 12 of 15 converged supports**
+the attribution, **<= 4 refutes** it, and **5 to 11 is withheld rather than
+split**, because 15 crops at one seed cannot resolve a partial effect.
+
+### The first evaluation: three arms are now paired crop-for-crop
+
+    update  250  n 15  diverged 0  total  82.130  window  82.130
+                 sigma  8.899  rmsd   9.133  (start  15.205)  move 10.594
+                 steps 200.0  conv 0/8  rg  9.93
+                 helix a/b nan/nan (gap +nan, n 0/0)
+                 skip 4/250 (no_crop 4)  dropped 246/250  0.36s/update
+
+**`sigma` 8.899 and `start` 15.205 AGAIN**, to the digit, so `nolabel`, `cond`
+and the refuted MVP are all drawing the same crops at the same noise levels and
+every `window`/`rmsd` comparison between the three is exact. 5,476 parameters,
+so the control carries all 148. Class counts identical to `cond`'s
+(147/40/139/55 over 381 of 400), which is the same pool confirming itself.
+
+`dropped 246/250` is **100 % of the passes that ran** -- the other 4 are the
+`no_crop` skips, which never reach the rule. The label is off, as configured.
+
+**`total` 82.130 against `cond`'s 93.985 at the same update is ONE evaluation and
+is not a result.** The MVP's block-mean band is 79.9-98.5 and both sit inside it.
+
+### READOUT 0b HAS A THIRD STATE, and the control is what exposed it
+
+`helix a/b` reads **`nan/nan`, `n 0/0`** -- not `0.0000/0.0000`. `sample_batch`
+computes `row = effective_label(label, args.label_dropout, None)`, so at dropout
+1.0 **every draw collapses onto the unconditional row** and `samples.npz`
+records `conditioned_class = "unconditional"` for all eight. There is no sample
+conditioned on `mainly-alpha` for the contrast to be taken over.
+
+So 0b is now known to have three readings, and only the first is a bug:
+
+    LIVE     a real gap            the label changes the structure
+    FLAT     0.0000, n 2/2         received and inert   <- [cond], 26 Nov
+    ABSENT   nan, n 0/0           no class was ever asked for  <- [nolabel]
+
+**The original readout-0 wording would have called all three the same failure**,
+which is the amendment of 26 Nov arriving a second time from the other
+direction. Recorded as a refinement of the pre-registration, not as a result.
+
+The consequence for readout 0a is that the prediction still holds as written,
+and more cleanly: the four samples in a position are the same forward
+computation, so `scripts/cond_readouts.py` must print **mean exactly 0.0000 over
+12 pairs** with the alpha-vs-beta subset `nan` over **0** pairs. The reader
+survives that without a refusal -- its `mean` returns `nan` on an empty list --
+which was checked before the arm was trusted to be readable. **A non-zero 0a
+here is a leak in the dropout path and voids the arm.**
+
+---
+
 ## 0-condfin. 2026-11-26: the fold-class label reaches the coordinates and buys no ADDRESS, so option 2 failed on address and not on ambiguity -- and the unconditional map acquired a fixed point without becoming a protein
 
 **Job 33834699 finished clean**: `COMPLETED`, exit `0:0`, `01:57:08` on bun159,
